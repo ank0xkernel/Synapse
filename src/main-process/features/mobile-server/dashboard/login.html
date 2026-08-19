@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0B0C10">
+  <title>Connect to Synapse</title>
+
+  <!--
+    This page is served from your Mac to a phone on the same Wi-Fi. That phone
+    may have no internet at all, so everything here is self-contained: no CDN
+    scripts, no webfonts, no external images. The previous version loaded
+    three.js and Google Fonts from the public internet, which meant the login
+    screen rendered unstyled and threw on any offline network.
+  -->
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0B0C10;
+      --bg-elevated: #12151C;
+      --surface: rgba(22, 27, 38, 0.82);
+      --border: rgba(120, 140, 170, 0.18);
+      --border-strong: rgba(120, 140, 170, 0.32);
+      --accent: #6366F1;
+      --accent-bright: #818CF8;
+      --accent-glow: rgba(99, 102, 241, 0.35);
+      --success: #34D399;
+      --danger: #F87171;
+      --text: #E8EDF5;
+      --text-muted: #94A3B8;
+      --text-faint: #64748B;
+      --radius: 14px;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    }
+
+    html { -webkit-text-size-adjust: 100%; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      min-height: 100vh;
+      min-height: 100dvh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 20px calc(24px + env(safe-area-inset-bottom));
+      line-height: 1.5;
+      position: relative;
+      overflow-x: hidden;
+    }
+
+    /*
+      Ambient background. Static CSS gradients rather than an animated WebGL
+      canvas — a permanent requestAnimationFrame loop on a login screen drains
+      phone battery and pins a core on the host for no informational gain.
+    */
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background:
+        radial-gradient(60ch 50ch at 15% 0%, rgba(99, 102, 241, 0.16), transparent 70%),
+        radial-gradient(50ch 40ch at 100% 100%, rgba(139, 92, 246, 0.12), transparent 70%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .shell {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      max-width: 420px;
+    }
+
+    /* ---------- Brand ---------- */
+
+    .brand {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 11px;
+      margin-bottom: 28px;
+    }
+
+    .brand-mark {
+      width: 38px;
+      height: 38px;
+      border-radius: 10px;
+      background: linear-gradient(155deg, #6366F1, #8B5CF6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 2.5px;
+      flex-shrink: 0;
+    }
+
+    .brand-mark i {
+      display: block;
+      width: 2.5px;
+      border-radius: 2px;
+      background: #fff;
+    }
+    .brand-mark i:nth-child(1) { height: 9px; }
+    .brand-mark i:nth-child(2) { height: 16px; }
+    .brand-mark i:nth-child(3) { height: 22px; }
+    .brand-mark i:nth-child(4) { height: 13px; }
+
+    .brand-name {
+      font-size: 19px;
+      font-weight: 650;
+      letter-spacing: -0.01em;
+    }
+
+    /* ---------- Card ---------- */
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 30px 26px;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+    }
+
+    .card h1 {
+      font-size: 21px;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+      text-align: center;
+      margin-bottom: 7px;
+    }
+
+    .card .lede {
+      font-size: 14px;
+      color: var(--text-muted);
+      text-align: center;
+      margin-bottom: 26px;
+    }
+
+    /* ---------- Passcode input ---------- */
+
+    .field-label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-faint);
+      margin-bottom: 11px;
+      text-align: center;
+    }
+
+    .code-row {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+
+    .code-row input {
+      width: 100%;
+      /* Tall enough to clear the 44px minimum touch target on phones. */
+      height: 56px;
+      background: rgba(0, 0, 0, 0.35);
+      border: 1.5px solid var(--border-strong);
+      border-radius: 11px;
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: 22px;
+      font-weight: 600;
+      text-align: center;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+      -moz-appearance: textfield;
+      appearance: textfield;
+    }
+
+    .code-row input::-webkit-outer-spin-button,
+    .code-row input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+    .code-row input:focus {
+      border-color: var(--accent);
+      background: rgba(99, 102, 241, 0.10);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+
+    .code-row input.filled { border-color: var(--accent-bright); }
+
+    .code-row.invalid input {
+      border-color: var(--danger);
+      animation: shake 0.35s;
+    }
+
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      25% { transform: translateX(-5px); }
+      75% { transform: translateX(5px); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .code-row.invalid input { animation: none; }
+      * { transition-duration: 0.01ms !important; }
+    }
+
+    /* Status line is always present so the layout never jumps when it fills. */
+    .status {
+      min-height: 20px;
+      font-size: 13px;
+      text-align: center;
+      margin-bottom: 16px;
+      transition: color 0.15s;
+    }
+    .status.error { color: var(--danger); }
+    .status.success { color: var(--success); }
+    .status.info { color: var(--text-faint); }
+
+    /* ---------- Button ---------- */
+
+    .btn {
+      width: 100%;
+      height: 50px;
+      border: 0;
+      border-radius: 12px;
+      background: linear-gradient(150deg, var(--accent), #7C3AED);
+      color: #fff;
+      font-family: inherit;
+      font-size: 15px;
+      font-weight: 650;
+      letter-spacing: 0.01em;
+      cursor: pointer;
+      transition: filter 0.15s, transform 0.08s, opacity 0.15s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .btn:hover:not(:disabled) { filter: brightness(1.12); }
+    .btn:active:not(:disabled) { transform: translateY(1px); }
+    .btn:focus-visible { outline: 2px solid var(--accent-bright); outline-offset: 3px; }
+
+    /*
+      Disabled until six digits are present, so the button state tells you
+      whether the form is actually submittable instead of failing on tap.
+    */
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .spinner {
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(255, 255, 255, 0.35);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      display: none;
+    }
+    .btn.loading .spinner { display: block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ---------- Instructions ---------- */
+
+    .help {
+      margin-top: 22px;
+      border-top: 1px solid var(--border);
+      padding-top: 20px;
+    }
+
+    .help h2 {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-faint);
+      margin-bottom: 14px;
+    }
+
+    .steps { list-style: none; counter-reset: step; }
+
+    .steps li {
+      counter-increment: step;
+      position: relative;
+      padding-left: 32px;
+      margin-bottom: 12px;
+      font-size: 13.5px;
+      color: var(--text-muted);
+    }
+
+    .steps li::before {
+      content: counter(step);
+      position: absolute;
+      left: 0;
+      top: -1px;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: rgba(99, 102, 241, 0.16);
+      border: 1px solid rgba(99, 102, 241, 0.35);
+      color: var(--accent-bright);
+      font-size: 11px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .steps strong { color: var(--text); font-weight: 600; }
+
+    .note {
+      display: flex;
+      gap: 9px;
+      align-items: flex-start;
+      margin-top: 16px;
+      padding: 11px 13px;
+      background: rgba(99, 102, 241, 0.08);
+      border: 1px solid rgba(99, 102, 241, 0.18);
+      border-radius: 10px;
+      font-size: 12.5px;
+      color: var(--text-muted);
+    }
+    .note span:first-child { flex-shrink: 0; }
+
+    .footer {
+      margin-top: 20px;
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-faint);
+    }
+
+    /* Narrow phones: keep the six boxes on one row by shrinking them. */
+    @media (max-width: 380px) {
+      .card { padding: 26px 18px; }
+      .code-row { gap: 6px; }
+      .code-row input { height: 50px; font-size: 19px; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="shell">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+      <div class="brand-name">Synapse</div>
+    </div>
+
+    <main class="card">
+      <h1>Connect your phone</h1>
+      <p class="lede">Enter the 6-digit passcode from your Mac.</p>
+
+      <form id="loginForm" novalidate>
+        <label class="field-label" for="code-0">Passcode</label>
+
+        <!--
+          Six discrete inputs rather than one text field: on a phone this gives
+          a numeric keypad, per-digit feedback, and paste-to-fill, and it makes
+          the expected length obvious without a hint.
+        -->
+        <div class="code-row" id="codeRow">
+          <input type="text" id="code-0" inputmode="numeric" autocomplete="one-time-code"
+                 maxlength="1" pattern="[0-9]*" aria-label="Digit 1" autofocus>
+          <input type="text" id="code-1" inputmode="numeric" maxlength="1" pattern="[0-9]*" aria-label="Digit 2">
+          <input type="text" id="code-2" inputmode="numeric" maxlength="1" pattern="[0-9]*" aria-label="Digit 3">
+          <input type="text" id="code-3" inputmode="numeric" maxlength="1" pattern="[0-9]*" aria-label="Digit 4">
+          <input type="text" id="code-4" inputmode="numeric" maxlength="1" pattern="[0-9]*" aria-label="Digit 5">
+          <input type="text" id="code-5" inputmode="numeric" maxlength="1" pattern="[0-9]*" aria-label="Digit 6">
+        </div>
+
+        <!-- aria-live so screen readers announce failures, which alert() never did politely. -->
+        <div class="status info" id="status" role="status" aria-live="polite">Code refreshes every 30 seconds</div>
+
+        <button type="submit" class="btn" id="submitBtn" disabled>
+          <span class="spinner" aria-hidden="true"></span>
+          <span id="btnLabel">Connect</span>
+        </button>
+      </form>
+
+      <section class="help">
+        <h2>Where do I find the passcode?</h2>
+        <ol class="steps">
+          <li>On your Mac, click the <strong>Synapse icon</strong> in the menu bar.</li>
+          <li>Choose <strong>Show Passcode (TOTP)</strong>.</li>
+          <li>Type those 6 digits above before the code rotates.</li>
+        </ol>
+        <div class="note">
+          <span aria-hidden="true">📶</span>
+          <span>Your phone and Mac must be on the <strong>same Wi-Fi network</strong>. Nothing here reaches the internet.</span>
+        </div>
+      </section>
+    </main>
+
+    <p class="footer">Local connection · <span id="hostLabel"></span></p>
+  </div>
+
+  <script src="/dashboard/js/api.js"></script>
+  <script>
+    (function () {
+      'use strict';
+
+      var inputs = Array.prototype.slice.call(document.querySelectorAll('.code-row input'));
+      var form = document.getElementById('loginForm');
+      var row = document.getElementById('codeRow');
+      var statusEl = document.getElementById('status');
+      var btn = document.getElementById('submitBtn');
+      var btnLabel = document.getElementById('btnLabel');
+      var submitting = false;
+
+      document.getElementById('hostLabel').textContent = location.host;
+
+      function currentCode() {
+        return inputs.map(function (i) { return i.value; }).join('');
+      }
+
+      function setStatus(message, kind) {
+        statusEl.textContent = message;
+        statusEl.className = 'status ' + (kind || 'info');
+      }
+
+      function refreshSubmitState() {
+        var complete = currentCode().length === 6;
+        btn.disabled = !complete || submitting;
+        inputs.forEach(function (input) {
+          input.classList.toggle('filled', input.value !== '');
+        });
+        return complete;
+      }
+
+      function focusAt(index) {
+        var target = inputs[Math.max(0, Math.min(inputs.length - 1, index))];
+        if (target) { target.focus(); target.select(); }
+      }
+
+      /** Distributes a pasted or autofilled string across the boxes. */
+      function fill(digits, startIndex) {
+        var chars = String(digits).replace(/\D/g, '').split('');
+        var index = startIndex || 0;
+        while (chars.length && index < inputs.length) {
+          inputs[index].value = chars.shift();
+          index++;
+        }
+        focusAt(index);
+        if (refreshSubmitState()) { submit(); }
+      }
+
+      inputs.forEach(function (input, index) {
+        input.addEventListener('input', function () {
+          var value = input.value.replace(/\D/g, '');
+
+          // A phone's OTP autofill drops all six digits into the first box.
+          if (value.length > 1) {
+            input.value = '';
+            fill(value, index);
+            return;
+          }
+
+          input.value = value;
+          row.classList.remove('invalid');
+          if (value) { focusAt(index + 1); }
+          if (refreshSubmitState()) { submit(); }
+        });
+
+        input.addEventListener('keydown', function (event) {
+          if (event.key === 'Backspace' && !input.value && index > 0) {
+            event.preventDefault();
+            inputs[index - 1].value = '';
+            focusAt(index - 1);
+            refreshSubmitState();
+          } else if (event.key === 'ArrowLeft') {
+            event.preventDefault(); focusAt(index - 1);
+          } else if (event.key === 'ArrowRight') {
+            event.preventDefault(); focusAt(index + 1);
+          }
+        });
+
+        input.addEventListener('paste', function (event) {
+          event.preventDefault();
+          var text = (event.clipboardData || window.clipboardData).getData('text');
+          fill(text, index);
+        });
+
+        input.addEventListener('focus', function () { input.select(); });
+      });
+
+      function clearCode() {
+        inputs.forEach(function (input) { input.value = ''; });
+        refreshSubmitState();
+        focusAt(0);
+      }
+
+      async function submit() {
+        if (submitting) { return; }
+
+        var code = currentCode();
+        if (code.length !== 6) {
+          setStatus('Enter all 6 digits', 'error');
+          return;
+        }
+
+        submitting = true;
+        btn.disabled = true;
+        btn.classList.add('loading');
+        btnLabel.textContent = 'Connecting…';
+        setStatus('Verifying passcode…', 'info');
+
+        try {
+          var result = window.apiClient
+            ? await window.apiClient.login(code)
+            : await fetch('/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token: code })
+              }).then(function (r) { return r.json(); });
+
+          if (result && result.ok) {
+            btnLabel.textContent = 'Connected';
+            if (window.soundEngine) { window.soundEngine.playLoginSuccess(); }
+
+            // First run has no interview brief, and answers are only as good as
+            // that brief — send new users there instead of a dashboard whose
+            // controls have no context to act on.
+            var next = '/dashboard/index.html';
+            try {
+              var probe = await fetch('/api/context');
+              var payload = await probe.json();
+              var brief = payload && payload.context;
+              if (brief && !String(brief.role || brief.background || '').trim()) {
+                next = '/dashboard/context.html';
+              }
+            } catch (_) {
+              // Non-fatal: fall through to the dashboard.
+            }
+
+            setStatus(
+              next.indexOf('context') !== -1
+                ? 'Connected — let’s set up your brief…'
+                : 'Connected — opening dashboard…',
+              'success'
+            );
+            window.location.href = next;
+            return;
+          }
+
+          throw new Error((result && result.error) || 'That passcode was not accepted');
+        } catch (error) {
+          // Inline, recoverable failure. alert() blocked the page and lost the
+          // rotating code behind a modal the user had to dismiss.
+          row.classList.add('invalid');
+          setStatus(
+            error.message === 'Failed to fetch'
+              ? 'Cannot reach your Mac. Check you are on the same Wi-Fi.'
+              : error.message,
+            'error'
+          );
+          if (window.soundEngine) { window.soundEngine.playErrorThud(); }
+          submitting = false;
+          btn.classList.remove('loading');
+          btnLabel.textContent = 'Connect';
+          setTimeout(clearCode, 550);
+        }
+      }
+
+      form.addEventListener('submit', function (event) {
+        event.preventDefault();
+        submit();
+      });
+
+      refreshSubmitState();
+    })();
+  </script>
+</body>
+</html>

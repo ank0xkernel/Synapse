@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0B0C10">
+  <title>Interview Brief · Synapse</title>
+
+  <!-- Self-contained: served over the LAN to a phone that may have no internet. -->
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0B0C10;
+      --surface: rgba(22, 27, 38, 0.82);
+      --surface-solid: #151A24;
+      --border: rgba(120, 140, 170, 0.18);
+      --border-strong: rgba(120, 140, 170, 0.32);
+      --accent: #6366F1;
+      --accent-bright: #818CF8;
+      --accent-glow: rgba(99, 102, 241, 0.3);
+      --success: #34D399;
+      --danger: #F87171;
+      --text: #E8EDF5;
+      --text-muted: #94A3B8;
+      --text-faint: #64748B;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+
+    html { -webkit-text-size-adjust: 100%; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      line-height: 1.5;
+      min-height: 100dvh;
+      padding: 0 0 calc(96px + env(safe-area-inset-bottom));
+      position: relative;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background:
+        radial-gradient(60ch 45ch at 10% 0%, rgba(99, 102, 241, 0.14), transparent 70%),
+        radial-gradient(50ch 40ch at 100% 20%, rgba(139, 92, 246, 0.10), transparent 70%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .wrap { position: relative; z-index: 1; max-width: 760px; margin: 0 auto; padding: 0 20px; }
+
+    /* ---------- Header ---------- */
+
+    header {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      padding: 22px 0 18px;
+    }
+
+    .mark {
+      width: 34px; height: 34px; border-radius: 9px;
+      background: linear-gradient(155deg, #6366F1, #8B5CF6);
+      display: flex; align-items: center; justify-content: center; gap: 2.5px;
+      flex-shrink: 0;
+    }
+    .mark i { display: block; width: 2.5px; border-radius: 2px; background: #fff; }
+    .mark i:nth-child(1) { height: 8px; }
+    .mark i:nth-child(2) { height: 15px; }
+    .mark i:nth-child(3) { height: 20px; }
+    .mark i:nth-child(4) { height: 12px; }
+
+    header h1 { font-size: 17px; font-weight: 650; letter-spacing: -0.01em; }
+    header p { font-size: 12.5px; color: var(--text-faint); }
+
+    /* ---------- Sections ---------- */
+
+    section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px;
+      margin-bottom: 16px;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+    }
+
+    section > h2 {
+      font-size: 12px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--text-faint); margin-bottom: 4px;
+    }
+
+    section > .section-hint {
+      font-size: 12.5px; color: var(--text-muted); margin-bottom: 16px;
+    }
+
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .grid .full { grid-column: 1 / -1; }
+    @media (max-width: 560px) { .grid { grid-template-columns: 1fr; } }
+
+    .field { display: flex; flex-direction: column; gap: 6px; }
+
+    label {
+      font-size: 12.5px; font-weight: 600; color: var(--text);
+      display: flex; align-items: baseline; gap: 7px;
+    }
+    label .opt { font-weight: 400; font-size: 11px; color: var(--text-faint); }
+
+    input[type="text"], textarea, select {
+      width: 100%;
+      background: rgba(0, 0, 0, 0.32);
+      border: 1px solid var(--border-strong);
+      border-radius: 9px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 14px;
+      padding: 11px 12px;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      /* 16px would be needed to stop iOS zoom, but 14px + this keeps it calm. */
+      -webkit-appearance: none;
+      appearance: none;
+    }
+
+    select {
+      background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%2394A3B8' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      padding-right: 32px;
+    }
+
+    textarea { resize: vertical; min-height: 96px; line-height: 1.55; }
+    textarea.tall { min-height: 150px; }
+
+    input:focus, textarea:focus, select:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+
+    ::placeholder { color: var(--text-faint); opacity: 0.75; }
+
+    .counter { font-size: 11px; color: var(--text-faint); text-align: right; }
+    .counter.over { color: var(--danger); }
+
+    /* Segmented control reads better than a select for 3 short options. */
+    .segmented { display: flex; gap: 6px; flex-wrap: wrap; }
+
+    .segmented input { position: absolute; opacity: 0; pointer-events: none; }
+
+    .segmented label {
+      padding: 8px 14px;
+      border-radius: 9px;
+      border: 1px solid var(--border-strong);
+      background: rgba(0, 0, 0, 0.28);
+      color: var(--text-muted);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+      user-select: none;
+    }
+
+    .segmented input:checked + label {
+      background: rgba(99, 102, 241, 0.18);
+      border-color: var(--accent);
+      color: var(--accent-bright);
+      font-weight: 600;
+    }
+
+    .segmented input:focus-visible + label { outline: 2px solid var(--accent-bright); outline-offset: 2px; }
+
+    /* ---------- Sticky action bar ---------- */
+
+    .actions {
+      position: fixed;
+      left: 0; right: 0; bottom: 0;
+      z-index: 5;
+      background: linear-gradient(180deg, rgba(11,12,16,0) 0%, rgba(11,12,16,0.94) 32%);
+      padding: 22px 20px calc(18px + env(safe-area-inset-bottom));
+    }
+
+    .actions-inner {
+      max-width: 760px; margin: 0 auto;
+      display: flex; align-items: center; gap: 12px;
+    }
+
+    .btn {
+      height: 48px; padding: 0 26px; border: 0; border-radius: 12px;
+      background: linear-gradient(150deg, var(--accent), #7C3AED);
+      color: #fff; font-family: inherit; font-size: 15px; font-weight: 650;
+      cursor: pointer; transition: filter 0.15s, transform 0.08s, opacity 0.15s;
+      display: flex; align-items: center; justify-content: center; gap: 9px;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .btn:hover:not(:disabled) { filter: brightness(1.12); }
+    .btn:active:not(:disabled) { transform: translateY(1px); }
+    .btn:focus-visible { outline: 2px solid var(--accent-bright); outline-offset: 3px; }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .btn-ghost {
+      background: transparent;
+      border: 1px solid var(--border-strong);
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+    .btn-ghost:hover:not(:disabled) { color: var(--text); border-color: var(--text-faint); filter: none; }
+
+    .save-state { font-size: 12.5px; color: var(--text-faint); margin-left: auto; text-align: right; }
+    .save-state.saved { color: var(--success); }
+    .save-state.error { color: var(--danger); }
+
+    .spinner {
+      width: 15px; height: 15px;
+      border: 2px solid rgba(255,255,255,0.35); border-top-color: #fff;
+      border-radius: 50%; animation: spin 0.7s linear infinite; display: none;
+    }
+    .btn.loading .spinner { display: block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    @media (prefers-reduced-motion: reduce) { * { transition-duration: 0.01ms !important; } }
+
+    .note {
+      display: flex; gap: 9px; align-items: flex-start;
+      padding: 11px 13px; border-radius: 10px;
+      background: rgba(99, 102, 241, 0.08);
+      border: 1px solid rgba(99, 102, 241, 0.18);
+      font-size: 12.5px; color: var(--text-muted);
+      margin-top: 4px;
+    }
+    .note span:first-child { flex-shrink: 0; }
+
+    footer { text-align: center; font-size: 12px; color: var(--text-faint); padding: 4px 0 8px; }
+    footer a { color: var(--accent-bright); }
+  </style>
+</head>
+<body>
+
+  <div class="wrap">
+    <header>
+      <div class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+      <div>
+        <h1>Interview brief</h1>
+        <p>What Synapse should know before it answers for you</p>
+      </div>
+    </header>
+
+    <form id="briefForm">
+      <section>
+        <h2>The role</h2>
+        <p class="section-hint">Answers are tailored to this. Even just a job title helps.</p>
+
+        <div class="grid">
+          <div class="field">
+            <label for="role">Role <span class="opt">e.g. Backend Engineer</span></label>
+            <input type="text" id="role" name="role" placeholder="Backend Engineer" autocomplete="off">
+          </div>
+
+          <div class="field">
+            <label for="company">Company <span class="opt">optional</span></label>
+            <input type="text" id="company" name="company" placeholder="Acme Corp" autocomplete="off">
+          </div>
+
+          <div class="field">
+            <label for="seniority">Seniority <span class="opt">optional</span></label>
+            <input type="text" id="seniority" name="seniority" placeholder="Mid / Senior / SDE-2" autocomplete="off">
+          </div>
+
+          <div class="field">
+            <label for="interviewType">Interview type</label>
+            <select id="interviewType" name="interviewType">
+              <option value="auto">Detect automatically</option>
+              <option value="coding">Coding / DSA</option>
+              <option value="system-design">System design</option>
+              <option value="behavioural">Behavioural (STAR)</option>
+              <option value="general">General / mixed</option>
+            </select>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Job description</h2>
+        <p class="section-hint">Paste the posting. Synapse pulls the requirements out and steers answers toward them.</p>
+        <div class="field">
+          <textarea id="jobDescription" name="jobDescription" class="tall"
+            placeholder="Paste the full job description here…"></textarea>
+          <div class="counter" id="jobDescription-counter"></div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Your background</h2>
+        <p class="section-hint">
+          The most important field. Paste your resume bullets or describe your real projects —
+          answers are built from these instead of generic filler.
+        </p>
+        <div class="field">
+          <textarea id="background" name="background" class="tall"
+            placeholder="e.g. 3 years on a payments team. Built an idempotent refund pipeline handling 2M req/day. Cut p99 latency 800ms → 120ms with Redis caching…"></textarea>
+          <div class="counter" id="background-counter"></div>
+        </div>
+        <div class="note">
+          <span aria-hidden="true">💡</span>
+          <span>Concrete numbers and outcomes make a large difference. "Reduced latency 40%" beats "worked on performance".</span>
+        </div>
+      </section>
+
+      <section>
+        <h2>Steering</h2>
+        <p class="section-hint">Optional nudges for how answers come out.</p>
+
+        <div class="grid">
+          <div class="field full">
+            <label for="focusAreas">Emphasise <span class="opt">topics to bring up when relevant</span></label>
+            <input type="text" id="focusAreas" name="focusAreas"
+              placeholder="Kubernetes, event-driven architecture, mentoring" autocomplete="off">
+          </div>
+
+          <div class="field full">
+            <label for="avoidTopics">Avoid <span class="opt">topics to stay away from</span></label>
+            <input type="text" id="avoidTopics" name="avoidTopics"
+              placeholder="my previous employer's internal tooling" autocomplete="off">
+          </div>
+
+          <div class="field full">
+            <label>Answer length</label>
+            <div class="segmented" role="radiogroup" aria-label="Answer length">
+              <input type="radio" id="style-concise" name="answerStyle" value="concise">
+              <label for="style-concise">Concise</label>
+              <input type="radio" id="style-balanced" name="answerStyle" value="balanced" checked>
+              <label for="style-balanced">Balanced</label>
+              <input type="radio" id="style-detailed" name="answerStyle" value="detailed">
+              <label for="style-detailed">Detailed</label>
+            </div>
+          </div>
+
+          <div class="field full">
+            <label for="extraNotes">Anything else <span class="opt">optional</span></label>
+            <textarea id="extraNotes" name="extraNotes"
+              placeholder="e.g. I am switching from data engineering, so frame my experience toward backend work."></textarea>
+          </div>
+        </div>
+      </section>
+    </form>
+
+    <footer>
+      Stored locally on your Mac · <a href="/dashboard/index.html">Back to dashboard</a>
+    </footer>
+  </div>
+
+  <div class="actions">
+    <div class="actions-inner">
+      <button type="submit" form="briefForm" class="btn" id="saveBtn">
+        <span class="spinner" aria-hidden="true"></span>
+        <span id="saveLabel">Save brief</span>
+      </button>
+      <button type="button" class="btn btn-ghost" id="clearBtn">Clear</button>
+      <div class="save-state" id="saveState" role="status" aria-live="polite"></div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      'use strict';
+
+      var form = document.getElementById('briefForm');
+      var saveBtn = document.getElementById('saveBtn');
+      var saveLabel = document.getElementById('saveLabel');
+      var saveState = document.getElementById('saveState');
+      var clearBtn = document.getElementById('clearBtn');
+      var saving = false;
+      var dirty = false;
+
+      var LIMITS = { jobDescription: 8000, background: 8000 };
+
+      function token() {
+        try { return localStorage.getItem('synapse_session_token') || ''; } catch (_) { return ''; }
+      }
+
+      function authHeaders() {
+        var h = { 'Content-Type': 'application/json' };
+        var t = token();
+        if (t) { h.Authorization = 'Bearer ' + t; }
+        return h;
+      }
+
+      function setState(message, kind) {
+        saveState.textContent = message;
+        saveState.className = 'save-state' + (kind ? ' ' + kind : '');
+      }
+
+      function updateCounter(id) {
+        var el = document.getElementById(id);
+        var out = document.getElementById(id + '-counter');
+        if (!el || !out) return;
+        var max = LIMITS[id];
+        var len = el.value.length;
+        out.textContent = len + ' / ' + max;
+        out.classList.toggle('over', len > max);
+      }
+
+      function collect() {
+        var data = {};
+        new FormData(form).forEach(function (value, key) { data[key] = value; });
+        return data;
+      }
+
+      function apply(context) {
+        if (!context) return;
+        Object.keys(context).forEach(function (key) {
+          var field = form.elements[key];
+          if (!field) return;
+
+          if (field instanceof RadioNodeList || (field.length && field[0] && field[0].type === 'radio')) {
+            var target = form.querySelector('input[name="' + key + '"][value="' + context[key] + '"]');
+            if (target) target.checked = true;
+          } else if (typeof field.value === 'string' || field.tagName) {
+            field.value = context[key] == null ? '' : context[key];
+          }
+        });
+        Object.keys(LIMITS).forEach(updateCounter);
+      }
+
+      async function load() {
+        try {
+          var res = await fetch('/api/context', { headers: authHeaders() });
+          var data = await res.json();
+          if (data && data.ok) {
+            apply(data.context);
+            if (data.context && data.context.updatedAt) {
+              setState('Last saved ' + new Date(data.context.updatedAt).toLocaleString());
+            }
+          }
+        } catch (_) {
+          setState('Could not load the saved brief', 'error');
+        }
+      }
+
+      async function save(event) {
+        if (event) event.preventDefault();
+        if (saving) return;
+
+        var over = Object.keys(LIMITS).some(function (id) {
+          return (document.getElementById(id).value || '').length > LIMITS[id];
+        });
+        if (over) {
+          setState('One field is over its limit', 'error');
+          return;
+        }
+
+        saving = true;
+        saveBtn.disabled = true;
+        saveBtn.classList.add('loading');
+        saveLabel.textContent = 'Saving…';
+        setState('');
+
+        try {
+          var res = await fetch('/api/context', {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify(collect())
+          });
+          var data = await res.json();
+          if (!res.ok || !data.ok) { throw new Error(data.error || 'Save failed'); }
+
+          dirty = false;
+          setState('Saved — answers will use this from now on', 'saved');
+        } catch (error) {
+          setState(
+            error.message === 'Failed to fetch'
+              ? 'Cannot reach your Mac. Check you are on the same Wi-Fi.'
+              : error.message,
+            'error'
+          );
+        } finally {
+          saving = false;
+          saveBtn.disabled = false;
+          saveBtn.classList.remove('loading');
+          saveLabel.textContent = 'Save brief';
+        }
+      }
+
+      form.addEventListener('submit', save);
+
+      form.addEventListener('input', function (event) {
+        dirty = true;
+        if (event.target && LIMITS[event.target.id]) { updateCounter(event.target.id); }
+        if (saveState.classList.contains('saved')) { setState(''); }
+      });
+
+      clearBtn.addEventListener('click', function () {
+        if (!confirm('Clear every field in this brief?')) return;
+        form.reset();
+        form.querySelector('input[name="answerStyle"][value="balanced"]').checked = true;
+        Object.keys(LIMITS).forEach(updateCounter);
+        dirty = true;
+        setState('Cleared — press Save to apply');
+      });
+
+      // Ctrl/Cmd+S is the reflex for a form this long.
+      document.addEventListener('keydown', function (event) {
+        if ((event.metaKey || event.ctrlKey) && event.key === 's') {
+          event.preventDefault();
+          save();
+        }
+      });
+
+      window.addEventListener('beforeunload', function (event) {
+        if (dirty) { event.preventDefault(); event.returnValue = ''; }
+      });
+
+      Object.keys(LIMITS).forEach(updateCounter);
+      load();
+    })();
+  </script>
+</body>
+</html>

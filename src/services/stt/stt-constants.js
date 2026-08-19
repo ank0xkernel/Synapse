@@ -1,0 +1,11 @@
+'use strict';
+
+module.exports = {
+  WHISPER_PORT: 8080,
+  WHISPER_HOST: '127.0.0.1',
+  DEFAULT_MODEL: 'ggml-medium.en.bin',
+  SAMPLE_RATE: 16000,
+  MAX_RESTART_ATTEMPTS: 3,
+  HEALTH_CHECK_INTERVAL_MS: 5000,
+  RESTART_DELAY_MS: 2000
+};

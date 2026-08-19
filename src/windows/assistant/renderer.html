@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!--
+    Everything this window needs is served from its own synapse:// origin, and
+    all network access goes through the main process over IPC — so the policy
+    can deny remote script, remote connections and framing outright.
+    'unsafe-inline' is present for style only, to allow the inline style
+    attribute used for layout; no inline <script> exists here.
+  -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none';
+                 script-src 'self';
+                 style-src 'self' 'unsafe-inline';
+                 img-src 'self' data: blob:;
+                 media-src 'self' blob:;
+                 font-src 'self';
+                 connect-src 'self' blob:;
+                 form-action 'none';
+                 base-uri 'none';
+                 object-src 'none'">
+  <title>Synapse</title>
+  <link rel="stylesheet" href="styles.css">
+  <!-- Loaded second: the shell restyles the header and command bar on top. -->
+  <link rel="stylesheet" href="ui-shell.css">
+</head>
+<body>
+  <div id="app" class="glass-container">
+    <div class="window-resize-handle resize-handle-n" data-resize-handle="n" aria-hidden="true"></div>
+    <div class="window-resize-handle resize-handle-e" data-resize-handle="e" aria-hidden="true"></div>
+    <div class="window-resize-handle resize-handle-s" data-resize-handle="s" aria-hidden="true"></div>
+    <div class="window-resize-handle resize-handle-w" data-resize-handle="w" aria-hidden="true"></div>
+    <div class="window-resize-handle resize-handle-ne" data-resize-handle="ne" aria-hidden="true"></div>
+    <div class="window-resize-handle resize-handle-se" data-resize-handle="se" aria-hidden="true"></div>
+    <div class="window-resize-handle resize-handle-sw" data-resize-handle="sw" aria-hidden="true"></div>
+    <div class="window-resize-handle resize-handle-nw" data-resize-handle="nw" aria-hidden="true"></div>
+    <!--
+      One header row, and the row itself is the drag region.
+
+      This replaced a separate `.drag-handle` element that styles.css pinned
+      absolutely across the top 30px at full width. The utility buttons live in
+      that same top-right corner, so the quit button was drawn directly on top
+      of hide/settings — two controls occupying one spot, which is what made
+      the bar look misaligned. Controls now sit in a single flow row and opt
+      out of the drag region individually.
+    -->
+    <div class="main-interface">
+      <!-- Status Section with Timer and Count -->
+      <div class="status-section">
+        <div class="status-dot" data-tip="Transcription status"></div>
+        <span class="timer" data-tip="Session length">00:00</span>
+        <div class="screenshot-count" id="screenshot-count" data-tip="Screenshots captured">0</div>
+        <button id="mobile-server-pill" class="mobile-server-pill off" type="button" data-tip="Mobile companion — open on your phone">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="6" y="2" width="12" height="20" rx="2"/>
+            <line x1="12" y1="18" x2="12" y2="18"/>
+          </svg>
+          <span id="mobile-server-pill-label">Mobile</span>
+        </button>
+        <button id="show-mobile-code-btn" class="mobile-server-pill idle" type="button" data-tip="Show mobile pairing passcode" style="display: none;">
+          🔑 Code
+        </button>
+      </div>
+      
+      <!-- Action Buttons - Compact -->
+      <div class="content-section">
+        <div class="action-buttons">
+          <div id="transcription-control" class="transcription-control">
+            <button id="transcription-toggle" class="action-btn transcription-btn" type="button" aria-label="Toggle transcription" data-tip="Transcription  ⌥⇧T">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 10v4" />
+                <path d="M7 7v10" />
+                <path d="M11 4v16" />
+                <path d="M15 7v10" />
+                <path d="M19 10v4" />
+              </svg>
+            </button>
+            <div id="transcription-sources" class="transcription-sources" role="group" aria-label="Transcription sources">
+              <button id="source-system-toggle" class="source-toggle source-system selected" type="button" aria-label="Transcribe system audio" data-tip="Host audio — the other person">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+                </svg>
+              </button>
+              <button id="source-mic-toggle" class="source-toggle source-mic" type="button" aria-label="Transcribe microphone" data-tip="Your mic">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                  <path d="M12 19v4"/>
+                  <path d="M8 23h8"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Answers the interviewer automatically when they finish asking. -->
+          <button id="auto-answer-toggle" class="action-btn auto-answer-toggle active" type="button" aria-pressed="true" aria-label="Auto-answer" data-tip="Auto-answer questions">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/>
+            </svg>
+          </button>
+
+          <button id="screenshot-btn" class="action-btn screenshot-btn" type="button" aria-label="Capture screen" data-tip="Capture screen  ⌥⇧S">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M9 2 7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z"/>
+            </svg>
+          </button>
+
+          <!--
+            These six actions are no longer buttons on the bar. They are all
+            "run an AI pass over the current context", differing only by prompt,
+            which is what made the toolbar feel like a wall of similar buttons.
+            They are now slash-commands in the command bar (see
+            renderer/features/command-bar/command-bar.js).
+
+            The elements stay in the DOM on purpose: every existing listener,
+            disabled-state toggle and keyboard shortcut still binds to them, and
+            the command bar dispatches a real click. Removing them outright
+            would mean rewiring five feature managers for no user-visible gain.
+          -->
+          <div class="command-targets" hidden>
+            <button id="analyze-btn" class="action-btn analyze-btn" type="button" title="Answer using transcript, screenshots and chat context  (⌥⇧A)">
+              Ask AI
+            </button>
+
+            <button id="screen-ai-btn" class="action-btn screen-ai-btn" type="button" title="Analyse the selected screenshots only  (⌥⇧E)">
+              Screen AI
+            </button>
+
+            <button id="suggest-btn" class="action-btn suggest-btn" type="button" aria-label="Suggest what to say next" title="Suggest what to say next  (⌥⇧G)">
+              Suggest
+            </button>
+
+            <button id="notes-btn" class="action-btn notes-btn" type="button" aria-label="Generate notes" title="Generate notes from the conversation  (⌥⇧N)">
+              Notes
+            </button>
+
+            <button id="insights-btn" class="action-btn insights-btn" type="button" aria-label="Find key insights" title="Find key insights in the conversation  (⌥⇧I)">
+              Insights
+            </button>
+
+            <button id="clear-btn" class="action-btn clear-btn" type="button" aria-label="Clear chat and screenshots" title="Clear chat, screenshots and history  (⌥⇧C)">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+              </svg>
+            </button>
+          </div>
+
+          <div class="utility-buttons">
+            <button
+              id="theme-toggle-btn"
+              class="action-btn theme-toggle-btn"
+              type="button"
+              aria-label="Switch to dark mode"
+              aria-pressed="false"
+              data-tip="Light / dark theme"
+              data-tip-align="end"
+            >
+              <svg class="theme-toggle-icon theme-toggle-icon-moon" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M12.25 2.1a1 1 0 0 0-.92 1.34 8.5 8.5 0 0 1-9.88 11.22 1 1 0 0 0-1.08 1.52A11 11 0 1 0 12.25 2.1z" />
+              </svg>
+              <svg class="theme-toggle-icon theme-toggle-icon-sun" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <circle cx="12" cy="12" r="4" />
+                <path d="M12 2v2" />
+                <path d="M12 20v2" />
+                <path d="m4.93 4.93 1.41 1.41" />
+                <path d="m17.66 17.66 1.41 1.41" />
+                <path d="M2 12h2" />
+                <path d="M20 12h2" />
+                <path d="m6.34 17.66-1.41 1.41" />
+                <path d="m19.07 4.93-1.41 1.41" />
+              </svg>
+            </button>
+
+            <button id="settings-btn" class="action-btn settings-btn" type="button" aria-label="Settings" data-tip="Settings" data-tip-align="end">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"/>
+              </svg>
+            </button>
+
+            <!--
+              Eye-off, not a cross. This used to carry the same ✕ glyph as the
+              quit button in the title bar, so the window appeared to have two
+              exit buttons and hiding felt like quitting.
+            -->
+            <button id="hide-btn" class="action-btn hide-btn" type="button" aria-label="Hide overlay" data-tip="Hide overlay  ⌥⇧X" data-tip-align="end">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/>
+                <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/>
+                <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/>
+                <line x1="2" y1="2" x2="22" y2="22"/>
+              </svg>
+            </button>
+
+            <!--
+              Quit. Moved here out of the old absolutely-positioned drag strip,
+              where it overlapped the three buttons above it.
+            -->
+            <button id="close-app-btn" class="action-btn close-app-btn" type="button" aria-label="Quit Synapse" data-tip="Quit Synapse" data-tip-align="end">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <path d="M6 6l12 12M18 6L6 18"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <div id="transcription-monitor" class="transcription-monitor">
+      <div class="monitor-header">
+        <span class="monitor-title">Transcription Monitor</span>
+        <span id="monitor-master-state" class="monitor-master-state">Idle</span>
+      </div>
+      <div class="monitor-source-grid">
+        <div class="monitor-source-row">
+          <span class="monitor-source-label">Host</span>
+          <span id="monitor-status-system" class="monitor-status-badge off">Off</span>
+          <span id="monitor-live-system" class="monitor-live-text">No transcript yet</span>
+        </div>
+        <div class="monitor-source-row">
+          <span class="monitor-source-label">Mic</span>
+          <span id="monitor-status-mic" class="monitor-status-badge off">Off</span>
+          <span id="monitor-live-mic" class="monitor-live-text">No transcript yet</span>
+        </div>
+      </div>
+      <div id="monitor-log-list" class="monitor-log-list"></div>
+    </div>
+
+    <!-- Chat Interface -->
+    <div id="chat-container" class="chat-container">
+      <!--
+        The "🤖 AI Assistant" title bar that used to sit here was removed: the
+        whole window is the assistant, so it was a labelled box wrapped around
+        a labelled box and cost a row of vertical space on a 400px overlay.
+      -->
+      <div id="chat-messages" class="chat-messages">
+        <!--
+          Empty state. CSS hides this automatically as soon as a .chat-message
+          exists, so no JS has to remember to tear it down.
+        -->
+        <div class="chat-empty-state" id="chat-empty-state">
+          <div class="chat-empty-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+          <p class="chat-empty-title">Ready when you are</p>
+          <p class="chat-empty-body">
+            Turn on transcription, then ask for an answer. Everything stays on this machine.
+          </p>
+          <ul class="chat-empty-keys">
+            <li><kbd>⌥</kbd><kbd>⇧</kbd><kbd>T</kbd><span>Start transcribing</span></li>
+            <li><kbd>⌥</kbd><kbd>⇧</kbd><kbd>A</kbd><span>Answer the question</span></li>
+            <li><kbd>⌥</kbd><kbd>⇧</kbd><kbd>G</kbd><span>Suggest what to say</span></li>
+            <li><kbd>⌥</kbd><kbd>⇧</kbd><kbd>X</kbd><span>Hide this window</span></li>
+          </ul>
+          <p class="chat-empty-hint" id="chat-empty-hint" hidden></p>
+        </div>
+        <!-- Messages will be added here dynamically -->
+      </div>
+      <!--
+        Command bar. `chat-manual-input` and `chat-manual-send` keep their ids
+        and their original "add this as context" behaviour; the command layer
+        sits on top and decides whether a submission is a plain question, a
+        slash-command, or context to stage.
+      -->
+      <div id="chat-composer" class="chat-composer command-bar">
+        <div class="command-bar-lead" aria-hidden="true">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m9 10 3 3-3 3"/><path d="M14 17h4"/><rect x="3" y="4" width="18" height="16" rx="2"/>
+          </svg>
+        </div>
+        <textarea
+          id="chat-manual-input"
+          class="chat-manual-input"
+          rows="1"
+          placeholder="Ask anything, or / for commands"
+          aria-label="Ask a question or run a command"
+          aria-autocomplete="list"
+          aria-controls="command-suggestions"
+        ></textarea>
+        <button
+          id="chat-autoscroll-toggle"
+          class="chat-autoscroll-toggle"
+          type="button"
+          aria-pressed="true"
+          aria-label="Toggle auto-scroll"
+          data-tip="Auto-scroll"
+          data-tip-align="end"
+          data-tip-above
+        >&#x21E9;</button>
+        <kbd class="command-bar-hint" id="command-bar-hint">⌘K</kbd>
+        <button id="chat-manual-send" class="chat-manual-send" type="button" data-tip="Send  ↵" data-tip-align="end" data-tip-above>Ask</button>
+      </div>
+
+      <!-- Inline command suggestions, filtered as you type after "/" -->
+      <div id="command-suggestions" class="command-suggestions" role="listbox" aria-label="Commands" hidden></div>
+      <div id="chat-resize-handle" class="chat-resize-handle" aria-hidden="true"></div>
+    </div>
+    
+    <!-- Hidden status text for feedback -->
+    <div id="status-text" class="status-text" style="display: none;">AI Assistant</div>
+    
+    <!-- Expandable Results Panel (Legacy - now using chat) -->
+    <div id="results-panel" class="results-panel hidden">
+      <div class="results-header">
+        <div class="results-title">
+          <span class="ai-response-icon">&#x2728;</span>
+          <span>AI Response</span>
+        </div>
+        <div class="results-actions">
+          <button id="close-results" class="close-btn" type="button" aria-label="Close AI response" data-tip="Close" data-tip-align="end">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M18.3 5.71a1 1 0 0 0-1.41 0L12 10.59 7.11 5.7a1 1 0 1 0-1.42 1.42L10.59 12l-4.9 4.89a1 1 0 0 0 1.42 1.42L12 13.41l4.89 4.9a1 1 0 0 0 1.42-1.42L13.41 12l4.9-4.89a1 1 0 0 0 0-1.4Z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div class="results-content">
+        <div id="result-text" class="result-text"></div>
+      </div>
+    </div>
+    
+    <!-- Settings Panel -->
+    <div id="settings-panel" class="settings-panel hidden">
+      <div class="settings-header">
+        <span class="settings-title">Settings</span>
+        <button id="close-settings" class="close-btn" type="button" aria-label="Close settings" data-tip="Close" data-tip-align="end">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M18.3 5.71a1 1 0 0 0-1.41 0L12 10.59 7.11 5.7a1 1 0 1 0-1.42 1.42L10.59 12l-4.9 4.89a1 1 0 0 0 1.42 1.42L12 13.41l4.89 4.9a1 1 0 0 0 1.42-1.42L13.41 12l4.9-4.89a1 1 0 0 0 0-1.4Z"/>
+          </svg>
+        </button>
+      </div>
+      <div class="settings-body">
+        <div class="settings-group">
+          <label class="settings-label">AI Provider</label>
+          <select id="setting-ai-provider" class="settings-input">
+            <option value="gemini">Gemini</option>
+            <option value="ollama">Ollama (Local)</option>
+          </select>
+        </div>
+        <div id="gemini-settings-group">
+          <div class="settings-group">
+            <label class="settings-label">Gemini API Key(s)</label>
+            <div class="settings-input-row">
+              <input type="password" id="setting-gemini-key" class="settings-input" placeholder="Enter Gemini API key(s), comma-separated..." />
+              <button
+                type="button"
+                id="toggle-gemini-key-visibility"
+                class="settings-input-toggle"
+                aria-label="Show Gemini API key"
+                aria-pressed="false"
+              >
+                Show
+              </button>
+            </div>
+            <div class="settings-helper-text">Multiple Gemini keys are supported as comma-separated values.</div>
+          </div>
+          <div class="settings-group">
+            <label class="settings-label">Gemini Model</label>
+            <select id="setting-gemini-model" class="settings-input"></select>
+          </div>
+        </div>
+        <div id="ollama-settings-group" class="hidden">
+          <div class="settings-group">
+            <label class="settings-label">Ollama Server URL</label>
+            <input type="text" id="setting-ollama-base-url" class="settings-input" placeholder="http://localhost:11434" />
+            <div class="settings-helper-text">URL of your running Ollama instance.</div>
+          </div>
+          <div class="settings-group">
+            <label class="settings-label">Ollama Model</label>
+            <div class="settings-input-row">
+              <input type="text" id="setting-ollama-model" class="settings-input" placeholder="llama3.2" />
+              <button type="button" id="fetch-ollama-models" class="settings-input-toggle" aria-label="Fetch available Ollama models">
+                Fetch
+              </button>
+            </div>
+            <div class="settings-helper-text">Enter a model name or click Fetch to list installed models.</div>
+            <select id="setting-ollama-model-select" class="settings-input hidden"></select>
+          </div>
+        </div>
+        <div class="settings-group">
+          <label class="settings-label">Programming Language</label>
+          <select id="setting-programming-language" class="settings-input"></select>
+        </div>
+        <div class="settings-group">
+          <label class="settings-label">AssemblyAI API Key</label>
+          <div class="settings-input-row">
+            <input type="password" id="setting-assembly-key" class="settings-input" placeholder="Enter AssemblyAI API key..." />
+            <button
+              type="button"
+              id="toggle-assembly-key-visibility"
+              class="settings-input-toggle"
+              aria-label="Show AssemblyAI API key"
+              aria-pressed="false"
+            >
+              Show
+            </button>
+          </div>
+        </div>
+        <div class="settings-group">
+          <label class="settings-label">AssemblyAI Speech Model</label>
+          <select id="setting-assembly-model" class="settings-input"></select>
+        </div>
+        <div class="settings-group">
+          <div class="settings-label-row">
+            <label class="settings-label" for="setting-window-opacity">Window Opacity</label>
+            <span id="setting-window-opacity-value" class="settings-value-chip">10/10</span>
+          </div>
+          <input
+            type="range"
+            id="setting-window-opacity"
+            class="settings-range"
+            min="1"
+            max="10"
+            step="1"
+            value="10"
+          />
+        </div>
+        <div class="settings-group">
+          <label class="settings-label">Appearance</label>
+          <div class="appearance-row">
+            <label for="setting-transparency">Transparency</label>
+            <input type="range" id="setting-transparency" min="20" max="100" step="1" value="82">
+            <output id="setting-transparency-value">82%</output>
+          </div>
+          <div class="appearance-row">
+            <label for="setting-brightness">Brightness</label>
+            <input type="range" id="setting-brightness" min="50" max="140" step="1" value="100">
+            <output id="setting-brightness-value">100%</output>
+          </div>
+          <div class="appearance-row">
+            <label for="setting-glass-intensity">Glass</label>
+            <input type="range" id="setting-glass-intensity" min="0" max="100" step="1" value="44" aria-label="Glass intensity, soft to strong">
+            <output id="setting-glass-intensity-value">44%</output>
+          </div>
+        </div>
+
+        <div class="settings-group">
+          <label class="settings-label">Keyboard Shortcuts</label>
+          <p class="settings-hint">Click a shortcut, then press the keys you want.</p>
+          <div id="settings-shortcuts-list" class="settings-shortcuts-list"></div>
+          <!--
+            This used to read "Shortcuts are read-only here. Edit src/config.js
+            to customize", directly under a hint telling you to click and press
+            keys. Rebinding does work — shortcut-manager.js captures the combo
+            and saves it — so the stale sentence just made the panel look broken.
+          -->
+          <div class="settings-helper-text">Cmd+arrow keys move the overlay. Press Esc while recording to cancel.</div>
+        </div>
+        <button id="save-settings-btn" class="save-settings-btn">Save Settings</button>
+      </div>
+    </div>
+
+    <!-- Close Confirmation -->
+    <div id="close-confirmation-dialog" class="close-confirmation hidden" role="dialog" aria-modal="true" aria-labelledby="close-confirmation-title">
+      <div class="close-confirmation-card">
+        <div id="close-confirmation-title" class="close-confirmation-title">Close App?</div>
+        <div class="close-confirmation-text">This will stop voice capture and close the assistant.</div>
+        <div class="close-confirmation-actions">
+          <button id="cancel-close-btn" class="close-confirmation-btn close-confirmation-btn-secondary">Cancel</button>
+          <button id="confirm-close-btn" class="close-confirmation-btn close-confirmation-btn-danger">Close App</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Mobile Code Dialog -->
+    <div id="mobile-code-dialog" class="close-confirmation hidden" role="dialog" aria-modal="true" aria-labelledby="mobile-code-title">
+      <div class="close-confirmation-card">
+        <div id="mobile-code-title" class="close-confirmation-title">Mobile Pairing Code</div>
+        <div class="close-confirmation-text" style="text-align: center; margin: 15px 0;">
+          <div id="mobile-code-display" style="font-size: 28px; font-weight: bold; letter-spacing: 4px; color: var(--accent-color, #a855f7); margin-bottom: 8px;">------</div>
+          <div id="mobile-code-timer" style="font-size: 11px; opacity: 0.7;">Rotates in --s</div>
+        </div>
+        <div class="close-confirmation-actions">
+          <button id="close-mobile-code-btn" class="close-confirmation-btn close-confirmation-btn-secondary" style="width: 100%;">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div id="loading-overlay" class="loading-overlay hidden">
+      <div class="loading-content">
+        <div class="analyzing-icon">&#x1F9E0;</div>
+        <div class="loading-text">Analyzing screen...</div>
+      </div>
+    </div>
+    
+    <!-- Emergency Overlay -->
+    <div id="emergency-overlay" class="emergency-overlay hidden">
+      <div class="emergency-message">HIDDEN</div>
+    </div>
+  </div>
+
+  <script type="module" src="renderer.js"></script>
+  <!-- Loaded after renderer.js so the controls it dispatches to already exist. -->
+  <script type="module" src="renderer/features/command-bar/command-bar.js"></script>
+  <script type="module" src="renderer/features/auto-answer/auto-answer.js"></script>
+</body>
+</html>
