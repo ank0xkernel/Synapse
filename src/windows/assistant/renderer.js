@@ -374,6 +374,30 @@ const transcriptionManager = createTranscriptionManager({
     isChatNearBottom: () => chatUiManager.isChatNearBottom()
 });
 
+/*
+ * Phase 13: "Copy Diagnostics" — the one new user-facing action this phase
+ * adds. Wired directly here (not the separate event-listeners.js module)
+ * since transcriptionManager and showFeedback are already in scope at this
+ * exact point and the whole handler is self-contained. Technical metrics
+ * only, see diagnostic-snapshot.js for exactly what buildDiagnosticSnapshot
+ * assembles -- no transcript content, no keys, no auth headers ever reach
+ * this string.
+ */
+const copyDiagnosticsBtn = document.getElementById('copy-diagnostics-btn');
+if (copyDiagnosticsBtn) {
+    copyDiagnosticsBtn.addEventListener('click', async () => {
+        try {
+            const report = await transcriptionManager.buildDiagnosticSnapshot();
+            const text = JSON.stringify(report, null, 2);
+            await navigator.clipboard.writeText(text);
+            showFeedback('Diagnostics copied to clipboard', 'success');
+        } catch (error) {
+            console.error('Failed to build/copy diagnostic snapshot:', error);
+            showFeedback('Could not copy diagnostics', 'error');
+        }
+    });
+}
+
 // Initialize
 async function init() {
     console.log('Initializing renderer with live transcription...');
@@ -825,6 +849,15 @@ async function takeStealthScreenshot() {
 
 function buildAskAiContextPayload() {
     const bundle = buildFilteredAiContextBundle({ charBudget: AI_CONTEXT_CHAR_BUDGET, emitTruncationLog: true });
+
+    // Read-and-clear, same discipline as __synapseActiveQuestionId (set at
+    // the same site in auto-answer.js's processNextQuestion): a manual Ask
+    // button / ⌥⇧A press never goes through that path, so this must not
+    // leak a stale timestamp from a previous auto-answer-triggered question
+    // onto an unrelated manual click.
+    const questionT0 = typeof window.__synapseQuestionT0 === 'number' ? window.__synapseQuestionT0 : null;
+    window.__synapseQuestionT0 = null;
+
     return {
         mode: 'best-next-answer',
         contextString: bundle.contextString,
@@ -839,7 +872,8 @@ function buildAskAiContextPayload() {
         relation: bundle.relation,
         confidence: bundle.confidence,
         enabledScreenshotIds: bundle.enabledScreenshotIds,
-        screenshotCount: bundle.enabledScreenshotIds.length
+        screenshotCount: bundle.enabledScreenshotIds.length,
+        questionT0
     };
 }
 

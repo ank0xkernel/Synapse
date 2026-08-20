@@ -351,6 +351,35 @@ async function startApplication() {
     return checkAudioOutputRouting();
   });
 
+  /*
+   * Phase 13: the main-process half of the diagnostic snapshot. Gathers
+   * facts that only exist here -- AssemblyAI's own chunk/streaming state,
+   * the latency tracker's last completed (and any still-in-flight) report,
+   * and the same routing checks get-audio-routing-status already exposes,
+   * plus the new Synapse Output check -- into one call so the renderer
+   * doesn't need four separate round trips. Technical metrics only: no
+   * transcript content passes through here, no keys, no auth headers.
+   */
+  ipcMain.handle('get-diagnostic-snapshot', async () => {
+    const { checkBlackHole, checkAudioOutputRouting, checkSynapseOutputDevice } = require('../services/system-health');
+
+    const [blackHole, audioRouting, synapseOutput] = await Promise.all([
+      checkBlackHole(),
+      checkAudioOutputRouting(),
+      checkSynapseOutputDevice()
+    ]);
+
+    return {
+      transcription: assemblyAiService.getDiagnosticState(),
+      blackHole,
+      audioRouting,
+      synapseOutputDeviceActive: synapseOutput.applicable ? synapseOutput.active : null,
+      latency: latencyTracker
+        ? { lastReport: latencyTracker.getLastReport(), activeReports: latencyTracker.getActiveReports() }
+        : null
+    };
+  });
+
   registerAssistantIpc({
     ipcMain,
     screenshotManager,

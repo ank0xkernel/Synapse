@@ -686,11 +686,34 @@ function createAssemblyAiService({
     sttHistoryManager.resetSttHistoryBuffer('system');
   }
 
+  /**
+   * Phase 13: sttChunkCounters/sttDroppedChunkCounters and the WebSocket
+   * streaming flags were already tracked (they drive the existing
+   * chunk-heartbeat/chunk-dropped debug events) but had no external getter.
+   * Exposes them read-only for the diagnostic snapshot IPC handler --
+   * technical counters only, no transcript content, no keys.
+   */
+  function getDiagnosticState() {
+    return {
+      mic: {
+        streaming: isStreamingMic,
+        framesSent: sttChunkCounters.mic,
+        framesDropped: sttDroppedChunkCounters.mic
+      },
+      system: {
+        streaming: isStreamingSystem,
+        framesSent: sttChunkCounters.system,
+        framesDropped: sttDroppedChunkCounters.system
+      }
+    };
+  }
+
   return {
     dispose,
     emitSttDebug,
     flushAllSttHistoryBuffers: sttHistoryManager.flushAllSttHistoryBuffers,
     getDesktopSources,
+    getDiagnosticState,
     handleAudioChunk,
     reportAnswerSuperseded,
     reportSystemAudioStatus,

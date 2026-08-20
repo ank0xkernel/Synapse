@@ -208,6 +208,14 @@ function initAutoAnswer() {
         // click itself carries no payload. Read once at that call's entry.
         window.__synapseActiveQuestionId = question.id;
 
+        // Closes question-latency-tracker.js's own documented gap ("T0/T1 —
+        // question detected... in the renderer's auto-answer.js — are not
+        // wired yet"): the real detection timestamp, read once the same way
+        // as the question id above, so ipc.js can open the latency timeline
+        // at the moment the question was actually detected instead of
+        // defaulting to whenever this IPC call happens to arrive.
+        window.__synapseQuestionT0 = question.t0 || null;
+
         console.log(`[QUESTION] dispatch id=${question.id} t=${Date.now()} queue=${questionQueue.length} text="${question.text.slice(0, 80)}"`);
         console.log(`[AutoAnswer] Answering via Gemini (Ask AI): "${question.text.slice(0, 80)}"`);
         askBtn.click();
@@ -343,16 +351,24 @@ function initAutoAnswer() {
                 }
 
                 const questionId = nextQuestionId();
-                console.log(`[QUESTION] detected id=${questionId} t=${Date.now()} queue=${questionQueue.length} source=partial score=${score.toFixed(2)} text="${text.slice(0, 80)}"`);
+                const t0 = Date.now();
+                console.log(`[QUESTION] detected id=${questionId} t=${t0} queue=${questionQueue.length} source=partial score=${score.toFixed(2)} text="${text.slice(0, 80)}"`);
                 // Phase 6: the active-context block is built regardless of
                 // wasResolved — even a plain NEW_TOPIC turn has a relation/
                 // confidence worth telling the model about explicitly, not
                 // just resolved follow-ups.
+                // t0: the exact moment this queue item was confirmed a real
+                // question — same timestamp the log line above already
+                // computes, now also carried through to the IPC payload
+                // (see processNextQuestion) so latencyTracker gets a real
+                // renderer-measured T0 instead of defaulting to whenever the
+                // main process happens to receive the click.
                 questionQueue.push({
                     id: questionId,
                     text,
                     resolvedAnnotation: wasResolved ? resolved : null,
-                    activeContext: formatActiveContextBlock(questionResult)
+                    activeContext: formatActiveContextBlock(questionResult),
+                    t0
                 });
                 publishQueue();
                 console.log(`[AutoAnswer] Early-fired from partial (score ${score.toFixed(2)}): "${text.slice(0, 80)}"`);
@@ -440,7 +456,8 @@ function initAutoAnswer() {
              * Ensure no questions are discarded and they are processed in order.
              */
             const questionId = nextQuestionId();
-            console.log(`[QUESTION] detected id=${questionId} t=${Date.now()} queue=${questionQueue.length} source=final settleMs=${settleMs} text="${resolved.slice(0, 80)}"`);
+            const t0 = Date.now();
+            console.log(`[QUESTION] detected id=${questionId} t=${t0} queue=${questionQueue.length} source=final settleMs=${settleMs} text="${resolved.slice(0, 80)}"`);
             // Carried on the queue item rather than annotated immediately:
             // the raw utterance isn't actually committed to chat until
             // processNextQuestion() flushes it at dispatch time (below), which
@@ -454,7 +471,8 @@ function initAutoAnswer() {
                 id: questionId,
                 text: resolved,
                 resolvedAnnotation: wasResolved ? resolved : null,
-                activeContext: formatActiveContextBlock(questionResult)
+                activeContext: formatActiveContextBlock(questionResult),
+                t0
             });
             publishQueue();
 

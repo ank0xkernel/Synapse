@@ -211,6 +211,20 @@
       <div class="monitor-header">
         <span class="monitor-title">Transcription Monitor</span>
         <span id="monitor-master-state" class="monitor-master-state">Idle</span>
+        <!--
+          Phase 13: reuses the existing, already-styled, unscoped .action-btn
+          class (styles.css) as-is -- no new CSS -- and the same icon-only +
+          data-tip pattern already used by close-app-btn/settings-btn above,
+          rather than a text label that risks overflowing this row's
+          space-between layout on a narrow window. Technical diagnostics
+          only; see diagnostic-snapshot.js for exactly what this copies.
+        -->
+        <button id="copy-diagnostics-btn" class="action-btn" type="button" aria-label="Copy diagnostics" data-tip="Copy technical audio/latency diagnostics" data-tip-align="end">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="8" y="2" width="8" height="4" rx="1"/>
+            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+          </svg>
+        </button>
       </div>
       <div class="monitor-source-grid">
         <div class="monitor-source-row">

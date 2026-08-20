@@ -1,4 +1,5 @@
 import { LOOPBACK_ERROR_CODE, isDeviceStillPresent } from '../assembly-ai/loopback-device.js';
+import { buildDiagnosticReport } from '../diagnostics/diagnostic-snapshot.js';
 
 const MAX_MONITOR_LOG_ENTRIES = 80;
 
@@ -93,13 +94,22 @@ export function createTranscriptionManager({
         return source === 'system' ? isSystemActive : isMicActive;
     }
 
+    // Phase 13: when each source last transitioned to active -- needed only
+    // for the diagnostic snapshot's average-frames/sec figure (chunk count
+    // divided by elapsed time since start). Set at the single existing
+    // choke point every source-activation path already goes through, not a
+    // new tracked moment.
+    const sourceStartedAt = { mic: 0, system: 0 };
+
     function setMicActive(active) {
         isMicActive = !!active;
+        if (isMicActive) sourceStartedAt.mic = Date.now();
         transcriptionSourceState.setSourceActive('mic', isMicActive);
     }
 
     function setSystemActive(active) {
         isSystemActive = !!active;
+        if (isSystemActive) sourceStartedAt.system = Date.now();
         transcriptionSourceState.setSourceActive('system', isSystemActive);
     }
 
@@ -937,6 +947,51 @@ export function createTranscriptionManager({
         addMonitorLog('info', 'stopped-event', 'Stop acknowledged by backend', source);
     }
 
+    /**
+     * Phase 13: assembles the diagnostic report the user can copy and send
+     * back. Gathers the renderer's own already-tracked audio state (nothing
+     * new is measured here beyond sourceStartedAt above), asks the main
+     * process for its half over the one new IPC round trip, and hands both
+     * to the pure buildDiagnosticReport() for labeling. If the main-process
+     * call fails (e.g. IPC unavailable), still returns the renderer half
+     * with the main-process fields left at their honest "not checked"
+     * defaults rather than failing the whole export.
+     */
+    async function buildDiagnosticSnapshot() {
+        let mainProcess = null;
+        try {
+            mainProcess = await window.electronAPI?.getDiagnosticSnapshot?.();
+        } catch (_) {
+            mainProcess = null;
+        }
+
+        return buildDiagnosticReport({
+            now: Date.now(),
+            mic: {
+                active: isMicActive,
+                status: sourceStatuses.mic,
+                lastFrameAt: audioPipeline.getLastFrameAt('mic'),
+                chunkCount: audioPipeline.getChunkCount('mic'),
+                silenceInfo: audioPipeline.getSilenceInfo('mic'),
+                startedAt: sourceStartedAt.mic
+            },
+            system: {
+                active: isSystemActive,
+                status: sourceStatuses.system,
+                lastFrameAt: audioPipeline.getLastFrameAt('system'),
+                chunkCount: audioPipeline.getChunkCount('system'),
+                silenceInfo: audioPipeline.getSilenceInfo('system'),
+                startedAt: sourceStartedAt.system
+            },
+            transcription: mainProcess?.transcription || null,
+            blackHole: mainProcess?.blackHole || null,
+            audioRouting: mainProcess?.audioRouting || null,
+            synapseOutputDeviceActive: mainProcess?.synapseOutputDeviceActive ?? null,
+            latency: mainProcess?.latency || null,
+            monitorLog: monitorLogEntries.slice()
+        });
+    }
+
     return {
         selectedSources,
         sourceStatuses,
@@ -952,6 +1007,7 @@ export function createTranscriptionManager({
         handleVoskFinal,
         handleVoskStatus,
         handleVoskError,
-        handleVoskStopped
+        handleVoskStopped,
+        buildDiagnosticSnapshot
     };
 }

@@ -202,17 +202,21 @@ function registerAssistantIpc({
     const mode = payload?.mode === 'best-next-answer' ? 'best-next-answer' : 'best-next-answer';
 
     /*
-     * Latency instrumentation, T2 (this handler being invoked) through T6
-     * (first chunk broadcast). T0/T1 — question detected and transcript-ready
-     * in the renderer's auto-answer.js — are not wired yet: askBtn.click()
-     * carries no payload, so getting a true renderer timestamp here means
-     * threading state through that click rather than this call, which risks
-     * the one proven-working answer path. What's captured below is exactly
-     * the segment that is actually actionable — everything from "we decided
-     * to ask" through Gemini's first token and delivery — which is the part
-     * §15 says to optimize; the provider's own ~1s floor is not ours to fix.
+     * Latency instrumentation, T0 (question detected in auto-answer.js)
+     * through T6 (first chunk broadcast). T0 now arrives as
+     * payload.questionT0 — auto-answer.js captures it the moment a question
+     * is confirmed detected and carries it across the askBtn.click()
+     * boundary via a bridge global (mirroring the existing
+     * __synapseActiveQuestionId pattern), read once in
+     * buildAskAiContextPayload(). Falls back to this handler's own
+     * invocation time (the tracker's own default) for a manual Ask button /
+     * ⌥⇧A press, which never goes through auto-answer.js and genuinely has
+     * no earlier "detected" moment to report.
      */
-    const latencyId = latencyTracker?.start({ mode }) ?? null;
+    const questionT0 = typeof payload?.questionT0 === 'number' && payload.questionT0 > 0
+      ? payload.questionT0
+      : undefined;
+    const latencyId = latencyTracker?.start({ mode }, questionT0) ?? null;
     if (latencyId) latencyTracker.mark(latencyId, 'T2');
 
     try {

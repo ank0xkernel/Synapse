@@ -505,9 +505,19 @@ export function createAudioPipeline({ sendAudioChunk, addMonitorLog, debugAudio 
     return lastFrameAt[normalizeSource(source)] || 0;
   }
 
+  // Phase 13: audioChunkCounters was already tracked (it drives the existing
+  // [AUDIO_HEALTH] heartbeat log) but had no external getter -- the
+  // diagnostic snapshot needs the raw count to compute an average frames/sec
+  // figure, so this exposes the same counter read-only rather than tracking
+  // a second one.
+  function getChunkCount(source) {
+    return audioChunkCounters[normalizeSource(source)] || 0;
+  }
+
   return {
     buildAudioProcessor,
     drainSourceSampleQueue,
+    getChunkCount,
     getLastFrameAt,
     getMicAudioStream,
     getSilenceInfo,

@@ -218,6 +218,12 @@ function createInvokeActions(ipcRenderer) {
       fallback: () => ({ applicable: false, ok: false, detail: 'Routing check unavailable' })
     }),
 
+    getDiagnosticSnapshot: invokeWithFallback(ipcRenderer, {
+      channel: 'get-diagnostic-snapshot',
+      label: 'getDiagnosticSnapshot',
+      fallback: () => null
+    }),
+
     submitFinalQuestion: invokeWithFallback(ipcRenderer, {
       channel: 'assistant:final-question',
       label: 'submitFinalQuestion',

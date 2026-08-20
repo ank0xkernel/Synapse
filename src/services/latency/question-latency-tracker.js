@@ -79,6 +79,14 @@ function createQuestionLatencyTracker({ onComplete = () => {}, log = console.log
     return { id: entry.id, meta: entry.meta, segments, total, timestamps: t };
   }
 
+  // Phase 13: the diagnostic snapshot needs to read back "what actually
+  // happened on the last question" on demand (the user exports diagnostics
+  // some time after asking, not necessarily the instant it completes) --
+  // previously there was no way to see a report after logReport()/onComplete()
+  // already fired once. Only the single most recent report is kept; this is
+  // not a history log, just "what just happened."
+  let lastReport = null;
+
   /** Closes the timeline at T6 and emits the report. Call once generation's first chunk lands. */
   function complete(id) {
     const entry = inFlight.get(id);
@@ -88,6 +96,7 @@ function createQuestionLatencyTracker({ onComplete = () => {}, log = console.log
     entry.done = true;
     const report = buildReport(entry);
     inFlight.delete(id);
+    lastReport = report;
 
     logReport(report);
     onComplete(report);
@@ -116,7 +125,23 @@ function createQuestionLatencyTracker({ onComplete = () => {}, log = console.log
     return inFlight.size;
   }
 
-  return { start, mark, complete, abandon, activeCount, STAGE_LABELS };
+  /** Most recently completed report, or null if none has completed yet this session. */
+  function getLastReport() {
+    return lastReport;
+  }
+
+  /**
+   * Partial reports for whatever is still in flight right now -- e.g. a
+   * diagnostic export triggered while an answer is still generating. Never
+   * invents a missing stage: buildReport()'s own seg() already returns null
+   * for any timestamp that hasn't arrived yet, which the snapshot reports
+   * as UNKNOWN rather than a guessed number.
+   */
+  function getActiveReports() {
+    return [...inFlight.values()].map(buildReport);
+  }
+
+  return { start, mark, complete, abandon, activeCount, getLastReport, getActiveReports, STAGE_LABELS };
 }
 
 module.exports = { createQuestionLatencyTracker, STAGES, STAGE_LABELS };

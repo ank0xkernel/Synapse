@@ -156,6 +156,50 @@ function checkAudioOutputRouting() {
 }
 
 /**
+ * Phase 13: the "Synapse Output" aggregate/multi-output device some users
+ * create in Audio MIDI Setup (so they can hear the call AND have it reach
+ * BlackHole) has never been checkable by the app itself -- the diagnostic
+ * snapshot needs to show whether it exists and whether it's the device
+ * actually active right now, same as checkAudioOutputRouting does for
+ * BlackHole. Same exec pattern as the two checks above, not a shared call --
+ * consistent with how they're already written, not a new optimization.
+ */
+function checkSynapseOutputDevice() {
+  if (process.platform !== 'darwin') {
+    return Promise.resolve({ applicable: false });
+  }
+
+  return new Promise((resolve) => {
+    exec('system_profiler SPAudioDataType -json', { timeout: 4000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout) => {
+      if (error) {
+        resolve({ applicable: true, exists: false, active: false, detail: 'Could not enumerate audio devices' });
+        return;
+      }
+
+      try {
+        const items = JSON.parse(stdout || '{}')?.SPAudioDataType?.[0]?._items || [];
+        const device = items.find((d) => /synapse output/i.test(d._name || ''));
+        const defaultOut = items.find((d) => d.coreaudio_default_audio_output_device === 'spaudio_yes');
+        const active = !!device && defaultOut?._name === device._name;
+
+        resolve({
+          applicable: true,
+          exists: !!device,
+          active,
+          detail: !device
+            ? '"Synapse Output" device not found'
+            : active
+              ? '"Synapse Output" is the current default output'
+              : '"Synapse Output" exists but is not the current default output'
+        });
+      } catch (parseError) {
+        resolve({ applicable: true, exists: false, active: false, detail: `Could not parse audio device list: ${parseError.message}` });
+      }
+    });
+  });
+}
+
+/**
  * Probes everything the dashboard shows, in parallel.
  * @param {{ollamaBaseUrl?: string, firstTokenMs?: number|null}} [options]
  */
@@ -186,6 +230,7 @@ module.exports = {
   checkAudioOutputRouting,
   checkBlackHole,
   checkOllama,
+  checkSynapseOutputDevice,
   checkWhisper,
   checkWhisperMic,
   probeAll

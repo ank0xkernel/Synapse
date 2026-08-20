@@ -29,8 +29,18 @@ class GeminiService {
     this.genAI = new GoogleGenerativeAI(this.apiKey);
 
     this.requestQueue = [];
-    this.lastRequestTime = 0;
-    this.minRequestInterval = 6000;
+    // Sliding-window rate limiting (see waitForRateLimit below) — replaces a
+    // flat 6000ms minimum gap between EVERY request, which measured at
+    // ~4.8s of pure artificial delay on the second of two questions asked
+    // ~1.2s apart (a normal rapid-follow-up interview pace): the fixed
+    // interval enforced 10 RPM by spacing every single request evenly,
+    // even when the actual rolling-minute request count was nowhere near
+    // the cap. This enforces the identical real constraint (never more than
+    // maxRequestsPerWindow requests in any trailing rateLimitWindowMs) but
+    // only waits when a burst has genuinely used up that budget.
+    this.requestTimestamps = [];
+    this.maxRequestsPerWindow = 10; // matches the free tier's 15 RPM with the same safety margin the old 10 RPM figure had
+    this.rateLimitWindowMs = 60000;
     this.maxRetries = 3;
     this.isProcessing = false;
 
@@ -204,15 +214,23 @@ class GeminiService {
 
   async waitForRateLimit() {
     const now = Date.now();
-    const timeSinceLastRequest = now - this.lastRequestTime;
+    this.requestTimestamps = this.requestTimestamps.filter((t) => now - t < this.rateLimitWindowMs);
 
-    if (timeSinceLastRequest < this.minRequestInterval) {
-      const waitTime = this.minRequestInterval - timeSinceLastRequest;
-      console.log(`Rate limit: waiting ${waitTime}ms`);
-      await new Promise((resolve) => setTimeout(resolve, waitTime));
+    if (this.requestTimestamps.length >= this.maxRequestsPerWindow) {
+      // At the cap: wait only long enough for the OLDEST request in the
+      // window to age out, not a flat per-request gap. A burst of requests
+      // spaced well apart never reaches this branch at all.
+      const oldest = this.requestTimestamps[0];
+      const waitTime = this.rateLimitWindowMs - (now - oldest);
+      if (waitTime > 0) {
+        console.log(`Rate limit: waiting ${waitTime}ms (${this.maxRequestsPerWindow} requests already in the last ${this.rateLimitWindowMs / 1000}s)`);
+        await new Promise((resolve) => setTimeout(resolve, waitTime));
+      }
+      const afterWait = Date.now();
+      this.requestTimestamps = this.requestTimestamps.filter((t) => afterWait - t < this.rateLimitWindowMs);
     }
 
-    this.lastRequestTime = Date.now();
+    this.requestTimestamps.push(Date.now());
   }
 
   async processQueue() {
