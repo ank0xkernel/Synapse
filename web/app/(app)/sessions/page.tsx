@@ -11,8 +11,8 @@ export default async function Sessions() {
   const sessions = await listSessions(user.id);
   return (
     <div className="stack-lg">
-      <div className="row-between page-head" style={{ flexDirection: 'row' }}>
-        <div className="stack" style={{ gap: 4 }}>
+      <div className="page-head page-head-row">
+        <div>
           <h1>Sessions</h1>
           <p>One session per interview: which resume, which job, how you want answers, and your own notes.</p>
         </div>

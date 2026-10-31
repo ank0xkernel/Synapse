@@ -14,7 +14,7 @@ export default async function LinkDesktop({ searchParams }: { searchParams: Prom
   const parsed = parseLinkRequest(flat);
   if (!parsed.ok) {
     return (
-      <main className="auth">
+      <main className="auth" id="main">
         <div className="card auth-card">
           <h1>Cannot link this app</h1>
           <p className="notice" data-tone="danger" role="alert">{parsed.error}</p>
@@ -30,7 +30,7 @@ export default async function LinkDesktop({ searchParams }: { searchParams: Prom
     redirect(`/login?next=${encodeURIComponent(`/desktop/link?${qs}`)}`);
   }
   return (
-    <main className="auth">
+    <main className="auth" id="main">
       <div className="card auth-card">
         <h1>Link Synapse Desktop to {user.email}?</h1>
         <p className="muted">The desktop app on this computer will be able to read your active resume, profile, job description and session notes. You can unlink it any time from Settings.</p>

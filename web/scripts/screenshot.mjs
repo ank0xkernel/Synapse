@@ -93,7 +93,7 @@ if (!process.versions.electron) {
 
   app.whenReady().then(async () => {
     fs.mkdirSync(OUT, { recursive: true });
-    const sizes = [[1440, 900], [390, 844]];
+    const sizes = [[1440, 900], [834, 1112], [390, 844]];
     const pub = [['landing', '/'], ['login', '/login'], ['signup', '/signup']];
     const full = await account('full-shots@example.com');
     // Seed once; rerun after deleting the account (or point at a fresh DB) to reseed.

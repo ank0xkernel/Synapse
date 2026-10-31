@@ -12,8 +12,8 @@ export default async function Jobs() {
   const jds = await listJds(user.id);
   return (
     <div className="stack-lg">
-      <div className="row-between page-head" style={{ flexDirection: 'row' }}>
-        <div className="stack" style={{ gap: 4 }}>
+      <div className="page-head page-head-row">
+        <div>
           <h1>Job descriptions</h1>
           <p>Paste a posting once and reuse it across sessions.</p>
         </div>

@@ -132,7 +132,7 @@ export default function ProfileEditor({ resumeId, initial }: { resumeId: string;
           <span className="hint">Written by you. It is sent to the desktop app as your own words.</span>
         </div>
       </section>
-      <div className="row" style={{ position: 'sticky', bottom: 0, padding: '12px 0', background: 'var(--surface-0)' }}>
+      <div className="row" style={{ position: 'sticky', bottom: 0, padding: '12px 0', background: '#0b0b0e', borderTop: '1px solid var(--border-subtle)' }}>
         <button type="button" className="btn btn-primary" onClick={save} disabled={busy || !dirty}>{busy ? 'Saving...' : 'Save profile'}</button>
         {dirty && !msg && <span className="status" data-tone="warning">Unsaved changes</span>}
         {msg && <span className={msg.ok ? 'form-ok' : 'form-error'} role="status">{msg.text}</span>}

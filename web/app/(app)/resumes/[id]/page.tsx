@@ -21,7 +21,7 @@ export default async function ResumePage({ params }: { params: Promise<{ id: str
   return (
     <div className="stack-lg">
       <div className="page-head">
-        <p className="meta"><Link href="/resumes">Resumes</Link></p>
+        <p className="crumb"><Link href="/resumes">Resumes</Link></p>
         <div className="row-between">
           <h1>{r.name}</h1>
           <div className="row">

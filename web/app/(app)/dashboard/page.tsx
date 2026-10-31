@@ -32,7 +32,7 @@ export default async function Dashboard() {
         <p>Everything the desktop app needs for your next interview.</p>
       </div>
 
-      <div className="grid-3">
+      <div className="grid-3 stats">
         <div className="card stat"><span className="muted">Resumes</span><b>{resumes}</b></div>
         <div className="card stat"><span className="muted">Job descriptions</span><b>{jds}</b></div>
         <div className="card stat"><span className="muted">Sessions</span><b>{sessions}</b></div>
@@ -41,7 +41,7 @@ export default async function Dashboard() {
       <div className="grid-2">
         <section className="card" aria-labelledby="setup">
           <h2 id="setup">Setup</h2>
-          <ul className="list">
+          <ul className="list steps">
             {steps.map((s) => (
               <li key={s.label}>
                 <span className="status" data-tone={s.done ? 'positive' : undefined}>{s.done ? 'Done' : 'To do'}</span>

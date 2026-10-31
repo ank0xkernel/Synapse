@@ -41,7 +41,11 @@ export default function DeviceTokenCreate() {
           <strong>Copy this token now. It is shown once and cannot be recovered.</strong>
           <div className="token-box" data-testid="new-token">{token}</div>
           <div className="row">
-            <button type="button" className="btn btn-sm" onClick={async () => { await navigator.clipboard.writeText(token).catch(() => {}); setCopied(true); }}>
+            <button type="button" className="btn btn-sm" onClick={async () => {
+              const ok = await navigator.clipboard.writeText(token).then(() => true, () => false);
+              setCopied(ok);
+              setError(ok ? '' : 'Copy failed. Select the token and copy it manually.');
+            }}>
               {copied ? 'Copied' : 'Copy'}
             </button>
             <button type="button" className="btn btn-sm btn-ghost" onClick={() => setToken('')}>I saved it</button>

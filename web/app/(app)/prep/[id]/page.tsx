@@ -27,7 +27,7 @@ export default async function PrepPage({ params }: { params: Promise<{ id: strin
   return (
     <div className="stack-lg">
       <div className="page-head">
-        <p className="meta"><Link href="/prep">Preparation</Link></p>
+        <p className="crumb"><Link href="/prep">Preparation</Link></p>
         <h1>{s.title}</h1>
         <p className="meta">{s.resume_name ?? 'No resume'} - {s.jd_label ?? 'No job description'}</p>
       </div>

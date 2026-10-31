@@ -35,11 +35,11 @@ export default async function Desktop() {
       <section className="card stack" aria-labelledby="steps">
         <h2 id="steps">Connect the desktop app</h2>
         <ol className="plain">
-          <li>In the desktop app, choose &ldquo;Sign in to Synapse web&rdquo;. Your browser opens this site.</li>
+          <li>In the desktop app, open Resume &amp; context and choose &ldquo;Link with browser&rdquo;. Your browser opens this site.</li>
           <li>Check the account shown and select Approve. The browser hands a one-time code back to the app on your own computer.</li>
           <li>Before an interview the app fetches your context once and works from its cached copy. Live answers never wait on this site.</li>
         </ol>
-        <p className="meta">The sign-in uses a one-time code with PKCE and a loopback address, so the app never sees your password. Tokens last 90 days from last use. Contract: docs/desktop-web-contract.md.</p>
+        <p className="meta">The sign-in uses a one-time code with PKCE and a loopback address, so the app never sees your password. Tokens last 90 days from last use.</p>
       </section>
 
       <section className="card stack" aria-labelledby="tok">

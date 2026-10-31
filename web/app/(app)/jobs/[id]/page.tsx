@@ -19,7 +19,7 @@ export default async function JdPage({ params }: { params: Promise<{ id: string 
   return (
     <div className="stack-lg">
       <div className="page-head">
-        <p className="meta"><Link href="/jobs">Job descriptions</Link></p>
+        <p className="crumb"><Link href="/jobs">Job descriptions</Link></p>
         <div className="row-between">
           <h1>{jd.role || 'Untitled role'}{jd.company ? ` at ${jd.company}` : ''}</h1>
           <div className="row">

@@ -11,7 +11,10 @@ export const viewport: Viewport = { themeColor: '#0b0b0e', colorScheme: 'dark' }
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <a className="skip" href="#main">Skip to content</a>
+        {children}
+      </body>
     </html>
   );
 }

@@ -21,7 +21,7 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
   return (
     <div className="stack-lg">
       <div className="page-head">
-        <p className="meta"><Link href="/sessions">Sessions</Link></p>
+        <p className="crumb"><Link href="/sessions">Sessions</Link></p>
         <div className="row-between">
           <h1>{s.title}</h1>
           <div className="row">
