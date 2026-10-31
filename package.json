@@ -52,12 +52,6 @@
     "asarUnpack": [
       "node_modules/screenshot-desktop/**/*"
     ],
-    "extraResources": [
-      {
-        "from": ".env",
-        "to": ".env"
-      }
-    ],
     "afterPack": "scripts/after-pack.js",
     "mac": {
       "category": "public.app-category.education",
