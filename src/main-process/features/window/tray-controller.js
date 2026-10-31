@@ -61,7 +61,7 @@ class TrayController {
     if (this.watchdog) {
       await this.watchdog.performHealthCheck();
       const statusMsg = this.watchdog.isHealthy 
-        ? '🟢 All Synapse local services (Whisper Core ML, Ollama Metal, BlackHole) are operational!'
+        ? '🟢 All monitored Synapse local services are operational.'
         : '🔴 System check notice: One or more local services experienced a fault. Recovery triggered.';
       
       dialog.showMessageBox({
@@ -101,7 +101,18 @@ class TrayController {
           // ago and the code rotates every 30 seconds.
           const currentToken = this.totp.generateToken();
           const secondsLeft = this.totp.secondsUntilRotation();
-          const url = serverStatus && serverStatus.networkUrl ? serverStatus.networkUrl : null;
+          // Bug found reading this file: server.js's status object has no
+          // `networkUrl` field at all -- only `urls`, an array (see
+          // getLanAddresses/refreshUrls in mobile-server/server.js). This
+          // line always read undefined, so the "On your phone, open: ..."
+          // line below was silently blank on every single passcode dialog,
+          // for every build, since this tray menu existed. `urls` is
+          // already ordered real-adapters-first (isVirtualAdapter sorting
+          // in getLanAddresses), so the first entry is the best guess at an
+          // address a phone or a same-Mac browser can actually reach.
+          const url = serverStatus && Array.isArray(serverStatus.urls) && serverStatus.urls.length > 0
+            ? serverStatus.urls[0].url
+            : null;
 
           clipboard.writeText(currentToken);
           dialog.showMessageBox({

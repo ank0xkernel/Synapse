@@ -286,6 +286,68 @@ function createWindowController({
     return mainWindow.getBounds();
   }
 
+  /*
+   * Compact mode — shrinks the window to a thin status strip instead of
+   * hiding it (that's toggleStealthMode, opacity-based, for when the window
+   * needs to disappear entirely). Requested directly: during a live
+   * interview the full chat/monitor panels cover too much of whatever is
+   * underneath (the call window, a shared editor).
+   *
+   * Width is deliberately left untouched — only height shrinks. The header
+   * row (status dot, timer, action buttons) that stays visible in compact
+   * mode (see #app.compact-mode in styles.css) was laid out assuming the
+   * window's normal width; shrinking width too would risk those buttons
+   * overflowing or wrapping in a way this change cannot visually verify
+   * before shipping. Shrinking height alone still removes the vast majority
+   * of the window's on-screen footprint, which is what was actually asked
+   * for ("minimize the whole thing" / "I want to see the screen").
+   *
+   * mainWindow.setMinimumSize() is the real, Electron-level floor (distinct
+   * from getSafeWindowBounds' clamp to WINDOW_MIN_HEIGHT, which is a
+   * separate, additional guard for ordinary drag-resizing) — it has to be
+   * relaxed before setBounds can go below WINDOW_MIN_HEIGHT, and restored
+   * on the way back out so the resize handles keep their normal floor the
+   * rest of the time.
+   */
+  const COMPACT_MODE_HEIGHT = 64;
+  const COMPACT_MODE_MIN_WIDTH = 260;
+  let preCompactBounds = null;
+  let isCompactModeActive = false;
+
+  function setCompactMode(enabled) {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return { error: 'Main window not available' };
+    }
+
+    const next = Boolean(enabled);
+    if (next === isCompactModeActive) {
+      return { ...mainWindow.getBounds(), compact: isCompactModeActive };
+    }
+
+    if (next) {
+      preCompactBounds = mainWindow.getBounds();
+      mainWindow.setMinimumSize(COMPACT_MODE_MIN_WIDTH, COMPACT_MODE_HEIGHT);
+
+      const display = screen.getDisplayMatching(preCompactBounds);
+      const workArea = display && display.workArea ? display.workArea : screen.getPrimaryDisplay().workArea;
+      const width = clamp(preCompactBounds.width, COMPACT_MODE_MIN_WIDTH, workArea.width);
+      const x = clamp(preCompactBounds.x, workArea.x, workArea.x + workArea.width - width);
+      const y = clamp(preCompactBounds.y, workArea.y, workArea.y + workArea.height - COMPACT_MODE_HEIGHT);
+
+      mainWindow.setBounds({ x, y, width, height: COMPACT_MODE_HEIGHT }, false);
+      isCompactModeActive = true;
+    } else {
+      mainWindow.setMinimumSize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT);
+      if (preCompactBounds) {
+        mainWindow.setBounds(getSafeWindowBounds(preCompactBounds), false);
+      }
+      preCompactBounds = null;
+      isCompactModeActive = false;
+    }
+
+    return { ...mainWindow.getBounds(), compact: isCompactModeActive };
+  }
+
   function toggleStealthMode() {
     if (autoHideTimer) {
       clearTimeout(autoHideTimer);
@@ -617,6 +679,7 @@ function createWindowController({
     registerShortcuts,
     reapplyShortcuts,
     setClickThrough,
+    setCompactMode,
     setWindowSizePreset,
     setWindowBounds,
     setWindowOpacityLevel,

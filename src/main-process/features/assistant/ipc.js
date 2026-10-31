@@ -1,3 +1,5 @@
+const { resolveResponseModeId, listResponseModes } = require('../../../services/ai/response-modes');
+
 function registerAssistantIpc({
   ipcMain,
   screenshotManager,
@@ -182,6 +184,10 @@ function registerAssistantIpc({
     return windowController.toggleStealthMode();
   });
 
+  ipcMain.handle('set-compact-mode', (_event, enabled) => {
+    return windowController.setCompactMode(enabled);
+  });
+
   ipcMain.handle('emergency-hide', () => {
     return windowController.emergencyHide();
   });
@@ -199,7 +205,8 @@ function registerAssistantIpc({
   });
 
   ipcMain.handle('ask-ai-with-session-context', async (_event, payload = {}) => {
-    const mode = payload?.mode === 'best-next-answer' ? 'best-next-answer' : 'best-next-answer';
+    const mode = 'best-next-answer';
+    const responseMode = resolveResponseModeId(payload?.responseMode);
 
     /*
      * Latency instrumentation, T0 (question detected in auto-answer.js)
@@ -216,8 +223,25 @@ function registerAssistantIpc({
     const questionT0 = typeof payload?.questionT0 === 'number' && payload.questionT0 > 0
       ? payload.questionT0
       : undefined;
-    const latencyId = latencyTracker?.start({ mode }, questionT0) ?? null;
+    const latencyId = latencyTracker?.start({ mode, responseMode }, questionT0) ?? null;
     if (latencyId) latencyTracker.mark(latencyId, 'T2');
+
+    // Stage timing reported by the service at the moment things actually
+    // happen: T4 is the real dispatch to the provider (after prompt build and
+    // any wait for a realtime slot), not the moment the call was made.
+    const onTiming = (event) => {
+      if (!latencyId) return;
+      if (event.stage === 'dispatched') {
+        // Last dispatch wins: after a retry or key failover, provider time is
+        // measured on the attempt that actually answered.
+        latencyTracker.mark(latencyId, 'T4', event.at, { overwrite: true });
+        latencyTracker.note(latencyId, { model: event.model, thinking: event.thinking, attempts: event.attempt });
+      } else if (event.stage === 'retry') {
+        latencyTracker.addRetry(latencyId, event.delayMs, event.reason);
+      } else if (event.stage === 'rate-limited') {
+        latencyTracker.addRetry(latencyId, 0, 'rate-limited');
+      }
+    };
 
     try {
       assemblyAiService.flushAllSttHistoryBuffers('pre-ask-ai');
@@ -286,7 +310,6 @@ function registerAssistantIpc({
         if (imageParts.length > 0) {
           usedScreenshots = true;
           usedScreenshotCount = imageParts.length;
-          if (latencyId) latencyTracker.mark(latencyId, 'T4');
           text = await geminiRuntime.executeWithKeyFailover((geminiService) => {
             if (!geminiService || !geminiService.model) {
               throw new Error('AI model not initialized. Please check your API key.');
@@ -300,15 +323,16 @@ function registerAssistantIpc({
               relation,
               confidence,
               screenshotCount: imageParts.length,
-              mode,
-              onChunk
+              responseMode,
+              onChunk,
+              onTiming,
+              tag: 'askAi'
             });
           });
         }
       }
 
       if (!text) {
-        if (latencyId) latencyTracker.mark(latencyId, 'T4');
         text = await geminiRuntime.executeWithKeyFailover((geminiService) => {
           if (!geminiService || !geminiService.model) {
             throw new Error('AI model not initialized. Please check your API key.');
@@ -322,8 +346,10 @@ function registerAssistantIpc({
             relation,
             confidence,
             screenshotCount: usedScreenshots ? usedScreenshotCount : 0,
-            mode,
-            onChunk
+            responseMode,
+            onChunk,
+            onTiming,
+            tag: 'askAi'
           });
         });
       }
@@ -337,8 +363,20 @@ function registerAssistantIpc({
 
       if (latencyId) latencyTracker.complete(latencyId);
       sendToRenderer('ai-stream-end', { actionId: 'askAi' });
-      return { success: true, text, mode, usedScreenshots };
+      return { success: true, text, mode, responseMode, usedScreenshots };
     } catch (error) {
+      // Deliberately interrupted via cancel-ask-ai below (the host updated/
+      // extended the question while this was still generating) — not a
+      // failure, so it must not log as an error, retry, or surface an error
+      // toast. auto-answer.js is already mid-dispatch of the question that
+      // caused this and will drain the queue the moment askBtn re-enables,
+      // which returning here promptly is what actually unblocks.
+      if (error?.isCancelled) {
+        if (latencyId) latencyTracker.abandon(latencyId);
+        sendToRenderer('ai-stream-end', { actionId: 'askAi' });
+        return { success: false, cancelled: true, mode, usedScreenshots: false };
+      }
+
       console.error('Error in ask-ai-with-session-context:', error);
       // A failed request never reached T5/T6 — completing it would report a
       // misleadingly huge "browser" segment covering the whole failure. Drop
@@ -352,6 +390,22 @@ function registerAssistantIpc({
         usedScreenshots: false
       };
     }
+  });
+
+  /*
+   * Interrupts the in-flight askAi request so a fast-follow question (the
+   * interviewer extending or clarifying what they just asked while Synapse
+   * is still mid-answer) doesn't sit queued behind a full answer to a
+   * question that's already stale by the time its turn comes. Tag-scoped
+   * to 'askAi' — the only path auto-answer.js drives — so a manual
+   * screenshot analysis or suggest-response call in flight elsewhere is
+   * never touched by this.
+   */
+  ipcMain.handle('get-response-modes', () => listResponseModes());
+
+  ipcMain.handle('cancel-ask-ai', async () => {
+    const cancelled = geminiRuntime.cancelActive('askAi');
+    return { success: true, cancelled };
   });
 
   ipcMain.handle('clear-stealth', () => {

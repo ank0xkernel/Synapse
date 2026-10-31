@@ -41,11 +41,10 @@ export function createAudioPipeline({ sendAudioChunk, addMonitorLog, debugAudio 
   // transcription-manager.js already watch — track.readyState 'live', the
   // AudioWorklet posting frames on schedule, the AssemblyAI socket open and
   // streaming — while every one of those frames is pure digital silence. That
-  // happens when BlackHole is correctly selected as the capture device (the
-  // getUserMedia call above succeeds) but macOS's audio OUTPUT was never
-  // routed to it: System Settings > Sound > Output has to be BlackHole, or a
-  // Multi-Output Device that includes it, or the call audio never reaches the
-  // loopback input in the first place. No existing watchdog catches this —
+  // happens when nothing is playing, when the System Audio Recording
+  // permission is denied (macOS then delivers zeros rather than an error), or,
+  // on the legacy BlackHole fallback, when output was never routed to the
+  // loopback device. No existing watchdog catches this —
   // they all confirm frames keep arriving, none of them look at what's in
   // them. This does, using the same per-sample pass sendPcmFrame already
   // makes for NaN/Infinity rejection, so it costs nothing extra to run always
@@ -159,15 +158,10 @@ export function createAudioPipeline({ sendAudioChunk, addMonitorLog, debugAudio 
   }
 
   /**
-   * Host / far-end audio.
-   *
-   * This used to go through `chromeMediaSource: 'desktop'`, which does not
-   * capture audio on macOS. Worse, the "flat syntax" retry silently degraded to
-   * the *default microphone*: `chromeMediaSource` is not a standard
-   * MediaTrackConstraint, and outside a `mandatory` block Chromium drops keys it
-   * does not recognise, leaving `audio: {}`. The host source was therefore
-   * recording the user's own voice. We now bind explicitly to the loopback
-   * device by deviceId, and never fall back to a default device.
+   * Host / far-end audio, legacy fallback only (macOS older than 13, where the
+   * native helper cannot run). Binds explicitly to a loopback input such as
+   * BlackHole by deviceId and never falls back to a default device: an
+   * unconstrained request silently records the user's own microphone.
    */
   async function getSystemAudioStream() {
     const device = await requireLoopbackDevice();
@@ -470,6 +464,19 @@ export function createAudioPipeline({ sendAudioChunk, addMonitorLog, debugAudio 
     };
   }
 
+  /**
+   * Entry point for PCM that did not come through Web Audio: the native macOS
+   * helper delivers 16 kHz mono Float32 frames already. Going through the same
+   * queue/drain path keeps silence tracking, frame counters and the stall
+   * watchdog identical for native and Web Audio sources.
+   */
+  function ingestPcmFrame(source, floatSamples, sampleRate = TARGET_SAMPLE_RATE) {
+    if (!floatSamples || floatSamples.length === 0) return;
+    const samples = floatSamples instanceof Float32Array ? floatSamples : new Float32Array(floatSamples);
+    appendSourceSamples(source, downsampleFloat32Buffer(samples, sampleRate, source));
+    drainSourceSampleQueue(source);
+  }
+
   function stopAudioResources(context, stream, processor) {
     try {
       processor?.disconnect();
@@ -522,6 +529,7 @@ export function createAudioPipeline({ sendAudioChunk, addMonitorLog, debugAudio 
     getMicAudioStream,
     getSilenceInfo,
     getSystemAudioStream,
+    ingestPcmFrame,
     resetChunkCounter,
     resetSourceSampleQueue,
     stopAudioResources

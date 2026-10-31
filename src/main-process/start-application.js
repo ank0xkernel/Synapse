@@ -36,6 +36,7 @@ const { createAssemblyAiService } = require('../services/assembly-ai/service');
 const { createGeminiSpeechService } = require('../services/stt/gemini-speech-service');
 const { createQuestionLatencyTracker } = require('../services/latency/question-latency-tracker');
 const { registerAssemblyAiIpc } = require('../services/assembly-ai/ipc');
+const { createNativeSystemAudio, resolveHelperPath } = require('../services/native-audio/native-system-audio');
 const { registerSettingsIpc } = require('./features/settings/ipc');
 const { createWindowController } = require('./features/window/window-controller');
 const { DEFAULT_WINDOW_OPACITY_LEVEL } = require('./features/window/window-constants');
@@ -62,9 +63,9 @@ function resolveStartupOptions(argv = process.argv) {
 }
 
 /**
- * macOS gates every audio *input* behind the microphone TCC entry — including
- * virtual devices like BlackHole, so host-audio capture needs this too. Without
- * an explicit request the getUserMedia call in the renderer fails silently: the
+ * macOS gates every audio *input* behind the microphone TCC entry — the mic,
+ * and the legacy BlackHole fallback input. Native system capture has its own
+ * permission. Without an explicit request the getUserMedia call in the renderer fails silently: the
  * transcription UI just never produces text, with nothing in the log to explain
  * why. Called lazily from the start-voice-recognition IPC.
  */
@@ -180,6 +181,10 @@ async function startApplication() {
       whisperMic:    whisperMicService,
       ollama:        aiOrchestrator?.ollamaService || null
     }),
+    getSystemAudioCapture: async () => ({
+      probe: await nativeSystemAudio.probe(),
+      state: nativeSystemAudio.getState()
+    }),
     notifyDesktop:        (channel, data) => {
       if (channel === 'send-answer-to-editor' && aiOrchestrator) {
         aiOrchestrator.sendLastAnswerToEditor();
@@ -222,6 +227,15 @@ async function startApplication() {
     sendToRenderer,
     getSttMode: () => appState?.sttMode || 'auto',
     geminiSpeech: geminiSpeechService
+  });
+
+  // Native macOS system-audio capture. Frames go to the renderer only (never
+  // the augmented sender, which would broadcast raw audio to LAN clients);
+  // status changes go everywhere so the companion can show capture state.
+  const nativeSystemAudio = createNativeSystemAudio({
+    binaryPath: resolveHelperPath({ isPackaged: app.isPackaged }),
+    onFrame: (frame) => baseSendToRenderer('native-system-audio-frame', frame),
+    onStatus: (status) => sendToRenderer('native-system-audio-status', status)
   });
 
   windowController = createWindowController({
@@ -309,6 +323,7 @@ async function startApplication() {
   }
 
   function cleanupTransientResources() {
+    nativeSystemAudio.stop().catch(() => {});
     assemblyAiService.dispose();
     screenshotManager.cleanupTransientResources();
     windowController.unregisterShortcuts();
@@ -343,37 +358,43 @@ async function startApplication() {
     const TotpAuth = require('./features/security/totp-auth');
     return TotpAuth.shared(app).generateToken();
   });
-  // Backs the renderer's "check again" recovery action for the host-audio
-  // silence warning — an on-demand, real re-probe of macOS's actual current
-  // output device (see system-health.js), not a cached or fake value.
-  ipcMain.handle('get-audio-routing-status', () => {
-    const { checkAudioOutputRouting } = require('../services/system-health');
-    return checkAudioOutputRouting();
+
+  /*
+   * Real interview-session bug report: nothing in the assistant window ever
+   * told the user whether the resume/JD/company they'd entered through the
+   * web companion had actually been saved before the interview started —
+   * the first sign of a missing save was a live answer with no grounding.
+   * interviewContext.load() is a cheap, already-cached, synchronous read
+   * (see interview-context.js) — this is a lightweight status projection of
+   * it, not the raw text, so a resume that happens to be several KB doesn't
+   * cross the IPC boundary just to answer "is anything loaded at all".
+   */
+  ipcMain.handle('get-interview-context-status', () => {
+    const context = interviewContext.load();
+    return {
+      hasResume: Boolean(String(context.background || '').trim()),
+      hasJd: Boolean(String(context.jobDescription || '').trim()),
+      role: context.role || '',
+      company: context.company || '',
+      updatedAt: context.updatedAt || null
+    };
   });
 
   /*
    * Phase 13: the main-process half of the diagnostic snapshot. Gathers
    * facts that only exist here -- AssemblyAI's own chunk/streaming state,
    * the latency tracker's last completed (and any still-in-flight) report,
-   * and the same routing checks get-audio-routing-status already exposes,
-   * plus the new Synapse Output check -- into one call so the renderer
-   * doesn't need four separate round trips. Technical metrics only: no
+   * and the native capture helper's state -- into one call so the renderer
+   * doesn't need several round trips. Technical metrics only: no
    * transcript content passes through here, no keys, no auth headers.
    */
   ipcMain.handle('get-diagnostic-snapshot', async () => {
-    const { checkBlackHole, checkAudioOutputRouting, checkSynapseOutputDevice } = require('../services/system-health');
-
-    const [blackHole, audioRouting, synapseOutput] = await Promise.all([
-      checkBlackHole(),
-      checkAudioOutputRouting(),
-      checkSynapseOutputDevice()
-    ]);
-
     return {
       transcription: assemblyAiService.getDiagnosticState(),
-      blackHole,
-      audioRouting,
-      synapseOutputDeviceActive: synapseOutput.applicable ? synapseOutput.active : null,
+      nativeAudio: {
+        probe: await nativeSystemAudio.probe(),
+        state: nativeSystemAudio.getState()
+      },
       latency: latencyTracker
         ? { lastReport: latencyTracker.getLastReport(), activeReports: latencyTracker.getActiveReports() }
         : null
@@ -395,7 +416,11 @@ async function startApplication() {
   registerAssemblyAiIpc({
     ipcMain,
     assemblyAiService,
-    ensureAudioInputAccess: ensureMicrophoneAccess
+    ensureAudioInputAccess: ensureMicrophoneAccess,
+    nativeSystemAudio,
+    onListeningStart: () => geminiRuntime.prewarmConnection(),
+    // Keep Synapse's own sounds out of the interviewer channel.
+    getExcludedPids: () => app.getAppMetrics().map((metric) => metric.pid)
   });
 
   registerSettingsIpc({

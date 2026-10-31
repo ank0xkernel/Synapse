@@ -22,6 +22,18 @@ const platformArgs = (() => {
 
 const args = [...platformArgs, ...process.argv.slice(2)];
 
+// The packaged app ships the native system-audio helper as an extra resource,
+// so it must exist (and be current) before electron-builder runs.
+if (os.platform() === 'darwin') {
+  const { buildNativeAudio } = require('./build-native-audio');
+  try {
+    buildNativeAudio({ force: true });
+  } catch (error) {
+    console.error('[run-build] Native audio helper build failed:', error.message);
+    process.exit(1);
+  }
+}
+
 // Invoke electron-builder via Node directly to avoid spawning the .cmd
 // shim on Windows (which needs shell:true and triggers a deprecation
 // warning). The CLI module path is stable across versions.

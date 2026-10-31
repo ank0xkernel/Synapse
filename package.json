@@ -11,7 +11,9 @@
     "build:win": "node scripts/run-build.js --win portable",
     "build:mac": "node scripts/run-build.js --mac",
     "build:linux": "node scripts/run-build.js --linux",
-    "icons": "node scripts/generate-icons.js"
+    "icons": "node scripts/generate-icons.js",
+    "build:native": "node scripts/build-native-audio.js --force",
+    "test": "node scripts/run-tests.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
@@ -60,7 +62,15 @@
     "mac": {
       "category": "public.app-category.education",
       "icon": "assets/icon.icns",
+      "minimumSystemVersion": "13.0",
+      "extraResources": [
+        {
+          "from": "native/macos-audio-capture/build/synapse-audio-capture",
+          "to": "native/synapse-audio-capture"
+        }
+      ],
       "extendInfo": {
+        "NSAudioCaptureUsageDescription": "Synapse listens to your Mac's audio output so it can transcribe the other person on your call. Your speakers or headphones keep working normally.",
         "NSMicrophoneUsageDescription": "Synapse transcribes your microphone so it can coach you on the answers you give during practice.",
         "NSCameraUsageDescription": "Not used by Synapse.",
         "NSAppleEventsUsageDescription": "Synapse inserts a drafted answer into your focused editor when you explicitly ask it to."

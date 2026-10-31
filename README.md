@@ -105,8 +105,8 @@ The cloud-based generation path is pre-configured for deterministic and low-late
 
 ### Prerequisites
 *   Node.js (v18 or later)
-*   macOS (v13 or later recommended for Core ML transcription)
-*   *Optional:* BlackHole 2ch audio loopback driver for system capture
+*   macOS 13 or later (14.2+ recommended). Synapse captures call audio directly while you keep listening on your speakers or headphones; no virtual audio device or output change is needed. macOS 12 and older need the legacy BlackHole setup in `docs/BLACKHOLE-SETUP.md`.
+*   Xcode Command Line Tools (`xcode-select --install`), used to build the native audio capture helper on first launch.
 
 ### Install Steps
 1. Clone the repository and navigate to the project directory:

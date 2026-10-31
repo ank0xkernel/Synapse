@@ -7,6 +7,16 @@
 
 const { spawn } = require('child_process');
 const electronBinary = require('electron');
+const { buildNativeAudio } = require('./build-native-audio');
+
+// Rebuilds the native system-audio helper only when its source changed. A
+// failed build is not fatal: the app falls back to legacy loopback capture and
+// says so in the transcript monitor.
+try {
+  buildNativeAudio();
+} catch (error) {
+  console.error('[run-electron] Native audio helper build failed:', error.message);
+}
 
 const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;

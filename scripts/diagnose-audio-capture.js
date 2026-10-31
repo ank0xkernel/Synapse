@@ -53,73 +53,98 @@ function run(command, args) {
   });
 }
 
-async function getAudioProfile() {
-  const raw = await run('system_profiler', ['-json', 'SPAudioDataType']);
-  if (!raw) return [];
-
-  try {
-    const parsed = JSON.parse(raw);
-    const items = parsed.SPAudioDataType || [];
-    return items.flatMap((entry) => entry._items || []);
-  } catch (_error) {
-    return [];
-  }
-}
-
-function isLoopbackName(name) {
-  return /blackhole|soundflower|loopback|vb-?cable/i.test(String(name || ''));
-}
+const { buildNativeAudio, NATIVE_AUDIO_BINARY } = require('./build-native-audio');
 
 async function checkPlatform() {
   section('Platform');
   if (process.platform !== 'darwin') {
-    warn(`Not macOS (${process.platform})`, 'This diagnostic targets the macOS loopback setup.');
+    warn(`Not macOS (${process.platform})`, 'Native system audio capture is macOS only.');
     return false;
   }
   pass('macOS detected');
   return true;
 }
 
-async function checkDevices() {
-  section('Audio devices');
-  const devices = await getAudioProfile();
+async function checkNativeCapture() {
+  section('Native system audio capture');
 
-  if (devices.length === 0) {
-    fail('Could not read audio devices', 'system_profiler returned nothing.');
-    return null;
+  try {
+    const result = buildNativeAudio({ log: () => {} });
+    pass(result.built ? 'Capture helper built' : 'Capture helper up to date', NATIVE_AUDIO_BINARY);
+  } catch (error) {
+    fail('Could not build the capture helper', error.message);
+    return;
   }
 
-  const loopback = devices.find((device) => isLoopbackName(device._name));
-  const defaultOutput = devices.find((device) => device.coreaudio_default_audio_output_device === 'spaudio_yes');
-  const defaultInput = devices.find((device) => device.coreaudio_default_audio_input_device === 'spaudio_yes');
+  const probeRaw = await run(NATIVE_AUDIO_BINARY, ['probe']);
+  let probe = null;
+  try {
+    probe = JSON.parse(probeRaw);
+  } catch (_error) {
+    fail('Capture helper probe failed', 'The helper did not return its capability report.');
+    return;
+  }
 
-  if (loopback) {
-    pass(`Loopback device installed: ${loopback._name}`);
+  console.log(`${DIM}     macOS ${probe.osVersion}, current output: ${probe.defaultOutput}${RESET}`);
+  if (probe.processTap) {
+    pass('Core Audio process tap available (macOS 14.2+)', 'Uses the "System Audio Recording" permission.');
+  } else if (probe.screenCaptureKit) {
+    pass('ScreenCaptureKit audio available (macOS 13+)', 'Uses the "Screen Recording" permission.');
   } else {
-    fail('No loopback device found', 'Run: brew install blackhole-2ch   (then log out and back in)');
+    fail('Native capture unsupported on this macOS version', 'Use the legacy BlackHole setup in docs/BLACKHOLE-SETUP.md.');
+    return;
   }
 
-  if (defaultOutput) {
-    const name = defaultOutput._name;
-    if (isLoopbackName(name)) {
-      warn(`Output is raw ${name}`, 'You will not hear the call. Use a Multi-Output Device instead.');
-    } else if (/multi-?output|aggregate|synapse/i.test(name)) {
-      pass(`Output routed through "${name}"`);
-    } else {
-      fail(
-        `Output is "${name}" — call audio is NOT reaching the loopback device`,
-        'Set output to a Multi-Output Device containing BlackHole 2ch. See docs/BLACKHOLE-SETUP.md'
-      );
-    }
+  // Live check: capture 3 s while a system sound plays through whatever
+  // output is selected. Output routing is never changed.
+  const samples = await new Promise((resolve) => {
+    const { spawn } = require('child_process');
+    const child = spawn(NATIVE_AUDIO_BINARY, ['capture'], { stdio: ['pipe', 'pipe', 'pipe'] });
+    let peak = 0;
+    let count = 0;
+    let carry = Buffer.alloc(0);
+    let lastError = null;
+    child.stdout.on('data', (chunk) => {
+      const buffer = Buffer.concat([carry, chunk]);
+      const usable = buffer.length - (buffer.length % 4);
+      for (let offset = 0; offset < usable; offset += 4) {
+        const value = Math.abs(buffer.readFloatLE(offset));
+        if (value > peak) peak = value;
+      }
+      count += usable / 4;
+      carry = buffer.subarray(usable);
+    });
+    let started = false;
+    child.stderr.on('data', (line) => {
+      for (const entry of String(line).split('\n')) {
+        try {
+          const event = JSON.parse(entry);
+          if (event.type === 'error') lastError = event;
+          if (event.type === 'ready' && !started) {
+            // Play only once the tap is live, then give it time to land.
+            started = true;
+            execFile('afplay', ['/System/Library/Sounds/Glass.aiff'], () => {});
+            setTimeout(() => child.kill('SIGTERM'), 2500);
+          }
+        } catch (_error) { /* partial line */ }
+      }
+    });
+    setTimeout(() => child.kill('SIGTERM'), 15000);
+    child.on('exit', () => resolve({ peak, count, lastError }));
+  });
+
+  if (samples.lastError) {
+    fail(`Capture failed: ${samples.lastError.code}`, samples.lastError.message);
+  } else if (samples.count === 0) {
+    fail('No audio frames arrived from the helper');
+  } else if (samples.peak < 0.0008) {
+    warn(
+      'Frames arrived but the test sound was not heard',
+      'Allow the app in System Settings → Privacy & Security → Screen & System Audio Recording, and make sure output volume is not muted.'
+    );
   } else {
-    warn('Could not determine the default output device');
+    pass(`Heard the test sound through "${probe.defaultOutput}"`, `peak ${(20 * Math.log10(samples.peak)).toFixed(1)} dBFS, ${samples.count} samples`);
   }
-
-  if (defaultInput) {
-    console.log(`${DIM}     Default input (used only for the nudge engine): ${defaultInput._name}${RESET}`);
-  }
-
-  return { loopback, defaultOutput };
 }
 
 function readAppState() {
@@ -182,30 +207,18 @@ async function checkTranscription() {
   console.log(`${DIM}     Speech model: ${state.assemblyAiSpeechModel || 'default'}${RESET}`);
 }
 
-function checkSetupGuide() {
-  section('Setup guide');
-  const guide = path.join(PROJECT_ROOT, 'docs', 'BLACKHOLE-SETUP.md');
-  if (fs.existsSync(guide)) {
-    pass('docs/BLACKHOLE-SETUP.md present', 'The in-app "Open setup guide" button opens this.');
-  } else {
-    fail('docs/BLACKHOLE-SETUP.md missing', 'The in-app setup button will fail.');
-  }
-}
-
 function printManualSteps() {
   section('Manual verification (do this before a real call)');
   console.log(`
-  1. Start Synapse and open the phone companion.
-  2. Turn the ${BOLD}Host${RESET} source on. Leave the Mic source ${BOLD}off${RESET}.
-  3. Confirm the companion's ${BOLD}System Audio${RESET} dot is green.
-  4. Play any talking video on the Mac (a YouTube interview works well).
-  5. ${BOLD}Expected:${RESET} the video's speech appears as the Host transcript.
-  6. Now speak out loud without touching the Mic toggle.
-     ${BOLD}Expected:${RESET} nothing new appears. If your own voice shows up under
-     Host, capture is still on the built-in mic — recheck your output routing.
-  7. Switch your output to plain speakers mid-playback.
-     ${BOLD}Expected:${RESET} the dot turns amber ("Reconnecting"), then red if the
-     device stays gone.
+  1. In System Settings → Sound → Output, select ${BOLD}MacBook Speakers${RESET} (or your headphones).
+  2. Start Synapse. Turn the ${BOLD}Host${RESET} source on. Leave the Mic source ${BOLD}off${RESET}.
+  3. Play any talking video on the Mac (a YouTube interview works well).
+     ${BOLD}Expected:${RESET} you still hear it normally, and its speech appears as the Host transcript.
+  4. Speak out loud without touching the Mic toggle.
+     ${BOLD}Expected:${RESET} nothing new appears under Host.
+  5. Plug in or unplug headphones mid-playback.
+     ${BOLD}Expected:${RESET} audio keeps playing on the new device and the transcript continues
+     after a short gap (the capture follows the new output).
 `);
 }
 
@@ -214,10 +227,9 @@ async function main() {
 
   const isMac = await checkPlatform();
   if (isMac) {
-    await checkDevices();
+    await checkNativeCapture();
   }
   await checkTranscription();
-  checkSetupGuide();
   printManualSteps();
 
   section('Result');

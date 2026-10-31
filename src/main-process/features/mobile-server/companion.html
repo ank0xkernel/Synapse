@@ -1,0 +1,1544 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0B0C10">
+<title>Synapse Companion</title>
+
+<!--
+  Synapse Web Companion — the single page served over the LAN to a phone or
+  browser (port 7823). This replaces three previously separate pages
+  (mobile.html, /dashboard, /dashboard/context) with one consolidated,
+  tabbed surface: Live remote control, Interview Context, System Status and
+  Logs, behind the same TOTP/bearer login gate.
+
+  Self-contained by design: no CDN scripts, no webfonts, no external images.
+  This runs on a LAN where the phone may have zero internet access.
+-->
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:            #0B0C10;
+    --surface:       rgba(22, 27, 38, 0.82);
+    --surface-solid: #151A24;
+    --surface-2:     rgba(255, 255, 255, 0.035);
+    --border:        rgba(120, 140, 170, 0.18);
+    --border-strong: rgba(120, 140, 170, 0.32);
+    --accent:        #6366F1;
+    --accent-bright: #818CF8;
+    --accent-glow:   rgba(99, 102, 241, 0.30);
+    --accent-soft:   rgba(99, 102, 241, 0.14);
+    --success:       #34D399;
+    --success-glow:  rgba(52, 211, 153, 0.18);
+    --warn:          #FBBF24;
+    --danger:        #F87171;
+    --text:          #E8EDF5;
+    --text-muted:    #94A3B8;
+    --text-faint:    #64748B;
+    --radius:        16px;
+    --radius-sm:     11px;
+    --ease:          cubic-bezier(0.22, 0.61, 0.36, 1);
+    --bar-h:         64px;
+    --font:      -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+
+  html { height: 100%; -webkit-text-size-adjust: 100%; background: var(--bg); }
+
+  body {
+    height: 100dvh;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: none;
+    overflow: hidden;
+  }
+
+  button, input, textarea, select { font-family: inherit; color: inherit; }
+  ::placeholder { color: var(--text-faint); opacity: 0.75; }
+  svg { display: block; }
+
+  /* ---------- Brand mark (shared: gate + topbar) ---------- */
+  .mark {
+    width: 32px; height: 32px; border-radius: 9px;
+    background: linear-gradient(155deg, #6366F1, #8B5CF6);
+    display: flex; align-items: center; justify-content: center; gap: 2.5px;
+    flex-shrink: 0;
+  }
+  .mark i { display: block; width: 2.5px; border-radius: 2px; background: #fff; }
+  .mark i:nth-child(1) { height: 8px; }
+  .mark i:nth-child(2) { height: 14px; }
+  .mark i:nth-child(3) { height: 19px; }
+  .mark i:nth-child(4) { height: 11px; }
+
+  /* ---------- Buttons ---------- */
+  .btn {
+    height: 46px; padding: 0 22px; border: 0; border-radius: 12px;
+    background: linear-gradient(150deg, var(--accent), #7C3AED);
+    color: #fff; font-size: 14.5px; font-weight: 650;
+    cursor: pointer; transition: filter 0.15s, transform 0.08s, opacity 0.15s;
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  }
+  .btn:hover:not(:disabled) { filter: brightness(1.12); }
+  .btn:active:not(:disabled) { transform: translateY(1px); }
+  .btn:focus-visible { outline: 2px solid var(--accent-bright); outline-offset: 3px; }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .btn.ghost { background: transparent; border: 1px solid var(--border-strong); color: var(--text-muted); }
+  .btn.ghost:hover:not(:disabled) { color: var(--text); border-color: var(--text-faint); filter: none; }
+  .btn.small { height: 38px; padding: 0 16px; font-size: 13px; }
+  .btn.block { width: 100%; }
+  .btn .spinner { display: none; }
+  .btn.loading .spinner { display: block; }
+
+  .spinner {
+    width: 15px; height: 15px;
+    border: 2px solid rgba(255,255,255,0.35); border-top-color: #fff;
+    border-radius: 50%; animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ---------- Login gate ---------- */
+  .gate {
+    position: fixed; inset: 0; z-index: 90;
+    display: grid; place-items: center;
+    padding: 24px; background: var(--bg);
+  }
+  .gate[hidden] { display: none; }
+  .gate::before {
+    content: ""; position: fixed; inset: 0;
+    background:
+      radial-gradient(60ch 50ch at 15% 0%, rgba(99, 102, 241, 0.16), transparent 70%),
+      radial-gradient(50ch 40ch at 100% 100%, rgba(139, 92, 246, 0.12), transparent 70%);
+    pointer-events: none;
+  }
+  .gate-inner { position: relative; width: 100%; max-width: 320px; text-align: center; }
+  .gate .mark { width: 46px; height: 46px; border-radius: 14px; margin: 0 auto; }
+  .gate .mark i:nth-child(1) { height: 11px; } .gate .mark i:nth-child(2) { height: 19px; }
+  .gate .mark i:nth-child(3) { height: 26px; } .gate .mark i:nth-child(4) { height: 15px; }
+  .gate h1 { font-size: 20px; font-weight: 650; margin: 16px 0 6px; letter-spacing: -0.01em; }
+  .gate p  { font-size: 13.5px; color: var(--text-muted); margin-bottom: 20px; }
+
+  .code-input {
+    width: 100%; padding: 15px; text-align: center;
+    font-size: 26px; font-weight: 650; letter-spacing: 0.34em; text-indent: 0.34em;
+    font-variant-numeric: tabular-nums;
+    border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
+    background: rgba(255,255,255,0.05); color: var(--text);
+    outline: none; margin-bottom: 12px;
+    -webkit-appearance: none; appearance: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .code-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+
+  .hint { font-size: 11.5px; color: var(--text-faint); margin-top: 10px; line-height: 1.45; }
+  .hint.error { color: var(--danger); }
+
+  /* ---------- App shell ---------- */
+  .app { display: flex; flex-direction: column; height: 100dvh; }
+  .app[hidden] { display: none; }
+
+  .topbar {
+    flex: 0 0 auto;
+    display: flex; align-items: center; gap: 10px;
+    padding: calc(env(safe-area-inset-top, 0px) + 12px) 16px 12px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(11, 12, 16, 0.92);
+    backdrop-filter: blur(20px) saturate(1.3);
+    -webkit-backdrop-filter: blur(20px) saturate(1.3);
+    position: relative; z-index: 20;
+  }
+  .brand { display: flex; align-items: center; gap: 9px; font-size: 15px; font-weight: 650; letter-spacing: -0.01em; margin-right: auto; }
+
+  .badge {
+    padding: 4px 10px; border-radius: 999px;
+    border: 1px solid var(--border-strong); background: rgba(255,255,255,0.05);
+    color: var(--text-muted); font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+  .badge.mode { color: var(--accent-bright); border-color: var(--accent-glow); background: var(--accent-soft); }
+  .badge.thinking { color: var(--accent-bright); border-color: var(--accent-glow); background: var(--accent-soft); }
+  .badge.listening { color: var(--success); border-color: rgba(52,211,153,0.35); background: var(--success-glow); }
+
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); flex-shrink: 0; transition: background 0.2s, box-shadow 0.2s; }
+  .dot.live { background: var(--success); box-shadow: 0 0 0 3px var(--success-glow); }
+  .dot.warn { background: var(--warn); box-shadow: 0 0 0 3px rgba(251,191,36,0.18); }
+  .dot.fail { background: var(--danger); box-shadow: 0 0 0 3px rgba(248,113,113,0.18); }
+
+  .conn {
+    flex: 0 0 auto; max-height: 0; overflow: hidden;
+    background: rgba(248, 113, 113, 0.14); border-bottom: 1px solid rgba(248, 113, 113, 0.28);
+    color: #FFC4C4; font-size: 12.5px; font-weight: 500; text-align: center;
+    transition: max-height 240ms var(--ease);
+  }
+  .conn.show { max-height: 44px; }
+  .conn span { display: block; padding: 10px 16px; }
+
+  .tabpanels { flex: 1 1 auto; min-height: 0; position: relative; display: flex; }
+  .tabpanel { flex: 1; min-height: 0; display: flex; flex-direction: column; width: 100%; }
+  .tabpanel[hidden] { display: none; }
+
+  .form-scroll {
+    flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    padding: 16px 16px 28px;
+  }
+
+  .tabbar {
+    flex: 0 0 auto; display: flex;
+    border-top: 1px solid var(--border);
+    background: rgba(11, 12, 16, 0.94);
+    backdrop-filter: blur(20px) saturate(1.3);
+    -webkit-backdrop-filter: blur(20px) saturate(1.3);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    z-index: 20;
+  }
+  .tab-btn {
+    flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;
+    padding: 10px 4px 8px; border: none; background: none; cursor: pointer;
+    color: var(--text-faint); font-size: 10.5px; font-weight: 600; letter-spacing: 0.01em;
+  }
+  .tab-btn svg { width: 21px; height: 21px; }
+  .tab-btn.active { color: var(--accent-bright); }
+
+  /* ---------- Cards ---------- */
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 16px; margin-bottom: 14px;
+    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  }
+  .card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .card-title { font-size: 13.5px; font-weight: 650; letter-spacing: -0.01em; }
+  .card-time { margin-left: auto; font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+  .card-sub { font-size: 12px; color: var(--text-faint); margin-top: -6px; margin-bottom: 12px; }
+  section.section { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; margin-bottom: 14px; }
+  section.section > h2 { font-size: 11.5px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint); margin-bottom: 4px; }
+  section.section > .section-hint { font-size: 12.5px; color: var(--text-muted); margin-bottom: 14px; }
+
+  /* ---------- Live: status strip ---------- */
+  .status-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 12px 16px 4px; }
+  .status-strip .pair { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-muted); }
+
+  /* ---------- Live: recall ---------- */
+  .recall-search { display: flex; gap: 8px; margin-bottom: 12px; }
+  .recall-search input {
+    flex: 1; background: rgba(0,0,0,0.3); border: 1px solid var(--border-strong); border-radius: 10px;
+    color: var(--text); font-size: 13.5px; padding: 10px 12px; outline: none;
+  }
+  .recall-search input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+  .recall-search button {
+    flex: 0 0 auto; width: 42px; height: 42px; border-radius: 10px; border: 1px solid var(--accent-glow);
+    background: var(--accent-soft); color: var(--accent-bright); cursor: pointer; display: grid; place-items: center;
+  }
+  .recall-note {
+    display: flex; gap: 8px; align-items: flex-start; margin-bottom: 12px;
+    padding: 9px 11px; border-radius: 10px; background: var(--accent-soft); border: 1px solid var(--accent-glow);
+    font-size: 11.5px; color: var(--text-muted);
+  }
+  .question {
+    font-size: 13.5px; font-weight: 500; color: var(--text-muted);
+    background: var(--surface-2); border: 1px solid var(--border); border-left: 2px solid var(--accent-glow);
+    border-radius: var(--radius-sm); padding: 10px 12px; margin-bottom: 10px; word-break: break-word;
+  }
+  .question.empty { color: var(--text-faint); font-style: italic; border-left-color: var(--border-strong); }
+  .live-partial { margin: -4px 0 10px; color: var(--text-faint); font-size: 12.5px; font-style: italic; }
+  .live-partial[hidden] { display: none; }
+
+  .hit {
+    padding: 10px 12px; border-radius: var(--radius-sm); background: var(--surface-2);
+    border: 1px solid var(--border); margin-bottom: 8px;
+    animation: rise 260ms var(--ease) both;
+  }
+  .hit:last-child { margin-bottom: 0; }
+  @keyframes rise { from { opacity: 0; transform: translate3d(0, 7px, 0); } to { opacity: 1; transform: none; } }
+  .hit-text { font-size: 14px; line-height: 1.5; color: var(--text); word-break: break-word; }
+  .hit-meta { display: flex; align-items: center; gap: 7px; margin-top: 7px; font-size: 10.5px; color: var(--text-faint); }
+  .hit-src {
+    color: var(--accent-bright); background: var(--accent-soft); border: 1px solid var(--accent-glow);
+    border-radius: 999px; padding: 2px 8px; font-weight: 600;
+  }
+  .placeholder { text-align: center; color: var(--text-faint); font-size: 13px; padding: 18px 8px; }
+  .searching { color: var(--accent-bright); }
+  .searching::after {
+    content: ''; display: inline-block; width: 5px; height: 5px; margin-left: 6px; border-radius: 50%;
+    background: currentColor; animation: blink 900ms steps(2, start) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* ---------- Live: chat ---------- */
+  .card.chat { display: flex; flex-direction: column; }
+  .ss-badge {
+    background: var(--accent); color: #fff; font-size: 10px; font-weight: 700;
+    min-width: 16px; height: 16px; border-radius: 10px; padding: 0 4px;
+    display: none; align-items: center; justify-content: center; line-height: 1;
+  }
+  .ss-badge.show { display: flex; }
+
+  .chat-log { display: flex; flex-direction: column; gap: 8px; min-height: 60px; }
+  .chat-log:empty::after {
+    content: 'Take a screenshot or type a question to get started.';
+    display: block; text-align: center; color: var(--text-faint); font-size: 13px; padding: 20px 10px;
+  }
+  .msg { display: flex; flex-direction: column; }
+  .msg.center { align-items: center; }
+  .msg.left  { align-items: flex-start; max-width: 90%; }
+  .msg.right { align-items: flex-end; align-self: flex-end; max-width: 90%; }
+  .msg-label { font-size: 10.5px; color: var(--text-faint); margin-bottom: 3px; padding: 0 3px; }
+  .msg.right .msg-label { color: var(--accent-bright); text-align: right; }
+  .msg-bubble { padding: 8px 12px; border-radius: 14px; font-size: 13.5px; line-height: 1.55; word-break: break-word; white-space: pre-wrap; }
+  .msg.center .msg-bubble { background: transparent; color: var(--text-faint); font-size: 11.5px; padding: 3px 8px; white-space: normal; }
+  .msg.left .msg-bubble { background: var(--surface-2); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+  .msg.right .msg-bubble { background: var(--accent-soft); border: 1px solid var(--accent-glow); border-bottom-right-radius: 4px; }
+  .msg.streaming .msg-bubble::after { content: '\258B'; color: var(--accent-bright); animation: blink 0.9s step-end infinite; }
+
+  /* ---------- Live: composer / toolbar / speed ---------- */
+  .composer { flex: 0 0 auto; display: flex; align-items: flex-end; gap: 8px; padding: 10px 16px; }
+  .composer textarea {
+    flex: 1; background: rgba(0,0,0,0.3); border: 1px solid var(--border-strong); border-radius: 20px;
+    padding: 10px 14px; color: var(--text); font-size: 14px; outline: none; resize: none;
+    min-height: 40px; max-height: 100px; line-height: 1.4; -webkit-appearance: none;
+    transition: border-color 0.15s;
+  }
+  .composer textarea:focus { border-color: var(--accent); }
+  .send-btn {
+    flex: 0 0 auto; width: 40px; height: 40px; border-radius: 50%; border: none;
+    background: linear-gradient(150deg, var(--accent), #7C3AED); color: #fff; cursor: pointer;
+    display: grid; place-items: center;
+  }
+  .send-btn svg { width: 18px; height: 18px; }
+
+  .toolbar { flex: 0 0 auto; display: flex; justify-content: space-around; align-items: center; padding: 4px 6px 8px; }
+  .tool-btn {
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    padding: 7px 10px; border: none; background: transparent; color: var(--text-muted);
+    border-radius: 12px; cursor: pointer; position: relative; min-width: 58px;
+  }
+  .tool-btn svg { width: 21px; height: 21px; }
+  .tool-btn span { font-size: 10px; font-weight: 600; }
+  .tool-btn.on { color: var(--accent-bright); }
+  .tool-btn.danger:active { color: var(--danger); }
+
+  .speed-row { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 0 16px 10px; }
+  .speed-row label { font-size: 11px; color: var(--text-faint); white-space: nowrap; }
+  .speed-row input[type="range"] { flex: 1; accent-color: var(--accent); height: 4px; }
+  .speed-row .speed-val { font-size: 11.5px; color: var(--accent-bright); font-weight: 650; min-width: 30px; text-align: right; }
+
+  /* ---------- Context form ---------- */
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .grid .full { grid-column: 1 / -1; }
+  @media (max-width: 560px) { .grid { grid-template-columns: 1fr; } }
+
+  .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+  .field:last-child { margin-bottom: 0; }
+  label { font-size: 12.5px; font-weight: 600; color: var(--text); display: flex; align-items: baseline; gap: 7px; }
+  label .opt { font-weight: 400; font-size: 11px; color: var(--text-faint); }
+
+  input[type="text"], textarea, select {
+    width: 100%; background: rgba(0, 0, 0, 0.3); border: 1px solid var(--border-strong);
+    border-radius: 9px; color: var(--text); font-size: 14px; padding: 11px 12px; outline: none;
+    -webkit-appearance: none; appearance: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  select {
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%2394A3B8' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 12px center; padding-right: 32px;
+  }
+  select option { background: var(--surface-solid); }
+  textarea { resize: vertical; min-height: 90px; line-height: 1.55; font-family: inherit; }
+  textarea.tall { min-height: 140px; }
+  textarea.short { min-height: 64px; }
+  input:focus, textarea:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+
+  .counter { font-size: 10.5px; color: var(--text-faint); text-align: right; }
+
+  .mode-toggle { display: flex; gap: 6px; margin-bottom: 10px; }
+  .mode-toggle button {
+    flex: 1; padding: 8px 10px; border-radius: 9px; border: 1px solid var(--border-strong);
+    background: rgba(0,0,0,0.25); color: var(--text-muted); font-size: 12.5px; font-weight: 600; cursor: pointer;
+  }
+  .mode-toggle button.active { background: var(--accent-soft); border-color: var(--accent-glow); color: var(--accent-bright); }
+
+  .save-bar {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+    border-top: 1px solid var(--border);
+    background: rgba(11,12,16,0.92); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  }
+  .save-state { font-size: 11.5px; color: var(--text-faint); margin-left: auto; text-align: right; }
+  .save-state.saved { color: var(--success); }
+  .save-state.error { color: var(--danger); }
+
+  /* ---------- Status tab ---------- */
+  .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+  @media (max-width: 420px) { .stat-grid { grid-template-columns: 1fr; } }
+  .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 13px 14px; }
+  .stat-label { font-size: 11px; color: var(--text-faint); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .stat-val { font-size: 15px; font-weight: 650; }
+  .stat-val.ok { color: var(--success); }
+  .stat-val.fail { color: var(--danger); }
+  .stat-val.na { color: var(--text-faint); }
+  .stat-detail { font-size: 11px; color: var(--text-faint); margin-top: 4px; }
+  .action-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+
+  /* ---------- Logs tab ---------- */
+  .log-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .log-toolbar .spacer { flex: 1; }
+  .log-box {
+    background: rgba(0,0,0,0.35); border: 1px solid var(--border); border-radius: var(--radius-sm);
+    padding: 10px 12px; font-family: var(--font-mono); font-size: 11.5px; line-height: 1.6;
+    max-height: none; overflow-wrap: anywhere;
+  }
+  .log-line { color: var(--text-muted); padding: 1px 0; }
+  .log-line.log-error { color: var(--danger); }
+  .log-line.log-warn { color: var(--warn); }
+  .log-line.log-info { color: var(--text-muted); }
+
+  /* ---------- Toasts ---------- */
+  .toasts {
+    position: fixed; left: 12px; right: 12px; bottom: calc(var(--bar-h) + env(safe-area-inset-bottom, 0px) + 10px);
+    z-index: 70; display: flex; flex-direction: column; gap: 8px; pointer-events: none;
+  }
+  .toast {
+    padding: 11px 14px; border-radius: var(--radius-sm); border: 1px solid var(--accent-glow);
+    background: rgba(16, 18, 28, 0.96); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    color: var(--text); font-size: 13px; font-weight: 500; box-shadow: 0 12px 30px rgba(0,0,0,0.5);
+    animation: toast-in 260ms var(--ease) both;
+  }
+  .toast.out { animation: toast-out 220ms var(--ease) both; }
+  .toast.err { border-color: rgba(248,113,113,0.4); color: #FFC4C4; }
+  @keyframes toast-in  { from { opacity: 0; transform: translate3d(0, 14px, 0); } to { opacity: 1; transform: none; } }
+  @keyframes toast-out { to   { opacity: 0; transform: translate3d(0, 10px, 0); } }
+
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+
+  /* ---------- Desktop breakpoint ---------- */
+  @media (min-width: 860px) {
+    .app { max-width: 1000px; margin: 0 auto; border-left: 1px solid var(--border); border-right: 1px solid var(--border); }
+    .form-scroll { padding: 24px 28px 32px; }
+    .stat-grid { grid-template-columns: repeat(3, 1fr); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  }
+</style>
+</head>
+<body>
+
+  <!-- ── Login gate ─────────────────────────────────────────────────────── -->
+  <div class="gate" id="gate" hidden>
+    <div class="gate-inner">
+      <div class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+      <h1>Synapse</h1>
+      <p>Enter the 6-digit passcode from the Mac menu bar.</p>
+      <input class="code-input" id="gateCode" type="tel" inputmode="numeric" pattern="[0-9]*"
+             maxlength="6" placeholder="000000" autocomplete="one-time-code">
+      <button class="btn block" id="gateBtn" type="button">Connect</button>
+      <p class="hint" id="gateHint">The code rotates every 30 seconds.</p>
+    </div>
+  </div>
+
+  <!-- ── App ────────────────────────────────────────────────────────────── -->
+  <div class="app" id="app" hidden>
+
+    <header class="topbar">
+      <div class="brand">
+        <div class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+        Synapse
+      </div>
+      <span class="badge mode" id="modeBadge">General</span>
+      <span class="badge" id="pipelineStatus">Ready</span>
+      <span class="dot" id="wsDot" title="Connection"></span>
+    </header>
+
+    <div class="conn" id="conn"><span id="connText">Reconnecting…</span></div>
+
+    <div class="tabpanels">
+
+      <!-- ── Live tab ───────────────────────────────────────────────────── -->
+      <section class="tabpanel" id="panel-live" data-panel="live">
+        <div class="form-scroll" id="liveScroll" style="padding-top:0;">
+
+          <div class="status-strip">
+            <span class="pair"><span class="dot" id="micDot"></span><span id="micLabel">Mic off</span></span>
+            <span class="pair"><span class="dot" id="sysDot"></span><span id="sysLabel">System audio</span></span>
+          </div>
+
+          <section class="card recall">
+            <div class="card-head">
+              <span class="card-title">Instant Recall</span>
+              <span class="card-time" id="recallTime"></span>
+            </div>
+            <div class="recall-note">
+              <span aria-hidden="true">📎</span>
+              <span>Retrieval only — surfaces your own resume &amp; notes verbatim. Nothing here is AI-generated.</span>
+            </div>
+            <form class="recall-search" id="recallForm">
+              <input type="text" id="recallInput" placeholder="Search your resume / notes…" autocomplete="off">
+              <button type="submit" title="Search" aria-label="Search">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
+                  <circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+              </button>
+            </form>
+            <div class="question empty" id="recallQuestion">Waiting for the other person to speak…</div>
+            <div class="live-partial" id="livePartial" hidden></div>
+            <div id="recallBody">
+              <div class="placeholder">Ask a question above, or it will run automatically from the live transcript when Autopilot is on.</div>
+            </div>
+          </section>
+
+          <section class="card chat">
+            <div class="card-head">
+              <span class="card-title">Ask AI</span>
+              <div class="ss-badge" id="ssBadge">0</div>
+            </div>
+            <div class="chat-log" id="chatLog"></div>
+          </section>
+
+        </div>
+
+        <div class="composer">
+          <textarea id="askInput" placeholder="Type a question or context for AI…" rows="1"></textarea>
+          <button class="send-btn" id="sendBtn" type="button" title="Ask AI" aria-label="Ask AI">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+            </svg>
+          </button>
+        </div>
+
+        <div class="toolbar">
+          <button class="tool-btn" id="btnScreenshot" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/>
+            </svg>
+            <span>Screenshot</span>
+          </button>
+          <button class="tool-btn" id="btnMic" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2"/><path d="M12 19v3"/>
+            </svg>
+            <span>Mic</span>
+          </button>
+          <button class="tool-btn" id="btnAutopilot" type="button">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+            </svg>
+            <span>Autopilot</span>
+          </button>
+          <button class="tool-btn" id="btnSendEditor" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+              <line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
+            </svg>
+            <span>To Editor</span>
+          </button>
+          <button class="tool-btn danger" id="btnClear" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>
+              <path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/>
+            </svg>
+            <span>Clear</span>
+          </button>
+        </div>
+
+        <div class="speed-row">
+          <label for="speedSlider">Typing speed</label>
+          <input type="range" id="speedSlider" min="1" max="10" step="1" value="7">
+          <span class="speed-val" id="speedVal">7</span>/10
+        </div>
+      </section>
+
+      <!-- ── Context tab ────────────────────────────────────────────────── -->
+      <section class="tabpanel" id="panel-context" data-panel="context" hidden>
+        <form class="form-scroll" id="contextForm">
+
+          <section class="section">
+            <h2>The role</h2>
+            <p class="section-hint">Answers are tailored to this. Even just a job title helps.</p>
+            <div class="grid">
+              <div class="field">
+                <label for="f_role">Role <span class="opt">e.g. Backend Engineer</span></label>
+                <input type="text" id="f_role" maxlength="200" placeholder="Backend Engineer" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="f_company">Company <span class="opt">optional</span></label>
+                <input type="text" id="f_company" maxlength="200" placeholder="Acme Corp" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="f_seniority">Seniority <span class="opt">optional</span></label>
+                <input type="text" id="f_seniority" maxlength="60" placeholder="Mid / Senior / SDE-2" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="f_interviewType">Interview type</label>
+                <select id="f_interviewType">
+                  <option value="auto">Detect automatically</option>
+                  <option value="coding">Coding / DSA</option>
+                  <option value="system-design">System design</option>
+                  <option value="behavioural">Behavioural (STAR)</option>
+                  <option value="general">General / mixed</option>
+                </select>
+              </div>
+            </div>
+          </section>
+
+          <section class="section">
+            <h2>Interview details</h2>
+            <p class="section-hint">Extra logistics — all optional.</p>
+            <div class="grid">
+              <div class="field">
+                <label for="f_round">Round <span class="opt">e.g. Round 2 / Final</span></label>
+                <input type="text" id="f_round" maxlength="60" placeholder="Round 2" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="f_duration">Duration <span class="opt">e.g. 45 min</span></label>
+                <input type="text" id="f_duration" maxlength="60" placeholder="45 minutes" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="f_difficulty">Difficulty <span class="opt">optional</span></label>
+                <input type="text" id="f_difficulty" maxlength="60" placeholder="Medium / Hard" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="f_interviewerContext">Interviewer context <span class="opt">optional</span></label>
+                <textarea id="f_interviewerContext" class="short" maxlength="500" placeholder="e.g. Panel of two: hiring manager + staff engineer"></textarea>
+                <div class="counter" id="f_interviewerContext_counter"></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="section">
+            <h2>Job description</h2>
+            <p class="section-hint">Paste the posting. Synapse pulls the requirements out and steers answers toward them.</p>
+            <div class="field">
+              <textarea id="f_jobDescription" class="tall" maxlength="8000" placeholder="Paste the full job description here…"></textarea>
+              <div class="counter" id="f_jobDescription_counter"></div>
+            </div>
+          </section>
+
+          <section class="section">
+            <h2>Your background</h2>
+            <p class="section-hint">The most important field. Upload your resume or paste it directly — answers are built from these instead of generic filler.</p>
+
+            <div class="mode-toggle">
+              <button type="button" id="resumeModePaste" class="active">Paste text</button>
+              <button type="button" id="resumeModeUpload">Upload file</button>
+            </div>
+
+            <div class="field" id="resumePastePanel">
+              <textarea id="f_background" class="tall" maxlength="8000"
+                placeholder="e.g. 3 years on a payments team. Built an idempotent refund pipeline handling 2M req/day. Cut p99 latency 800ms → 120ms with Redis caching…"></textarea>
+              <div class="counter" id="f_background_counter"></div>
+            </div>
+
+            <div class="field" id="resumeUploadPanel" hidden>
+              <input type="file" id="resumeFileInput" accept=".pdf,.txt,.md" style="display:none">
+              <button type="button" class="btn ghost block" id="resumeFilePick">Choose a PDF or text file</button>
+              <p class="hint" id="resumeUploadHint">Indexed locally on your Mac. This is what Recall searches.</p>
+            </div>
+          </section>
+
+          <section class="section">
+            <h2>Steering</h2>
+            <p class="section-hint">Optional nudges for how answers come out.</p>
+            <div class="grid">
+              <div class="field full">
+                <label for="f_focusAreas">Emphasise <span class="opt">topics to bring up when relevant</span></label>
+                <textarea id="f_focusAreas" class="short" maxlength="2000" placeholder="Kubernetes, event-driven architecture, mentoring"></textarea>
+                <div class="counter" id="f_focusAreas_counter"></div>
+              </div>
+              <div class="field full">
+                <label for="f_avoidTopics">Avoid <span class="opt">topics to stay away from</span></label>
+                <textarea id="f_avoidTopics" class="short" maxlength="2000" placeholder="my previous employer's internal tooling"></textarea>
+                <div class="counter" id="f_avoidTopics_counter"></div>
+              </div>
+              <div class="field">
+                <label for="f_answerStyle">Answer length</label>
+                <select id="f_answerStyle">
+                  <option value="concise">Concise</option>
+                  <option value="balanced">Balanced</option>
+                  <option value="detailed">Detailed</option>
+                </select>
+              </div>
+              <div class="field full">
+                <label for="f_extraNotes">Anything else <span class="opt">optional</span></label>
+                <textarea id="f_extraNotes" maxlength="4000" placeholder="e.g. I am switching from data engineering, so frame my experience toward backend work."></textarea>
+                <div class="counter" id="f_extraNotes_counter"></div>
+              </div>
+            </div>
+          </section>
+
+        </form>
+
+        <div class="save-bar">
+          <button type="submit" form="contextForm" class="btn" id="saveContextBtn">
+            <span class="spinner" aria-hidden="true"></span>
+            <span id="saveContextLabel">Save brief</span>
+          </button>
+          <button type="button" class="btn ghost small" id="resetContextBtn">Clear</button>
+          <div class="save-state" id="contextSaveState" role="status" aria-live="polite"></div>
+        </div>
+      </section>
+
+      <!-- ── Status tab ─────────────────────────────────────────────────── -->
+      <section class="tabpanel" id="panel-status" data-panel="status" hidden>
+        <div class="form-scroll">
+          <div class="stat-grid">
+            <div class="stat-card">
+              <div class="stat-label">Whisper STT</div>
+              <div class="stat-val na" id="statWhisper">—</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Whisper (mic)</div>
+              <div class="stat-val na" id="statWhisperMic">—</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Ollama</div>
+              <div class="stat-val na" id="statOllama">—</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">System audio capture</div>
+              <div class="stat-val na" id="statSystemAudio">—</div>
+              <div class="stat-detail" id="statSystemAudio_detail"></div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">First token latency</div>
+              <div class="stat-val" id="statLatency">—</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Connected clients</div>
+              <div class="stat-val" id="statClients">—</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Last checked</div>
+              <div class="stat-val" id="statChecked" style="font-size:13px;">—</div>
+            </div>
+          </div>
+
+          <section class="section">
+            <h2>Service control</h2>
+            <p class="section-hint">Restart a local service if its status above looks stuck offline.</p>
+            <div class="action-row">
+              <button class="btn ghost small" id="restart_whisper" type="button">Restart Whisper</button>
+              <button class="btn ghost small" id="restart_whisper_mic" type="button">Restart Whisper (mic)</button>
+              <button class="btn ghost small" id="restart_ollama" type="button">Restart Ollama</button>
+              <button class="btn small" id="btnDiagnostics" type="button">Run diagnostics</button>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <!-- ── Logs tab ───────────────────────────────────────────────────── -->
+      <section class="tabpanel" id="panel-logs" data-panel="logs" hidden>
+        <div class="form-scroll">
+          <div class="log-toolbar">
+            <span class="section-hint" style="margin:0;">Recent activity from the desktop app.</span>
+            <span class="spacer"></span>
+            <button class="btn ghost small" id="logAutoScroll" type="button" aria-pressed="true">Auto-scroll: on</button>
+            <button class="btn ghost small" id="btnClearLogsView" type="button">Clear view</button>
+          </div>
+          <div class="log-box" id="logBox"></div>
+        </div>
+      </section>
+
+    </div>
+
+    <nav class="tabbar" id="tabbar">
+      <button class="tab-btn active" data-tab="live" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 12 8 12 10 6 14 18 16 12 21 12"/></svg>
+        Live
+      </button>
+      <button class="tab-btn" data-tab="context" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+        Context
+      </button>
+      <button class="tab-btn" data-tab="status" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="8 12.5 10.8 15 16 9"/></svg>
+        Status
+      </button>
+      <button class="tab-btn" data-tab="logs" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+        Logs
+      </button>
+    </nav>
+  </div>
+
+  <div class="toasts" id="toasts"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  // ── Auth ──────────────────────────────────────────────────────────────
+  var TOKEN_KEY = 'synapse_companion_token';
+  function getStoredToken() { try { return localStorage.getItem(TOKEN_KEY) || ''; } catch (_) { return ''; } }
+  function storeToken(t) { try { localStorage.setItem(TOKEN_KEY, t); } catch (_) {} }
+
+  var token = new URLSearchParams(location.search).get('token') || '';
+  if (token) {
+    storeToken(token);
+    history.replaceState(null, '', location.pathname);
+  } else {
+    token = getStoredToken();
+  }
+
+  function api(path, body, method) {
+    var headers = { 'Content-Type': 'application/json' };
+    if (token) headers.Authorization = 'Bearer ' + token;
+    return fetch(path, {
+      method: method || (body !== undefined ? 'POST' : 'GET'),
+      headers: headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (data) {
+        data.__status = r.status;
+        return data;
+      });
+    });
+  }
+
+  // ── Toasts ────────────────────────────────────────────────────────────
+  function toast(message, isError) {
+    var el = document.createElement('div');
+    el.className = 'toast' + (isError ? ' err' : '');
+    el.textContent = message;
+    $('toasts').appendChild(el);
+    setTimeout(function () {
+      el.classList.add('out');
+      setTimeout(function () { el.remove(); }, 240);
+    }, isError ? 4200 : 3200);
+  }
+
+  // ── Login gate ────────────────────────────────────────────────────────
+  var appStarted = false;
+
+  function showGate(message) {
+    clearTimeout(reconnectTimer);
+    if (ws) { try { ws.close(); } catch (_) {} ws = null; }
+    $('app').hidden = true;
+    $('gate').hidden = false;
+    $('gateCode').value = '';
+    $('gateHint').textContent = message || 'The code rotates every 30 seconds.';
+    $('gateHint').className = 'hint' + (message ? ' error' : '');
+    setTimeout(function () { $('gateCode').focus(); }, 30);
+  }
+
+  function showApp() {
+    $('gate').hidden = true;
+    $('app').hidden = false;
+    if (!appStarted) {
+      appStarted = true;
+      connectWS();
+      loadContext();
+      refreshStatus();
+      refreshLogs();
+      setInterval(refreshStatus, 8000);
+      setInterval(refreshLogs, 2500);
+    } else if (!ws || ws.readyState > 1) {
+      connectWS();
+    }
+  }
+
+  function doLogin() {
+    var code = $('gateCode').value.trim();
+    if (code.length !== 6) { $('gateHint').textContent = 'Enter all six digits.'; $('gateHint').className = 'hint error'; return; }
+
+    $('gateBtn').disabled = true;
+    fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: code })
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (r) {
+        if (!r.ok) { $('gateHint').textContent = r.error || 'That code was not accepted.'; $('gateHint').className = 'hint error'; return; }
+        token = r.sessionToken;
+        storeToken(token);
+        showApp();
+      })
+      .catch(function (e) {
+        $('gateHint').textContent = e.message === 'Failed to fetch' ? 'Cannot reach your Mac. Check you are on the same Wi-Fi.' : e.message;
+        $('gateHint').className = 'hint error';
+      })
+      .finally(function () { $('gateBtn').disabled = false; });
+  }
+
+  $('gateBtn').addEventListener('click', doLogin);
+  $('gateCode').addEventListener('keydown', function (e) { if (e.key === 'Enter') doLogin(); });
+
+  // ── Tabs ──────────────────────────────────────────────────────────────
+  var TABS = ['live', 'context', 'status', 'logs'];
+  function showTab(name) {
+    TABS.forEach(function (t) { $('panel-' + t).hidden = (t !== name); });
+    document.querySelectorAll('.tab-btn').forEach(function (b) { b.classList.toggle('active', b.dataset.tab === name); });
+    if (name === 'status') refreshStatus();
+  }
+  document.querySelectorAll('.tab-btn').forEach(function (b) {
+    b.addEventListener('click', function () { showTab(b.dataset.tab); });
+  });
+
+  // ── WebSocket ─────────────────────────────────────────────────────────
+  var ws = null;
+  var wsRetry = 0;
+  var reconnectTimer = null;
+
+  function setConnBanner(ok, message) {
+    $('conn').classList.toggle('show', !ok);
+    if (!ok) $('connText').textContent = message || 'Reconnecting…';
+    $('wsDot').classList.toggle('live', ok);
+  }
+
+  function connectWS() {
+    clearTimeout(reconnectTimer);
+    var scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+    try {
+      ws = new WebSocket(scheme + '://' + location.host + '/?token=' + encodeURIComponent(token));
+    } catch (e) {
+      scheduleReconnect();
+      return;
+    }
+    ws.hadOpened = false;
+
+    ws.onopen = function () { wsRetry = 0; ws.hadOpened = true; setConnBanner(true); };
+
+    ws.onmessage = function (e) {
+      if (typeof e.data !== 'string') return;
+      var msg;
+      try { msg = JSON.parse(e.data); } catch (_) { return; }
+      handleWs(msg.channel, msg.data || {});
+    };
+
+    ws.onclose = function (e) {
+      if (e && e.code === 1008) { showGate('Pairing expired. Enter a new passcode.'); return; }
+      if (!ws.hadOpened) {
+        // Rejected during the handshake — the bearer is almost certainly stale
+        // (the desktop app restarted and minted a fresh one).
+        showGate('Pairing expired. Enter a new passcode.');
+        return;
+      }
+      setConnBanner(false);
+      scheduleReconnect();
+    };
+
+    ws.onerror = function () {};
+  }
+
+  function scheduleReconnect() {
+    wsRetry = Math.min(wsRetry + 1, 6);
+    var delay = Math.min(500 * Math.pow(2, wsRetry - 1), 15000);
+    setConnBanner(false, 'Reconnecting in ' + Math.round(delay / 1000) + 's…');
+    reconnectTimer = setTimeout(connectWS, delay);
+  }
+
+  function wsSend(obj) {
+    if (ws && ws.readyState === 1) { ws.send(JSON.stringify(obj)); return true; }
+    toast('Not connected to your Mac', true);
+    return false;
+  }
+
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden && !$('app').hidden && (!ws || ws.readyState > 1)) connectWS();
+  });
+
+  // ── Live: pipeline / mode / mic / system-audio indicators ───────────────
+  var sysCapturing = false;
+  function setPipeline(state) {
+    var el = $('pipelineStatus');
+    el.classList.remove('thinking', 'listening');
+    if (state === 'thinking') { el.textContent = 'Thinking…'; el.classList.add('thinking'); }
+    else if (state === 'listening') { el.textContent = 'Listening…'; el.classList.add('listening'); }
+    else if (state) { el.textContent = state; }
+    else { el.textContent = 'Ready'; }
+  }
+
+  var micOn = false;
+  function setMic(on) {
+    micOn = !!on;
+    $('micDot').classList.toggle('live', micOn);
+    $('micLabel').textContent = micOn ? 'Mic on' : 'Mic off';
+    $('btnMic').classList.toggle('on', micOn);
+  }
+
+  function setSystemAudio(status, device) {
+    var dot = $('sysDot');
+    dot.classList.remove('live', 'warn', 'fail');
+    sysCapturing = status === 'capturing';
+    if (!streamEl) setPipeline(sysCapturing ? 'listening' : null);
+
+    if (status === 'capturing') {
+      dot.classList.add('live');
+      $('sysLabel').textContent = 'System audio';
+      dot.title = device ? 'Capturing ' + device : 'Capturing system audio';
+    } else if (status === 'reacquiring' || status === 'degraded') {
+      dot.classList.add('warn');
+      $('sysLabel').textContent = 'Reconnecting…';
+    } else if (status === 'missing-device' || status === 'error') {
+      dot.classList.add('fail');
+      $('sysLabel').textContent = 'No system audio';
+    } else {
+      $('sysLabel').textContent = 'System audio';
+    }
+  }
+
+  var autopilotOn = false;
+  function setAutopilot(on) {
+    autopilotOn = !!on;
+    $('btnAutopilot').classList.toggle('on', autopilotOn);
+  }
+
+  // ── Live: chat log + streaming answer ────────────────────────────────
+  var autoScrollChat = true;
+  function scrollChat() {
+    if (!autoScrollChat) return;
+    var log = $('chatLog');
+    log.scrollTop = log.scrollHeight;
+    $('liveScroll').scrollTop = $('liveScroll').scrollHeight;
+  }
+
+  function addMsg(kind, label, text) {
+    var el = document.createElement('div');
+    el.className = 'msg ' + kind;
+    if (label) {
+      var l = document.createElement('div');
+      l.className = 'msg-label';
+      l.textContent = label;
+      el.appendChild(l);
+    }
+    var b = document.createElement('div');
+    b.className = 'msg-bubble';
+    b.textContent = text;
+    el.appendChild(b);
+    $('chatLog').appendChild(el);
+    scrollChat();
+    return el;
+  }
+
+  var streamEl = null;
+  var streamBuf = '';
+  function beginStream() {
+    setPipeline('thinking');
+    streamBuf = '';
+    streamEl = addMsg('right', 'Synapse', '');
+    streamEl.classList.add('streaming');
+  }
+  function appendStream(t) {
+    if (!t) return;
+    if (!streamEl) beginStream();
+    streamBuf += t;
+    streamEl.querySelector('.msg-bubble').textContent = streamBuf;
+    scrollChat();
+  }
+  function endStream() {
+    setPipeline(sysCapturing ? 'listening' : null);
+    if (streamEl) {
+      streamEl.classList.remove('streaming');
+      if (!streamBuf) streamEl.querySelector('.msg-bubble').textContent = 'No answer returned.';
+    }
+    streamEl = null;
+    streamBuf = '';
+  }
+  function failStream(message) {
+    setPipeline(sysCapturing ? 'listening' : null);
+    if (streamEl) {
+      streamEl.classList.remove('streaming');
+      streamEl.querySelector('.msg-bubble').textContent = message || 'Answer generation failed.';
+    }
+    streamEl = null;
+    streamBuf = '';
+  }
+
+  // ── Live: screenshots ─────────────────────────────────────────────────
+  var screenshotsCount = 0;
+  function setScreenshotCount(n) {
+    screenshotsCount = n || 0;
+    var b = $('ssBadge');
+    if (screenshotsCount > 0) { b.textContent = screenshotsCount; b.classList.add('show'); }
+    else { b.classList.remove('show'); }
+  }
+
+  $('btnScreenshot').addEventListener('click', function () { wsSend({ type: 'take-screenshot' }); });
+
+  // ── Live: composer ────────────────────────────────────────────────────
+  function autoResize(el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 100) + 'px'; }
+
+  function sendAsk() {
+    var text = $('askInput').value.trim();
+    if (!text && screenshotsCount === 0) { toast('Type a question or take a screenshot first', true); return; }
+    if (!wsSend({ type: 'ask-ai', contextString: text })) return;
+    if (text) {
+      addMsg('left', 'You', text);
+      $('askInput').value = '';
+      autoResize($('askInput'));
+    }
+  }
+  $('sendBtn').addEventListener('click', sendAsk);
+  $('askInput').addEventListener('input', function () { autoResize(this); });
+  $('askInput').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAsk(); }
+  });
+
+  $('btnMic').addEventListener('click', function () { wsSend({ type: 'toggle-mic', state: !micOn }); });
+  $('btnAutopilot').addEventListener('click', function () { wsSend({ type: 'toggle-autopilot', state: !autopilotOn }); });
+  $('btnSendEditor').addEventListener('click', function () {
+    if (wsSend({ type: 'send-answer-to-editor' })) toast('Sent to the desktop editor');
+  });
+  $('btnClear').addEventListener('click', function () { wsSend({ type: 'clear-conversation' }); });
+
+  var speedTimer = null;
+  $('speedSlider').addEventListener('input', function () {
+    $('speedVal').textContent = this.value;
+    clearTimeout(speedTimer);
+    var v = Number(this.value);
+    speedTimer = setTimeout(function () { wsSend({ type: 'set-typing-speed', speed: v }); }, 180);
+  });
+
+  // ── Live: recall ──────────────────────────────────────────────────────
+  var recallSeq = 0;
+
+  function renderHits(hits, ms) {
+    var body = $('recallBody');
+    body.innerHTML = '';
+    if (!hits || !hits.length) {
+      var none = document.createElement('div');
+      none.className = 'placeholder';
+      none.textContent = 'Nothing indexed matches this yet. Add your resume or notes in the Context tab.';
+      body.appendChild(none);
+      $('recallTime').textContent = '';
+      return;
+    }
+    var frag = document.createDocumentFragment();
+    hits.forEach(function (hit, i) {
+      var card = document.createElement('div');
+      card.className = 'hit';
+      card.style.animationDelay = (i * 45) + 'ms';
+
+      var text = document.createElement('div');
+      text.className = 'hit-text';
+      text.textContent = hit.text;
+
+      var meta = document.createElement('div');
+      meta.className = 'hit-meta';
+      var src = document.createElement('span');
+      src.className = 'hit-src';
+      src.textContent = hit.source;
+      var score = document.createElement('span');
+      score.textContent = 'match ' + Math.round((hit.score || 0) * 100) + '%';
+      meta.appendChild(src);
+      meta.appendChild(score);
+
+      card.appendChild(text);
+      card.appendChild(meta);
+      frag.appendChild(card);
+    });
+    body.appendChild(frag);
+    $('recallTime').textContent = ms + 'ms';
+  }
+
+  function runRecall(question) {
+    var seq = ++recallSeq;
+    $('recallQuestion').textContent = question;
+    $('recallQuestion').classList.remove('empty');
+
+    var body = $('recallBody');
+    body.innerHTML = '';
+    var s = document.createElement('div');
+    s.className = 'placeholder searching';
+    s.textContent = 'Searching your notes';
+    body.appendChild(s);
+
+    api('/api/recall', { question: question, topK: 3 })
+      .then(function (res) {
+        if (seq !== recallSeq) return;
+        if (!res.ok) { renderHits([], 0); toast(res.error || 'Recall failed', true); return; }
+        renderHits(res.hits || [], res.elapsedMs);
+      })
+      .catch(function (err) {
+        if (seq !== recallSeq) return;
+        renderHits([], 0);
+        toast('Recall unavailable: ' + err.message, true);
+      });
+  }
+
+  $('recallForm').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var q = $('recallInput').value.trim();
+    if (!q) { toast('Type something to search for', true); return; }
+    runRecall(q);
+  });
+
+  // ── WS event dispatch ─────────────────────────────────────────────────
+  function handleWs(channel, data) {
+    switch (channel) {
+      case 'connected':
+        setConnBanner(true);
+        setScreenshotCount(data.screenshotsCount || 0);
+        addMsg('center', null, 'Connected · ' + (data.screenshotsCount || 0) + ' screenshot(s) queued');
+        break;
+
+      case 'screenshot-taken-stealth':
+        setScreenshotCount(data.count || 0);
+        addMsg('center', null, '📸 Screenshot #' + (data.count || 0) + ' captured');
+        break;
+
+      case 'ai-stream-start': beginStream(); break;
+      case 'ai-stream-chunk': appendStream(data.text); break;
+      case 'ai-stream-end':   endStream(); break;
+
+      // Local-orchestrator stream: haptic opens the bubble before the first
+      // token arrives; tokens append with no separate start event.
+      case 'synapse-haptic':
+        if (navigator.vibrate) { try { navigator.vibrate([100, 50, 100]); } catch (_) {} }
+        if (!streamEl) beginStream();
+        break;
+      case 'synapse-token':    appendStream(data.token); break;
+      case 'synapse-complete': endStream(); break;
+
+      case 'vosk-final':
+        if (data.source === 'system') {
+          $('livePartial').hidden = true;
+          $('livePartial').textContent = '';
+          var heard = String(data.text || '').trim();
+          if (heard) {
+            addMsg('left', 'Host', heard);
+            $('recallQuestion').textContent = heard;
+            $('recallQuestion').classList.remove('empty');
+            if (autopilotOn && heard.length > 8) runRecall(heard);
+          }
+        }
+        break;
+
+      case 'vosk-partial':
+        if (data.source === 'system') {
+          var partial = String(data.text || '').trim();
+          $('livePartial').hidden = !partial;
+          $('livePartial').textContent = partial;
+        }
+        break;
+
+      case 'vosk-status':
+        if (data.source === 'mic') setMic(data.status === 'listening');
+        break;
+
+      case 'system-audio-status':
+        setSystemAudio(data.status, data.device);
+        if (data.status === 'missing-device') toast('System audio unavailable: ' + (data.message || ''), true);
+        break;
+
+      case 'synapse-mode':
+        if (data.mode) $('modeBadge').textContent = data.mode;
+        break;
+
+      case 'synapse-nudge':
+        toast('💡 ' + (data.message || ''));
+        if (navigator.vibrate) { try { navigator.vibrate(50); } catch (_) {} }
+        break;
+
+      case 'synapse-queue':
+        setPipeline(data.pending > 0 ? 'Queued: ' + data.pending : (sysCapturing ? 'listening' : null));
+        break;
+
+      case 'clear-done':
+        $('chatLog').innerHTML = '';
+        setScreenshotCount(0);
+        addMsg('center', null, '💬 Conversation cleared');
+        break;
+
+      case 'mic-state':       setMic(data.enabled); break;
+      case 'autopilot-state': setAutopilot(data.enabled); break;
+
+      case 'typing-speed':
+        if (data.speed != null) { $('speedSlider').value = data.speed; $('speedVal').textContent = data.speed; }
+        break;
+
+      case 'error':
+      case 'synapse-error':
+        if (data.message) { toast(data.message, true); failStream(data.message); }
+        break;
+
+      default:
+        break; // history / answer-superseded / other channels: no dedicated UI
+    }
+  }
+
+  // ── Context tab ───────────────────────────────────────────────────────
+  var COUNTED = {
+    f_jobDescription: 8000, f_background: 8000, f_focusAreas: 2000,
+    f_avoidTopics: 2000, f_extraNotes: 4000, f_interviewerContext: 500
+  };
+  function updateCounter(id) {
+    var el = $(id), out = $(id + '_counter');
+    if (!el || !out) return;
+    out.textContent = el.value.length + ' / ' + COUNTED[id];
+  }
+  function updateAllCounters() { Object.keys(COUNTED).forEach(updateCounter); }
+
+  var jdDirty = false;
+  var bgDirty = false;
+  var resumeMode = 'paste';
+
+  function setResumeMode(mode) {
+    resumeMode = mode;
+    $('resumeModePaste').classList.toggle('active', mode === 'paste');
+    $('resumeModeUpload').classList.toggle('active', mode === 'upload');
+    $('resumePastePanel').hidden = mode !== 'paste';
+    $('resumeUploadPanel').hidden = mode !== 'upload';
+  }
+  $('resumeModePaste').addEventListener('click', function () { setResumeMode('paste'); });
+  $('resumeModeUpload').addEventListener('click', function () { setResumeMode('upload'); });
+
+  function applyContext(ctx) {
+    ctx = ctx || {};
+    $('f_role').value = ctx.role || '';
+    $('f_company').value = ctx.company || '';
+    $('f_interviewType').value = ctx.interviewType || 'auto';
+    $('f_seniority').value = ctx.seniority || '';
+    $('f_jobDescription').value = ctx.jobDescription || '';
+    $('f_background').value = ctx.background || '';
+    $('f_focusAreas').value = ctx.focusAreas || '';
+    $('f_avoidTopics').value = ctx.avoidTopics || '';
+    $('f_answerStyle').value = ctx.answerStyle || 'balanced';
+    $('f_extraNotes').value = ctx.extraNotes || '';
+    $('f_round').value = ctx.round || '';
+    $('f_duration').value = ctx.duration || '';
+    $('f_interviewerContext').value = ctx.interviewerContext || '';
+    $('f_difficulty').value = ctx.difficulty || '';
+    updateAllCounters();
+    jdDirty = false;
+    bgDirty = false;
+    if (ctx.updatedAt) {
+      $('contextSaveState').textContent = 'Last saved ' + new Date(ctx.updatedAt).toLocaleString();
+      $('contextSaveState').className = 'save-state';
+    }
+  }
+
+  function loadContext() {
+    api('/api/context', undefined, 'GET')
+      .then(function (r) { if (r.ok) applyContext(r.context); })
+      .catch(function () {});
+  }
+
+  ['f_jobDescription'].forEach(function (id) {
+    $(id).addEventListener('input', function () { jdDirty = true; updateCounter(id); });
+  });
+  $('f_background').addEventListener('input', function () {
+    if (resumeMode === 'paste') bgDirty = true;
+    updateCounter('f_background');
+  });
+  Object.keys(COUNTED).forEach(function (id) {
+    if (id === 'f_jobDescription' || id === 'f_background') return;
+    $(id).addEventListener('input', function () { updateCounter(id); });
+  });
+
+  $('resumeFilePick').addEventListener('click', function () { $('resumeFileInput').click(); });
+  $('resumeFileInput').addEventListener('change', function () {
+    var file = this.files && this.files[0];
+    if (!file) return;
+    $('resumeUploadHint').textContent = 'Uploading ' + file.name + '…';
+
+    var reader = new FileReader();
+    reader.onload = function () {
+      var base64 = String(reader.result).split(',')[1] || '';
+      api('/api/resume', { filename: file.name, contentBase64: base64 })
+        .then(function (r) {
+          if (r.ok) {
+            $('resumeUploadHint').textContent = (r.message || 'Indexed') + '. This is what Recall searches.';
+            toast('Resume indexed');
+            bgDirty = false;
+            return api('/api/context', undefined, 'GET').then(function (r2) {
+              if (r2.ok && r2.context) { $('f_background').value = r2.context.background || ''; updateCounter('f_background'); }
+            });
+          }
+          $('resumeUploadHint').textContent = r.error || 'Upload failed';
+          toast(r.error || 'Upload failed', true);
+        })
+        .catch(function (e) {
+          $('resumeUploadHint').textContent = 'Upload failed.';
+          toast(e.message, true);
+        });
+    };
+    reader.readAsDataURL(file);
+  });
+
+  var savingContext = false;
+  $('contextForm').addEventListener('submit', function (e) {
+    e.preventDefault();
+    saveContext();
+  });
+
+  function saveContext() {
+    if (savingContext) return;
+    savingContext = true;
+    $('saveContextBtn').disabled = true;
+    $('saveContextBtn').classList.add('loading');
+    $('saveContextLabel').textContent = 'Saving…';
+    $('contextSaveState').textContent = '';
+    $('contextSaveState').className = 'save-state';
+
+    var payload = {
+      role: $('f_role').value.trim(),
+      company: $('f_company').value.trim(),
+      interviewType: $('f_interviewType').value,
+      seniority: $('f_seniority').value.trim(),
+      jobDescription: $('f_jobDescription').value,
+      background: $('f_background').value,
+      focusAreas: $('f_focusAreas').value.trim(),
+      avoidTopics: $('f_avoidTopics').value.trim(),
+      answerStyle: $('f_answerStyle').value,
+      extraNotes: $('f_extraNotes').value.trim(),
+      round: $('f_round').value.trim(),
+      duration: $('f_duration').value.trim(),
+      interviewerContext: $('f_interviewerContext').value.trim(),
+      difficulty: $('f_difficulty').value.trim()
+    };
+
+    api('/api/context', payload, 'POST')
+      .then(function (res) {
+        if (!res.ok) throw new Error(res.error || 'Save failed');
+
+        var chain = Promise.resolve();
+        if (jdDirty) {
+          chain = chain.then(function () {
+            return api('/api/jd', { jdText: payload.jobDescription }, 'POST').then(function (jr) {
+              if (jr.ok) jdDirty = false;
+            });
+          });
+        }
+        if (bgDirty && resumeMode === 'paste') {
+          chain = chain.then(function () {
+            return api('/api/resume', { filename: 'pasted-brief.txt', text: payload.background }, 'POST').then(function (br) {
+              if (br.ok) bgDirty = false;
+            });
+          });
+        }
+        return chain.then(function () { return res; });
+      })
+      .then(function (res) {
+        var when = res.context && res.context.updatedAt ? new Date(res.context.updatedAt).toLocaleString() : new Date().toLocaleString();
+        $('contextSaveState').textContent = 'Saved — last updated ' + when;
+        $('contextSaveState').className = 'save-state saved';
+        toast('Interview brief saved');
+      })
+      .catch(function (err) {
+        var msg = err.message === 'Failed to fetch' ? 'Cannot reach your Mac. Check you are on the same Wi-Fi.' : err.message;
+        $('contextSaveState').textContent = msg;
+        $('contextSaveState').className = 'save-state error';
+        toast(msg, true);
+      })
+      .finally(function () {
+        savingContext = false;
+        $('saveContextBtn').disabled = false;
+        $('saveContextBtn').classList.remove('loading');
+        $('saveContextLabel').textContent = 'Save brief';
+      });
+  }
+
+  $('resetContextBtn').addEventListener('click', function () {
+    if (!confirm('Clear every field in this brief? This does not save until you press Save.')) return;
+    applyContext({ interviewType: 'auto', answerStyle: 'balanced' });
+    jdDirty = true;
+    bgDirty = true;
+    $('contextSaveState').textContent = 'Cleared — press Save to apply';
+    $('contextSaveState').className = 'save-state';
+  });
+
+  // ── Status tab ────────────────────────────────────────────────────────
+  function setStatCard(id, ok, detail) {
+    var el = $(id);
+    if (!el) return;
+    el.classList.remove('ok', 'fail', 'na');
+    if (ok === null || ok === undefined) { el.textContent = 'N/A'; el.classList.add('na'); }
+    else { el.textContent = ok ? 'Online' : 'Offline'; el.classList.add(ok ? 'ok' : 'fail'); }
+    var d = $(id + '_detail');
+    if (d) d.textContent = detail || '';
+  }
+
+  function refreshStatus() {
+    return api('/api/status', undefined, 'GET').then(function (h) {
+      if (!h.ok) {
+        if (h.error === 'Unauthorized') showGate('Pairing expired. Enter a new passcode.');
+        return null;
+      }
+      setStatCard('statWhisper', h.whisperOk);
+      setStatCard('statWhisperMic', h.whisperMicOk);
+      setStatCard('statOllama', h.ollamaOk);
+      setStatCard('statSystemAudio', h.systemAudioCapture ? h.systemAudioCapture.ok : null, h.systemAudioCapture && h.systemAudioCapture.detail);
+      $('statLatency').textContent = h.firstTokenMs == null ? '—' : Math.round(h.firstTokenMs) + ' ms';
+      $('statClients').textContent = h.clientCount != null ? h.clientCount : '—';
+      $('statChecked').textContent = h.checkedAt ? new Date(h.checkedAt).toLocaleTimeString() : '—';
+      return h;
+    }).catch(function () { return null; });
+  }
+
+  function wireRestart(btnId, service) {
+    var btn = $(btnId);
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+      btn.disabled = true;
+      toast('Restarting ' + service + '…');
+      api('/api/restart-service', { service: service }, 'POST')
+        .then(function (r) { toast(r.ok ? service + ' restarted.' : (r.error || 'Restart failed'), !r.ok); })
+        .catch(function (e) { toast(e.message, true); })
+        .finally(function () { btn.disabled = false; refreshStatus(); });
+    });
+  }
+  wireRestart('restart_whisper', 'whisper');
+  wireRestart('restart_whisper_mic', 'whisper-mic');
+  wireRestart('restart_ollama', 'ollama');
+
+  $('btnDiagnostics').addEventListener('click', function () {
+    toast('Running diagnostics…');
+    refreshStatus().then(function (h) { toast(h ? 'Diagnostics complete.' : 'Diagnostics failed — check connection', !h); });
+  });
+
+  // ── Logs tab ──────────────────────────────────────────────────────────
+  var lastLogId = 0;
+  var autoScrollLogs = true;
+
+  function appendLogLine(entry) {
+    var box = $('logBox');
+    var atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+    var row = document.createElement('div');
+    row.className = 'log-line log-' + (entry.level || 'info');
+    var time = entry.at ? String(entry.at).slice(11, 19) : '';
+    row.textContent = '[' + time + '] ' + String(entry.level || '').toUpperCase() + '  ' + entry.message;
+    box.appendChild(row);
+    while (box.childElementCount > 500) box.removeChild(box.firstElementChild);
+    if (autoScrollLogs && atBottom) box.scrollTop = box.scrollHeight;
+  }
+
+  function refreshLogs() {
+    return api('/api/logs?since=' + lastLogId + '&limit=200', undefined, 'GET')
+      .then(function (r) {
+        if (!r.ok) return;
+        (r.entries || []).forEach(appendLogLine);
+        if (r.lastId) lastLogId = r.lastId;
+      })
+      .catch(function () {});
+  }
+
+  $('logAutoScroll').addEventListener('click', function () {
+    autoScrollLogs = !autoScrollLogs;
+    this.textContent = 'Auto-scroll: ' + (autoScrollLogs ? 'on' : 'off');
+    this.setAttribute('aria-pressed', String(autoScrollLogs));
+  });
+  $('btnClearLogsView').addEventListener('click', function () { $('logBox').innerHTML = ''; });
+
+  // ── Boot ──────────────────────────────────────────────────────────────
+  if (!token) {
+    showGate();
+  } else {
+    api('/api/status', undefined, 'GET')
+      .then(function (r) { if (r.ok) showApp(); else showGate('Pairing expired. Enter a new passcode.'); })
+      .catch(function () { showGate('Cannot reach your Mac. Check you are on the same Wi-Fi.'); });
+  }
+})();
+</script>
+</body>
+</html>

@@ -5,6 +5,7 @@ export function setupEventListeners({
     screenAiBtn,
     clearBtn,
     hideBtn,
+    compactModeBtn,
     chatManualSend,
     chatManualInput,
     closeResultsBtn,
@@ -33,6 +34,7 @@ export function setupEventListeners({
     analyzeScreenshotsOnly,
     clearStealthData,
     emergencyHide,
+    toggleCompactMode,
     copyChatMessageById,
     submitManualContextMessage,
     autoResizeManualInput,
@@ -58,6 +60,7 @@ export function setupEventListeners({
     if (screenAiBtn) screenAiBtn.addEventListener('click', analyzeScreenshotsOnly);
     if (clearBtn) clearBtn.addEventListener('click', clearStealthData);
     if (hideBtn) hideBtn.addEventListener('click', emergencyHide);
+    if (compactModeBtn) compactModeBtn.addEventListener('click', toggleCompactMode);
     if (chatManualSend) chatManualSend.addEventListener('click', submitManualContextMessage);
 
     if (chatManualInput) {

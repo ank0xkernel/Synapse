@@ -1,5 +1,6 @@
-import { LOOPBACK_ERROR_CODE, isDeviceStillPresent } from '../assembly-ai/loopback-device.js';
+import { LOOPBACK_ERROR_CODE, isDeviceStillPresent, checkSpeakerSeparationHealth } from '../assembly-ai/loopback-device.js';
 import { buildDiagnosticReport } from '../diagnostics/diagnostic-snapshot.js';
+import { createEchoFilter } from './echo-filter.js';
 
 const MAX_MONITOR_LOG_ENTRIES = 80;
 
@@ -61,13 +62,33 @@ export function createTranscriptionManager({
     let isSystemActive = false;
 
     let activeLoopbackDevice = null;
+    // 'native': the macOS helper captures what the Mac plays while the output
+    // device stays as the user set it. 'legacy': BlackHole input, only when
+    // the helper is unavailable (macOS older than 13). Decided on each start.
+    let systemCaptureMode = null;
+    let systemCaptureLabel = null;
+    let nativeProbePromise = null;
     let reacquireAttempt = 0;
     let reacquireTimer = null;
+    // Mirrors reacquireAttempt/reacquireTimer above, but for the mic source.
+    // Real bug found by reading handleVoskError/handleVoskStopped: both only
+    // ever auto-reconnected `source === 'system'` — an unexpected mic-socket
+    // death (the exact same network-blip/provider-timeout causes already
+    // handled for system audio) just left the mic permanently off with no
+    // recovery, silently, for the rest of the session. That's a real,
+    // reported "the app stops working for no reason" failure mode.
+    let micReacquireAttempt = 0;
+    let micReacquireTimer = null;
     let deviceChangeHandler = null;
     let frameWatchdogTimer = null;
     let silenceWatchdogTimer = null;
     let lastSilenceWarningAt = 0;
     let silenceWarningActive = false;
+
+    // Legacy fallback only: the mic accidentally set to the same loopback
+    // device that carries the interviewer. Warned once per session.
+    let hasWarnedAboutMicLoopbackCollision = false;
+    const echoFilter = createEchoFilter();
 
     let micPartialText = '';
     let micPartialDiv = null;
@@ -357,6 +378,7 @@ export function createTranscriptionManager({
             await micAudioContext.resume();
             resetSourceSampleQueue('mic');
             micScriptProcessor = await buildAudioProcessor(micAudioContext, micMediaStream, 'mic', () => isMicActive);
+            micReacquireAttempt = 0;
 
             setMicActive(true);
             addChatMessage('system', 'Mic listening...');
@@ -381,7 +403,14 @@ export function createTranscriptionManager({
         updateTranscriptionUI();
     }
 
-    async function stopMicRecording() {
+    async function stopMicRecording({ keepSelection = false } = {}) {
+        if (!keepSelection) {
+            // An explicit stop cancels any in-flight recovery; a recovery-driven
+            // stop must not cancel the retry that scheduled it. Same rule as
+            // stopSystemAudioRecording's keepSelection.
+            clearMicReacquireTimer();
+            micReacquireAttempt = 0;
+        }
         if (!isMicActive && sourceStatuses.mic !== 'connecting') return;
         drainSourceSampleQueue('mic', { flushPartial: true });
         flushFinalTranscript('mic', 'stop-request');
@@ -414,7 +443,7 @@ export function createTranscriptionManager({
             window.electronAPI.reportSystemAudioStatus({
                 status,
                 message: message || '',
-                device: meta.device || activeLoopbackDevice?.label || null
+                device: meta.device || systemCaptureLabel || null
             });
         } catch (_) {
             // Status reporting must never take the capture path down.
@@ -425,8 +454,8 @@ export function createTranscriptionManager({
         const available = Array.isArray(error?.availableInputs) ? error.availableInputs : [];
         addChatMessage(
             'system',
-            'No loopback audio device found, so Synapse cannot hear the other person.\n\n'
-            + 'Synapse needs BlackHole 2ch installed and your call audio routed through it.\n'
+            'This Mac is older than macOS 13, so Synapse cannot capture call audio natively, and no loopback audio device was found.\n\n'
+            + 'On this macOS version Synapse needs BlackHole 2ch installed and your call audio routed through it.\n'
             + (available.length ? `Inputs currently visible: ${available.join(', ')}.\n` : '')
             + 'Open the setup guide for the 3-step fix.'
         );
@@ -446,6 +475,91 @@ export function createTranscriptionManager({
         if (isAutoScrollEnabled() && isChatNearBottom()) {
             chatMessagesElement.scrollTop = chatMessagesElement.scrollHeight;
         }
+    }
+
+    /** The helper's capabilities do not change while the app runs; probe once. */
+    function getNativeProbe() {
+        if (!nativeProbePromise) {
+            nativeProbePromise = Promise.resolve(window.electronAPI?.probeNativeSystemAudio?.())
+                .then((info) => info || { available: false, reason: 'no-bridge' })
+                .catch((error) => ({ available: false, reason: error.message }));
+        }
+        return nativeProbePromise;
+    }
+
+    function handleNativeStatus(payload = {}) {
+        if (systemCaptureMode !== 'native') return;
+        const { status } = payload;
+
+        if (status === 'device-changed') {
+            addMonitorLog('info', 'native-device-changed', `Output device is now "${payload.defaultOutput}"; capture follows it`, 'system', payload);
+            return;
+        }
+        if (status === 'restarting') {
+            addMonitorLog('info', 'native-restarting', `Native capture restarting (${payload.reason}, attempt ${payload.attempt})`, 'system', payload);
+            reportSystemAudioStatus('reacquiring', `Native capture restarting (${payload.reason})`);
+            return;
+        }
+        if (status === 'degraded') {
+            addMonitorLog('error', 'native-dropped-audio', `Native capture dropped ${payload.droppedSamples} samples (consumer too slow)`, 'system', payload);
+            return;
+        }
+        if (status === 'capturing') {
+            addMonitorLog('info', 'native-capturing', `Native capture running via ${payload.backend}`, 'system', payload);
+            return;
+        }
+        if ((status === 'failed' || status === 'error') && isSystemActive) {
+            addMonitorLog('error', 'native-failed', `${payload.code || 'ERROR'}: ${payload.message || 'native capture failed'}`, 'system', payload);
+            if (payload.code === 'PERMISSION_DENIED') {
+                addChatMessage('system', permissionHelpText());
+                stopSystemAudioRecording().catch(() => {});
+                return;
+            }
+            scheduleLoopbackReacquire('native-failed');
+        }
+    }
+
+    function permissionHelpText() {
+        return 'Synapse needs permission to hear your Mac\'s audio. Open System Settings → Privacy & Security → '
+            + 'Screen & System Audio Recording, allow Synapse, then turn Host audio back on. '
+            + 'Your speaker or headphone selection does not need to change.';
+    }
+
+    function attachNativeListeners() {
+        if (!window.electronAPI?.onNativeSystemAudioFrame) return;
+        window.electronAPI.onNativeSystemAudioFrame((frame) => {
+            // Frames that arrive before the source is marked active, or after a
+            // stop, are dropped rather than queued into a stale session.
+            if (systemCaptureMode !== 'native' || !isSystemActive) return;
+            audioPipeline.ingestPcmFrame('system', frame);
+        });
+        window.electronAPI.onNativeSystemAudioStatus?.(handleNativeStatus);
+    }
+
+    /*
+     * Wires up loopback-device.js's checkSpeakerSeparationHealth(), which
+     * existed but was never actually called from anywhere in the app before
+     * this — a real, already-written check for exactly the collision
+     * described above, sitting dead. Runs once per system-audio session
+     * (re-checking on every reacquire would be noise for a state that
+     * essentially never changes mid-call) and only warns on an actual
+     * collision, not on "inconclusive" (no default input could be read).
+     */
+    async function checkMicLoopbackCollision() {
+        if (hasWarnedAboutMicLoopbackCollision) return;
+
+        let health;
+        try {
+            health = await checkSpeakerSeparationHealth();
+        } catch (_) {
+            return; // best-effort — never let a diagnostic check break capture
+        }
+
+        if (health.ok) return;
+
+        hasWarnedAboutMicLoopbackCollision = true;
+        addMonitorLog('error', 'mic-loopback-collision', health.reason, 'mic');
+        addChatMessage('system', `⚠️ ${health.reason}`);
     }
 
     function clearReacquireTimer() {
@@ -510,6 +624,49 @@ export function createTranscriptionManager({
             }
 
             await startSystemAudioRecording({ isReacquire: true });
+        }, delay);
+    }
+
+    function clearMicReacquireTimer() {
+        if (micReacquireTimer) {
+            clearTimeout(micReacquireTimer);
+            micReacquireTimer = null;
+        }
+    }
+
+    /**
+     * Mic-side equivalent of scheduleLoopbackReacquire — same bounded
+     * backoff/retry shape, applied to the source that never had it. The mic
+     * channel has no loopback device to lose (it just uses the OS default
+     * input), so the only failure mode here is the AssemblyAI socket itself
+     * dying (handleVoskError/handleVoskStopped, both `unexpected: true`),
+     * not a device disappearing — hence no watchLoopbackStream/
+     * attachDeviceChangeWatcher equivalent needed.
+     */
+    function scheduleMicReacquire(reason) {
+        if (!selectedSources.mic) return;
+        clearMicReacquireTimer();
+
+        const delay = REACQUIRE_DELAYS_MS[Math.min(micReacquireAttempt, REACQUIRE_DELAYS_MS.length - 1)];
+        micReacquireAttempt += 1;
+
+        setSourceStatus('mic', 'connecting', 'Reconnecting mic...');
+        addMonitorLog('info', 'mic-reacquire', `Retry ${micReacquireAttempt} in ${delay}ms (${reason})`, 'mic');
+
+        micReacquireTimer = setTimeout(async () => {
+            micReacquireTimer = null;
+            await stopMicRecording({ keepSelection: true });
+
+            if (!selectedSources.mic) return;
+
+            if (micReacquireAttempt > REACQUIRE_DELAYS_MS.length) {
+                addMonitorLog('error', 'mic-reacquire-giveup', 'Gave up reconnecting the mic', 'mic');
+                setSourceStatus('mic', 'error', 'Mic disconnected');
+                addChatMessage('system', 'Lost the microphone connection and could not reconnect automatically. Toggle the mic off and back on to retry.');
+                return;
+            }
+
+            await startMicRecording();
         }, delay);
     }
 
@@ -590,7 +747,7 @@ export function createTranscriptionManager({
                 silenceWarningActive = false;
                 console.log(`[AUDIO_HEALTH] source=system routing=ok peak=${peakDb.toFixed(1)}dBFS rms=${rmsDb.toFixed(1)}dBFS signal=detected`);
                 addMonitorLog('info', 'system-audio-recovered', 'Host audio signal returned after being silent', 'system', { peakDb, rmsDb });
-                addChatMessage('system', 'Host audio signal detected — routing looks correct now.');
+                addChatMessage('system', 'Interviewer audio is coming through again.');
                 return;
             }
 
@@ -601,30 +758,21 @@ export function createTranscriptionManager({
             lastSilenceWarningAt = now;
             silenceWarningActive = true;
 
-            // Best-effort: name the actual current output device instead of a
-            // generic "check your settings" — this is a real, on-demand re-probe
-            // (see get-audio-routing-status in start-application.js), not a
-            // cached guess. If it's unavailable for any reason, fall back to the
-            // still-correct generic guidance rather than blocking the warning.
-            let routing = null;
-            try {
-                routing = await window.electronAPI?.getAudioRoutingStatus?.();
-            } catch (_) {
-                routing = null;
-            }
-
             console.log(
-                `[AUDIO_HEALTH] source=system routing=misconfigured `
-                + `output=${routing?.defaultOutputName || 'unknown'} `
+                `[AUDIO_HEALTH] source=system mode=${systemCaptureMode} signal=silent `
                 + `peak=${Number.isFinite(peakDb) ? peakDb.toFixed(1) : '-inf'}dBFS `
                 + `rms=${Number.isFinite(rmsDb) ? rmsDb.toFixed(1) : '-inf'}dBFS `
                 + `silent_for=${Math.round(sinceMs / 1000)}s`
             );
-            addMonitorLog('error', 'system-audio-silent', `Host audio has been silent for ${Math.round(sinceMs / 1000)}s while active`, 'system', { sinceMs, peakDb, rmsDb, defaultOutputName: routing?.defaultOutputName });
+            addMonitorLog('error', 'system-audio-silent', `Host audio has been silent for ${Math.round(sinceMs / 1000)}s while active`, 'system', { sinceMs, peakDb, rmsDb, mode: systemCaptureMode });
 
-            const message = (routing?.applicable && routing?.defaultOutputName && !routing.ok)
-                ? `Interviewer audio isn't reaching Synapse. Your Mac is currently sending audio to "${routing.defaultOutputName}" — select the output device that includes BlackHole in System Settings → Sound → Output, then it'll pick up automatically.`
-                : "Host audio is connected but silent. In macOS System Settings → Sound → Output, make sure it's set to BlackHole (or a Multi-Output Device that includes BlackHole) — otherwise the call audio never reaches Synapse even though capture looks healthy.";
+            // Native capture hears everything the Mac plays, so long silence
+            // means nothing is playing, or macOS is withholding audio because
+            // permission is off (it delivers zeros instead of an error).
+            const message = systemCaptureMode === 'native'
+                ? `No interviewer audio for ${Math.round(sinceMs / 1000)}s. If the other person is talking and you can hear them, `
+                  + 'check System Settings → Privacy & Security → Screen & System Audio Recording and make sure Synapse is allowed.'
+                : "Host audio is connected but silent. On this macOS version, System Settings → Sound → Output must send audio to BlackHole (or a Multi-Output Device that includes it), otherwise the call audio never reaches Synapse.";
             addChatMessage('system', message);
         }, FRAME_WATCHDOG_INTERVAL_MS);
     }
@@ -642,46 +790,83 @@ export function createTranscriptionManager({
         addMonitorLog('info', 'start-request', 'Starting host audio source', 'system');
         resetFinalTranscriptBuffer('system');
 
+        const probe = await getNativeProbe();
+        systemCaptureMode = probe.available ? 'native' : 'legacy';
+        if (!probe.available) {
+            addMonitorLog('info', 'native-unavailable', `Native capture unavailable (${probe.reason}); using legacy loopback input`, 'system', probe);
+        }
+
         try {
-            // Acquire the device before opening the cloud socket: a missing
-            // BlackHole should not cost an AssemblyAI session that can only
-            // ever stream silence.
-            const { stream, device } = await audioPipeline.getSystemAudioStream();
-            systemMediaStream = stream;
-            activeLoopbackDevice = device;
+            if (systemCaptureMode === 'native') {
+                // Capture first, then the cloud socket: a capture that cannot
+                // start (permission, unsupported OS) should not cost an
+                // AssemblyAI session that could only ever stream silence.
+                const native = await window.electronAPI.startNativeSystemAudio();
+                if (!native?.success) {
+                    const nativeError = new Error(native?.error || 'Native system audio capture failed to start');
+                    nativeError.code = native?.code;
+                    throw nativeError;
+                }
+                systemCaptureLabel = `your Mac's audio output (${native.backend})`;
 
-            const result = await window.electronAPI.startVoiceRecognition('system');
-            if (result && result.error) throw new Error(result.error);
+                const result = await window.electronAPI.startVoiceRecognition('system');
+                if (result && result.error) throw new Error(result.error);
+                resetSourceSampleQueue('system');
+            } else {
+                const { stream, device } = await audioPipeline.getSystemAudioStream();
+                systemMediaStream = stream;
+                activeLoopbackDevice = device;
+                systemCaptureLabel = device.label;
 
-            systemAudioContext = new AudioContext();
-            await systemAudioContext.resume();
-            resetSourceSampleQueue('system');
-            systemScriptProcessor = await buildAudioProcessor(systemAudioContext, systemMediaStream, 'system', () => isSystemActive);
+                const result = await window.electronAPI.startLegacyLoopbackRecognition();
+                if (result && result.error) throw new Error(result.error);
 
-            watchLoopbackStream(systemMediaStream);
-            attachDeviceChangeWatcher();
+                systemAudioContext = new AudioContext();
+                await systemAudioContext.resume();
+                resetSourceSampleQueue('system');
+                systemScriptProcessor = await buildAudioProcessor(systemAudioContext, systemMediaStream, 'system', () => isSystemActive);
+
+                watchLoopbackStream(systemMediaStream);
+                attachDeviceChangeWatcher();
+            }
+
             startFrameWatchdog();
             startSilenceWatchdog();
             reacquireAttempt = 0;
 
             setSystemActive(true);
-            addChatMessage('system', `Listening to host audio via ${device.label}.`);
+            addChatMessage('system', `Listening to interviewer audio from ${systemCaptureLabel}.`);
             showFeedback(isReacquire ? 'System audio re-acquired' : 'System audio on', 'success');
-            addMonitorLog('info', 'source-active', `Host source active on ${device.label}`, 'system');
-            reportSystemAudioStatus('capturing', `Capturing ${device.label}`, { device: device.label });
+            addMonitorLog('info', 'source-active', `Host source active (${systemCaptureMode}: ${systemCaptureLabel})`, 'system');
+            reportSystemAudioStatus('capturing', `Capturing ${systemCaptureLabel}`, { device: systemCaptureLabel });
+
+            if (!isReacquire && systemCaptureMode === 'legacy') {
+                checkMicLoopbackCollision();
+            }
         } catch (error) {
             console.error('Failed to start system audio:', error);
             const isMissingDevice = error?.code === LOOPBACK_ERROR_CODE;
+            const isPermissionDenied = error?.code === 'PERMISSION_DENIED';
 
-            showFeedback(isMissingDevice ? 'BlackHole not found' : `System audio failed: ${error.message}`, 'error');
-            addMonitorLog('error', 'source-failed', error.message, 'system');
+            showFeedback(
+                isMissingDevice ? 'BlackHole not found'
+                    : isPermissionDenied ? 'System audio permission needed'
+                        : `System audio failed: ${error.message}`,
+                'error'
+            );
+            addMonitorLog('error', 'source-failed', `${error.code ? `${error.code}: ` : ''}${error.message}`, 'system');
+            if (isPermissionDenied) addChatMessage('system', permissionHelpText());
             stopFrameWatchdog();
             stopSilenceWatchdog();
+            if (systemCaptureMode === 'native') {
+                await window.electronAPI.stopNativeSystemAudio().catch(() => {});
+            }
             stopAudioResources(systemAudioContext, systemMediaStream, systemScriptProcessor);
             systemAudioContext = null;
             systemMediaStream = null;
             systemScriptProcessor = null;
             activeLoopbackDevice = null;
+            systemCaptureLabel = null;
             setSystemActive(false);
             resetSourceSampleQueue('system');
             setSourceStatus('system', 'error', `Host error: ${error.message}`);
@@ -714,6 +899,13 @@ export function createTranscriptionManager({
         stopSilenceWatchdog();
         drainSourceSampleQueue('system', { flushPartial: true });
         flushFinalTranscript('system', 'stop-request');
+        if (systemCaptureMode === 'native') {
+            try {
+                await window.electronAPI.stopNativeSystemAudio();
+            } catch (error) {
+                addMonitorLog('error', 'native-stop-failed', error.message || 'Failed to stop native capture', 'system');
+            }
+        }
         stopAudioResources(systemAudioContext, systemMediaStream, systemScriptProcessor);
         systemAudioContext = null;
         systemMediaStream = null;
@@ -730,6 +922,7 @@ export function createTranscriptionManager({
         }
         setSystemActive(false);
         activeLoopbackDevice = null;
+        systemCaptureLabel = null;
         resetSourceSampleQueue('system');
         audioPipeline.resetChunkCounter('system');
         setSourceStatus('system', 'off', 'Host source stopped');
@@ -775,6 +968,7 @@ export function createTranscriptionManager({
             micPartialDiv.querySelector('.message-content').textContent = trimmed;
         } else {
             systemPartialText = trimmed;
+            echoFilter.noteHostPartial(trimmed);
             if (!systemPartialDiv) {
                 systemPartialDiv = createPartialDiv(icon);
                 chatMessagesElement.appendChild(systemPartialDiv);
@@ -804,12 +998,26 @@ export function createTranscriptionManager({
                 micPartialDiv = null;
             }
             micPartialText = '';
+
+            // The mic hearing the interviewer through the speakers is not the
+            // user speaking. Only checked while host audio is live.
+            if (isSystemActive) {
+                const { echo, ratio } = echoFilter.check(finalText);
+                if (echo) {
+                    addMonitorLog('info', 'mic-echo-dropped', 'Mic final matched recent host speech; dropped as speaker echo', 'mic', {
+                        chars: finalText.length,
+                        overlap: Math.round(ratio * 100) / 100
+                    });
+                    return;
+                }
+            }
         } else {
             if (systemPartialDiv) {
                 systemPartialDiv.remove();
                 systemPartialDiv = null;
             }
             systemPartialText = '';
+            echoFilter.noteHostFinal(finalText);
         }
         queueFinalTranscript(source, finalText);
     }
@@ -886,6 +1094,14 @@ export function createTranscriptionManager({
             return;
         }
 
+        if (source === 'mic' && unexpected && selectedSources.mic) {
+            addMonitorLog('error', 'stt-socket-lost', 'AssemblyAI connection error — reconnecting', 'mic');
+            setSourceStatus(source, 'error', `${sourceLabel(source)} disconnected — reconnecting…`);
+            updateTranscriptionUI();
+            scheduleMicReacquire('assemblyai-socket-error');
+            return;
+        }
+
         setSourceStatus(source, 'error', `Error: ${error}`);
         updateTranscriptionUI();
     }
@@ -943,6 +1159,19 @@ export function createTranscriptionManager({
             return;
         }
 
+        // Mic-side equivalent — see the comment on the mic state declarations
+        // near the top of this file for why this was missing before: the mic
+        // channel had no reconnect path at all, so a dead socket here just
+        // looked like the app randomly stopped listening for the rest of the
+        // interview.
+        if (source === 'mic' && unexpected && selectedSources.mic) {
+            addMonitorLog('error', 'stt-socket-lost', `AssemblyAI connection lost unexpectedly (code ${data?.code}) — reconnecting`, 'mic');
+            addChatMessage('system', 'Lost the connection to the microphone transcription service — reconnecting…');
+            setSourceStatus(source, 'error', `${sourceLabel(source)} disconnected — reconnecting…`);
+            scheduleMicReacquire('assemblyai-socket-lost');
+            return;
+        }
+
         setSourceStatus(source, 'off', `${sourceLabel(source)} stopped`);
         addMonitorLog('info', 'stopped-event', 'Stop acknowledged by backend', source);
     }
@@ -984,13 +1213,14 @@ export function createTranscriptionManager({
                 startedAt: sourceStartedAt.system
             },
             transcription: mainProcess?.transcription || null,
-            blackHole: mainProcess?.blackHole || null,
-            audioRouting: mainProcess?.audioRouting || null,
-            synapseOutputDeviceActive: mainProcess?.synapseOutputDeviceActive ?? null,
+            nativeAudio: mainProcess?.nativeAudio || null,
+            systemCaptureMode,
             latency: mainProcess?.latency || null,
             monitorLog: monitorLogEntries.slice()
         });
     }
+
+    attachNativeListeners();
 
     return {
         selectedSources,

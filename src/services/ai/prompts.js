@@ -4,6 +4,7 @@ const {
 } = require('../../config');
 const interviewContext = require('../context/interview-context');
 const { buildLanguageInstruction, detectLanguage } = require('../stt/language-detect');
+const { buildResponseModeBlock } = require('./response-modes');
 
 function buildContextBlock(label, content) {
   const normalizedContent = typeof content === 'string' ? content.trim() : '';
@@ -101,7 +102,25 @@ function detectResumeJdDomain(query, history = '') {
     'resume', 'experience', 'project', 'skill', 'education', 'internship',
     'work history', 'technologies', 'portfolio', 'background', 'school',
     'university', 'degree', 'gpa', 'cgpa', 'worked', 'build', 'built',
-    'hiring', 'myself', 'yourself', 'cv', 'bio', 'college', 'graduation'
+    'hiring', 'myself', 'yourself', 'cv', 'bio', 'college', 'graduation',
+    // Found missing from a real interview session's bug report: a follow-up
+    // like "have you implemented this anywhere?" or "give me an example
+    // where you've used X" matched none of the keywords above -- neither
+    // "implemented" nor "used" nor "example" were covered -- so it
+    // classified GENERAL_TECHNICAL and buildRetrievedContextBlock's hard
+    // gate (`if (classification === 'GENERAL_TECHNICAL') return '';`)
+    // skipped resume retrieval entirely. The model then answered from
+    // general knowledge with nothing grounding it in the candidate's actual
+    // background, which read as "the AI isn't using my resume at all."
+    // "your"/"have you"/"did you"/"do you" deliberately cast a wide net --
+    // in interview phrasing these almost always mean "the candidate,
+    // specifically", and a wider retrieval net is safe because generation
+    // still only grounds where genuinely relevant (buildEvidenceDirectives/
+    // buildPersonaAndStyleBlock) and BM25 scoring naturally deprioritizes
+    // items that don't actually match.
+    'implement', 'implemented', 'deployed', 'developed', 'utilized',
+    'have you', 'did you', 'do you', 'your ', 'you mentioned',
+    'give me an example', 'example of', 'have you ever'
   ];
 
   const jdKeywords = [
@@ -1006,7 +1025,8 @@ function buildAskAiSessionPrompt({
   relation = '',
   confidence = '', // eslint-disable-line no-unused-vars -- not branched on directly; relation alone drives buildContextPolicy (confidence is already folded into conversation-tracker.js's relation/confidence pair before it ever reaches here)
   screenshotCount = 0,
-  programmingLanguage
+  programmingLanguage,
+  responseMode
 } = {}) {
   const resolvedLanguage = resolveProgrammingLanguage(programmingLanguage);
 
@@ -1030,7 +1050,9 @@ ${buildProgrammingLanguagePreference(resolvedLanguage)}
 
 === LANGUAGE FOR CODE ===
 If — and only if — the domain is coding, prefer ${resolvedLanguage} unless the question or the
-screen clearly demands another language. ${buildLanguageBestPractices(resolvedLanguage)}`.trim();
+screen clearly demands another language. ${buildLanguageBestPractices(resolvedLanguage)}
+
+${buildResponseModeBlock(responseMode)}`.trim();
 
   return `
 ${buildContextAndEvidenceBlock(latestQuery, contextString, { activeContext, relation })}

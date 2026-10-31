@@ -47,7 +47,10 @@ function getLanAddresses() {
 }
 
 const MOBILE_PORT = 7823;
-const MOBILE_HTML_PATH = path.join(__dirname, 'mobile.html');
+// The single consolidated Web Companion page (login gate, live remote
+// control, interview context editor, status panel and logs) — replaces the
+// three previously separate surfaces (mobile.html, /dashboard, /context).
+const COMPANION_HTML_PATH = path.join(__dirname, 'companion.html');
 
 function createMobileServer({
   getGeminiRuntime,
@@ -56,7 +59,8 @@ function createMobileServer({
   // Optional: supplied by the composition root so the dashboard's service
   // panel, restart buttons and JD indexing act on the real services.
   getAiOrchestrator = () => null,
-  getLocalServices = () => ({})
+  getLocalServices = () => ({}),
+  getSystemAudioCapture = () => null
 }) {
   const clients = new Set();
   const status = {
@@ -237,7 +241,8 @@ function createMobileServer({
 
     return systemHealth.probeAll({
       ollamaBaseUrl,
-      firstTokenMs: ollama?.lastFirstTokenMs ?? null
+      firstTokenMs: ollama?.lastFirstTokenMs ?? null,
+      getSystemAudioCapture
     });
   }
 
@@ -385,8 +390,6 @@ function createMobileServer({
     }
   }
 
-  const DASHBOARD_DIR = path.join(__dirname, 'dashboard');
-
   /*
    * Every asset here was served with a Content-Type and nothing else — no
    * Cache-Control, no ETag, no Last-Modified. With no validator and no explicit
@@ -415,86 +418,24 @@ function createMobileServer({
   const httpServer = http.createServer((req, res) => {
     const url = (req.url || '/').split('?')[0];
 
-    // Serve 3D Sci-Fi Dashboard Static Files
-    if (url === '/dashboard/login.html' || url === '/dashboard/login') {
+    /*
+     * The dashboard (3D "Sci-Fi Management Core") and the standalone
+     * /context "Interview Brief" page were merged into the single companion
+     * page served at '/' below — see companion.html. Their URLs still get
+     * bookmarked (the tray menu handed one out for months), so a request for
+     * any of them redirects to '/' instead of 404ing, carrying the ?token=
+     * query string forward so an already-paired link keeps working.
+     */
+    if (url === '/dashboard' || url.startsWith('/dashboard/') || url === '/context') {
+      let target = '/';
       try {
-        const html = fs.readFileSync(path.join(DASHBOARD_DIR, 'login.html'), 'utf8');
-        sendAsset(res, html, 'text/html; charset=utf-8');
-      } catch (err) { res.writeHead(500); res.end('Login UI unavailable'); }
-      return;
-    }
+        const parsed = new URL(req.url || '/', 'http://localhost');
+        const existingToken = parsed.searchParams.get('token');
+        if (existingToken) target += `?token=${encodeURIComponent(existingToken)}`;
+      } catch (_) { /* redirect without the token rather than fail the request */ }
 
-    if (url === '/context' || url === '/dashboard/context' || url === '/dashboard/context.html') {
-      try {
-        const html = fs.readFileSync(path.join(DASHBOARD_DIR, 'context.html'), 'utf8');
-        sendAsset(res, html, 'text/html; charset=utf-8');
-      } catch (err) {
-        res.writeHead(500);
-        res.end('Context page unavailable');
-      }
-      return;
-    }
-
-    if (url === '/dashboard' || url === '/dashboard/' || url === '/dashboard/index.html') {
-      try {
-        const html = fs.readFileSync(path.join(DASHBOARD_DIR, 'index.html'), 'utf8');
-        sendAsset(res, html, 'text/html; charset=utf-8');
-      } catch (err) { res.writeHead(500); res.end('Dashboard UI unavailable'); }
-      return;
-    }
-
-    if (url === '/dashboard/css/style.css' || url === '/dashboard/styles.css') {
-      try {
-        const css = fs.readFileSync(path.join(DASHBOARD_DIR, 'css', 'style.css'), 'utf8');
-        sendAsset(res, css, 'text/css; charset=utf-8');
-      } catch (_) { res.writeHead(404); res.end(); }
-      return;
-    }
-
-    if (url === '/dashboard/js/audio.js') {
-      try {
-        const js = fs.readFileSync(path.join(DASHBOARD_DIR, 'js', 'audio.js'), 'utf8');
-        sendAsset(res, js, 'application/javascript; charset=utf-8');
-      } catch (_) { res.writeHead(404); res.end(); }
-      return;
-    }
-
-    if (url === '/dashboard/js/api.js') {
-      try {
-        const js = fs.readFileSync(path.join(DASHBOARD_DIR, 'js', 'api.js'), 'utf8');
-        sendAsset(res, js, 'application/javascript; charset=utf-8');
-      } catch (_) { res.writeHead(404); res.end(); }
-      return;
-    }
-
-    // Optional vendored libraries (e.g. three.min.js). Absent by default, in
-    // which case the dashboard renders without the decorative backdrop.
-    if (url.startsWith('/dashboard/js/vendor/')) {
-      const requested = path.basename(url);
-      const vendorPath = path.join(DASHBOARD_DIR, 'js', 'vendor', requested);
-
-      // basename() already strips traversal, but assert containment anyway.
-      if (!vendorPath.startsWith(path.join(DASHBOARD_DIR, 'js', 'vendor') + path.sep)) {
-        res.writeHead(403);
-        res.end();
-        return;
-      }
-
-      try {
-        const js = fs.readFileSync(vendorPath, 'utf8');
-        sendAsset(res, js, 'application/javascript; charset=utf-8');
-      } catch (_) {
-        res.writeHead(404);
-        res.end();
-      }
-      return;
-    }
-
-    if (url === '/dashboard/js/main.js' || url === '/dashboard/app.js') {
-      try {
-        const js = fs.readFileSync(path.join(DASHBOARD_DIR, 'js', 'main.js'), 'utf8');
-        sendAsset(res, js, 'application/javascript; charset=utf-8');
-      } catch (_) { res.writeHead(404); res.end(); }
+      res.writeHead(302, { Location: target, ...NO_STORE });
+      res.end();
       return;
     }
 
@@ -805,11 +746,11 @@ function createMobileServer({
 
     if (url === '/' || url === '/index.html') {
       try {
-        const html = fs.readFileSync(MOBILE_HTML_PATH, 'utf8');
+        const html = fs.readFileSync(COMPANION_HTML_PATH, 'utf8');
         sendAsset(res, html, 'text/html; charset=utf-8');
       } catch (err) {
         res.writeHead(500);
-        res.end('Mobile UI unavailable');
+        res.end('Companion UI unavailable');
       }
       return;
     }

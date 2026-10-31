@@ -246,6 +246,7 @@ const analyzeBtn = document.getElementById('analyze-btn');
 const screenAiBtn = document.getElementById('screen-ai-btn');
 const clearBtn = document.getElementById('clear-btn');
 const hideBtn = document.getElementById('hide-btn');
+const compactModeBtn = document.getElementById('compact-mode-btn');
 const closeResultsBtn = document.getElementById('close-results');
 const closeAppBtn = document.getElementById('close-app-btn');
 const closeConfirmationDialog = document.getElementById('close-confirmation-dialog');
@@ -293,6 +294,12 @@ const MAX_CHAT_INPUT_HEIGHT = 88;
 let isCloseConfirmationOpen = false;
 let hasGeminiApiKeysConfigured = false;
 let hasAssemblyAiApiKeyConfigured = false;
+// Whether resume/JD context (entered through the web companion) was found
+// on disk the last time it was checked — see loadInterviewContextStatus().
+// Starts true (i.e. "don't warn yet") so a slow/failed status fetch never
+// flashes a false "no resume loaded" warning before the real check lands.
+let hasResumeContext = true;
+let hasJdContext = true;
 const aiActionInFlightState = {
     askAi: false,
     screenAi: false,
@@ -410,6 +417,12 @@ async function init() {
     }
 
     const settings = await loadShortcutConfig();
+    // Fire-and-forget: must not block the rest of startup on an extra IPC
+    // round trip, and updateSetupHint() (called at the end of this function
+    // via applyApiKeyAvailabilityFromSettings) already runs once before this
+    // resolves — loadInterviewContextStatus calls it again itself once the
+    // real status is known, which is what actually shows the warning.
+    loadInterviewContextStatus();
     setupEventListeners();
     setupIpcListeners();
     setupWindowAdjustments();
@@ -664,6 +677,21 @@ function createStreamHandler(actionId) {
         }
     }
 
+    // The interviewer updated/extended the question while this was still
+    // streaming (see cancel-ask-ai / auto-answer.js's supersede check) —
+    // whatever text had rendered so far is genuinely stale, not broken, so
+    // it's marked rather than left looking like a silently truncated answer.
+    function markInterrupted() {
+        if (actionId === 'askAi' && requestStartAt) {
+            console.log(`[AI] interrupted id=${questionId || 'manual'} +${Date.now() - requestStartAt}ms — question updated`);
+        }
+        if (!messageRecord) return;
+        const note = accumulatedText.trim()
+            ? `${accumulatedText}\n\n_(interrupted — answering the updated question instead)_`
+            : '_(skipped — the question was updated before an answer arrived)_';
+        chatUiManager.updateChatMessageContent(messageRecord.id, note);
+    }
+
     function cleanup() {
         if (removeChunkListener) {
             removeChunkListener();
@@ -671,7 +699,7 @@ function createStreamHandler(actionId) {
         }
     }
 
-    return { start, finalize, cleanup };
+    return { start, finalize, markInterrupted, cleanup };
 }
 
 function hasConfiguredGeminiApiKeys(value) {
@@ -724,13 +752,46 @@ function updateSetupHint() {
     if (!hasGeminiApiKeysConfigured) missing.push('an AI provider key (Gemini)');
     if (!hasAssemblyAiApiKeyConfigured) missing.push('a transcription key (AssemblyAI)');
 
-    if (missing.length === 0) {
-        hint.hidden = true;
+    if (missing.length > 0) {
+        hint.textContent = `Setup needed: add ${missing.join(' and ')} in Settings (gear icon) before answers or transcription can work.`;
+        hint.hidden = false;
         return;
     }
 
-    hint.textContent = `Setup needed: add ${missing.join(' and ')} in Settings (gear icon) before answers or transcription can work.`;
-    hint.hidden = false;
+    // Real interview-session bug report: the app gave no warning at all when
+    // the interviewer's first question arrived and there was no resume/JD
+    // on file to ground the answer in — the first sign was an ungrounded
+    // answer, mid-interview. This is checked once at startup (see
+    // loadInterviewContextStatus) specifically so it's visible BEFORE the
+    // session starts, not discovered reactively.
+    const missingContext = [];
+    if (!hasResumeContext) missingContext.push('a resume');
+    if (!hasJdContext) missingContext.push('a job description');
+
+    if (missingContext.length > 0) {
+        hint.textContent = `No ${missingContext.join(' or ')} on file yet — add it on the mobile companion page `
+            + '(Context tab) before the interview starts so answers can be grounded in it.';
+        hint.hidden = false;
+        return;
+    }
+
+    hint.hidden = true;
+}
+
+async function loadInterviewContextStatus() {
+    if (!window.electronAPI?.getInterviewContextStatus) return;
+
+    try {
+        const status = await window.electronAPI.getInterviewContextStatus();
+        hasResumeContext = Boolean(status?.hasResume);
+        hasJdContext = Boolean(status?.hasJd);
+    } catch (error) {
+        console.error('Failed to load interview context status:', error);
+        // Leave the optimistic defaults in place — a failed check should
+        // never itself become a false "nothing is loaded" warning.
+    }
+
+    updateSetupHint();
 }
 
 async function loadShortcutConfig() {
@@ -847,6 +908,30 @@ async function takeStealthScreenshot() {
     }
 }
 
+// Answer style. A per-device preference, so it lives in localStorage; reads
+// and writes are guarded because storage can be unavailable.
+const RESPONSE_MODE_STORAGE_KEY = 'synapse.responseMode';
+const RESPONSE_MODE_IDS = ['quick', 'professional', 'technical', 'star', 'detailed'];
+const responseModeSelect = document.getElementById('response-mode-select');
+
+function getResponseMode() {
+    const value = responseModeSelect?.value;
+    return RESPONSE_MODE_IDS.includes(value) ? value : 'professional';
+}
+
+if (responseModeSelect) {
+    try {
+        const saved = localStorage.getItem(RESPONSE_MODE_STORAGE_KEY);
+        if (RESPONSE_MODE_IDS.includes(saved)) responseModeSelect.value = saved;
+    } catch (_) { /* storage unavailable: keep the default */ }
+
+    responseModeSelect.addEventListener('change', () => {
+        try {
+            localStorage.setItem(RESPONSE_MODE_STORAGE_KEY, getResponseMode());
+        } catch (_) { /* not persisted this session */ }
+    });
+}
+
 function buildAskAiContextPayload() {
     const bundle = buildFilteredAiContextBundle({ charBudget: AI_CONTEXT_CHAR_BUDGET, emitTruncationLog: true });
 
@@ -860,6 +945,7 @@ function buildAskAiContextPayload() {
 
     return {
         mode: 'best-next-answer',
+        responseMode: getResponseMode(),
         contextString: bundle.contextString,
         transcriptContext: bundle.transcriptContext,
         sessionSummary: bundle.sessionSummary,
@@ -926,6 +1012,10 @@ async function askAiWithSessionContext() {
                     : '**Best Next Answer (Transcript):**';
                 stream.finalize(`${heading}\n\n${result.text}`);
                 showFeedback('Ask AI ready', 'success');
+            } else if (result?.cancelled) {
+                // Not a failure — auto-answer.js interrupted this on purpose
+                // because the host updated the question. No error toast.
+                stream.markInterrupted();
             } else {
                 throw new Error(result?.error || 'Ask AI failed');
             }
@@ -1004,6 +1094,39 @@ async function emergencyHide() {
     } catch (error) {
         console.error('Emergency hide error:', error);
     }
+}
+
+let isCompactModeActive = false;
+
+/**
+ * Shrinks the window to a thin status strip (window-controller.js's
+ * setCompactMode) and hides the chat/monitor panels (#app.compact-mode in
+ * styles.css) so whatever is underneath — the call, a shared editor — is no
+ * longer covered. Distinct from emergencyHide/toggleStealth: this stays
+ * fully visible, just small.
+ */
+async function toggleCompactMode() {
+    const next = !isCompactModeActive;
+
+    try {
+        const result = await window.electronAPI.setCompactMode(next);
+        if (result?.error) throw new Error(result.error);
+        isCompactModeActive = Boolean(result?.compact);
+    } catch (error) {
+        console.error('Failed to toggle compact mode:', error);
+        showFeedback('Could not toggle compact mode', 'error');
+        return;
+    }
+
+    document.getElementById('app')?.classList.toggle('compact-mode', isCompactModeActive);
+
+    if (compactModeBtn) {
+        compactModeBtn.setAttribute('aria-label', isCompactModeActive ? 'Expand from compact mode' : 'Shrink to compact mode');
+        compactModeBtn.setAttribute('data-tip', isCompactModeActive ? 'Expand' : 'Compact mode');
+        compactModeBtn.classList.toggle('active', isCompactModeActive);
+    }
+
+    addMonitorLog('info', 'compact-mode', isCompactModeActive ? 'Entered compact mode' : 'Exited compact mode');
 }
 
 function openCloseConfirmation() {
@@ -1498,6 +1621,7 @@ function setupEventListeners() {
         screenAiBtn,
         clearBtn,
         hideBtn,
+        compactModeBtn,
         chatManualSend,
         chatManualInput,
         closeResultsBtn,
@@ -1526,6 +1650,7 @@ function setupEventListeners() {
         analyzeScreenshotsOnly,
         clearStealthData,
         emergencyHide,
+        toggleCompactMode,
         copyChatMessageById,
         submitManualContextMessage,
         autoResizeManualInput,

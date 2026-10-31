@@ -15,6 +15,7 @@ const {
 } = require('../../../config');
 
 const GEMINI_ALL_KEYS_UNAVAILABLE_ERROR_CODE = 'GEMINI_ALL_KEYS_UNAVAILABLE';
+const RATE_LIMIT_RETRY_CAP_MS = 1500;
 
 function normalizeGeminiApiKeys(keys) {
   const sourceValues = Array.isArray(keys)
@@ -217,6 +218,12 @@ function createGeminiRuntime() {
       return true;
     }
 
+    // Set by the realtime lane: this key is rate-limited right now, so the
+    // next key gets the answer instead of the user waiting out a backoff.
+    if (error.isRateLimited) {
+      return true;
+    }
+
     const message = String(error?.message || '').toLowerCase();
     return (
       message.includes('quota exceeded') ||
@@ -282,6 +289,7 @@ function createGeminiRuntime() {
     const startIndex = activeApiKeyIndex;
     let attemptedKeys = 0;
     let lastSwitchEligibleError = null;
+    let rateLimitRetryUsed = false;
 
     while (attemptedKeys < totalKeys) {
       const activeApiKey = getActiveApiKey();
@@ -307,6 +315,18 @@ function createGeminiRuntime() {
 
         lastSwitchEligibleError = error;
         attemptedKeys += 1;
+
+        // Every key is rate-limited (often: the only key). One retry after the
+        // provider's suggested delay, capped so a live answer is never held
+        // for long; quota exhaustion and auth errors are not retried.
+        if (attemptedKeys >= totalKeys && error.isRateLimited && !rateLimitRetryUsed) {
+          rateLimitRetryUsed = true;
+          const delayMs = Math.min(Math.max(error.retryAfterMs ?? 1000, 250), RATE_LIMIT_RETRY_CAP_MS);
+          console.warn(`[Gemini] All keys rate-limited; one retry in ${delayMs}ms`);
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          attemptedKeys -= 1;
+          continue;
+        }
 
         if (attemptedKeys >= totalKeys) {
           if (activeApiKeyIndex !== startIndex) {
@@ -426,6 +446,29 @@ function createGeminiRuntime() {
     activeKeyIndexChangeHandler = typeof handler === 'function' ? handler : null;
   }
 
+  /**
+   * Opens the HTTPS connection to the Gemini API ahead of the first question,
+   * so the first answer does not pay DNS + TCP + TLS setup. The SDK uses the
+   * global fetch, whose keep-alive pool this warms. No API call is made and no
+   * quota is used. Throttled to once per 30 s.
+   */
+  let lastPrewarmAt = 0;
+  function prewarmConnection() {
+    if (activeAiProvider !== 'gemini' || typeof fetch !== 'function') return;
+    const now = Date.now();
+    if (now - lastPrewarmAt < 30000) return;
+    lastPrewarmAt = now;
+    fetch('https://generativelanguage.googleapis.com/', { method: 'HEAD' })
+      .then((response) => response.arrayBuffer().catch(() => {}))
+      .catch(() => {});
+  }
+
+  // Ollama's service has no equivalent in-flight request to interrupt (no
+  // tag-based cancel() method) — a no-op there is correct, not a gap.
+  function cancelActive(tag) {
+    return Boolean(geminiService?.cancel?.(tag));
+  }
+
   return {
     initializeGeminiService,
     initializeOllamaService,
@@ -437,6 +480,8 @@ function createGeminiRuntime() {
     getActiveApiKeyIndex: () => activeApiKeyIndex,
     switchToNextKey,
     executeWithKeyFailover,
+    cancelActive,
+    prewarmConnection,
     isAllKeysUnavailableError,
     setActiveKeyIndexChangeHandler,
     getService,

@@ -131,7 +131,19 @@ function createEventActions(ipcRenderer) {
     label: 'onSetMicEnabled'
   });
 
+  const onNativeSystemAudioFrame = createEventListener(ipcRenderer, {
+    channel: 'native-system-audio-frame',
+    label: 'onNativeSystemAudioFrame'
+  });
+
+  const onNativeSystemAudioStatus = createEventListener(ipcRenderer, {
+    channel: 'native-system-audio-status',
+    label: 'onNativeSystemAudioStatus'
+  });
+
   return {
+    onNativeSystemAudioFrame,
+    onNativeSystemAudioStatus,
     onScreenshotTakenStealth,
     onAnalysisStart,
     onAnalysisResult,
