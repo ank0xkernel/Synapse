@@ -29,7 +29,13 @@ export async function extractPdfText(buf: Buffer): Promise<string> {
   try {
     // The package root runs a debug routine when imported without a parent; the lib entry does not.
     const { default: pdfParse } = await import('pdf-parse/lib/pdf-parse.js');
-    text = tidy(String((await pdfParse(buf)).text || ''));
+    // pdf-parse's bundled pdf.js keeps state between calls: on Linux a valid
+    // PDF parsed right after a damaged one fails with "bad XRef entry", while
+    // the same bytes parse fine on their own. Each attempt gets its own copy
+    // of the bytes, and one retry separates that leftover state from a file
+    // that is really unreadable.
+    const parse = async () => tidy(String((await pdfParse(Buffer.from(buf))).text || ''));
+    text = await parse().catch(parse);
   } catch (error) {
     // The parser's own reason, for diagnosing real files; never the file contents.
     console.warn(JSON.stringify({ level: 'warn', event: 'pdf_parse_failed', reason: error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200) }));
