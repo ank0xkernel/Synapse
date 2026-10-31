@@ -59,6 +59,8 @@ export async function startServer() {
   let log = '';
   proc.stdout.on('data', (d) => (log += d));
   proc.stderr.on('data', (d) => (log += d));
+  // CI sets this so server-side warnings (e.g. pdf_parse_failed) show up in the job log.
+  if (process.env.SHOW_SERVER_LOG) proc.stderr.pipe(process.stderr);
   const base = `http://localhost:${port}`;
   for (let i = 0; i < 100; i++) {
     try {
