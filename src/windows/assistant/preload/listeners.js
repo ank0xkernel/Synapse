@@ -141,7 +141,13 @@ function createEventActions(ipcRenderer) {
     label: 'onNativeSystemAudioStatus'
   });
 
+  const onWebSyncState = createEventListener(ipcRenderer, {
+    channel: 'web-sync:state',
+    label: 'onWebSyncState'
+  });
+
   return {
+    onWebSyncState,
     onNativeSystemAudioFrame,
     onNativeSystemAudioStatus,
     onScreenshotTakenStealth,

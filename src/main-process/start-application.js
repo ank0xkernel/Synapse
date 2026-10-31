@@ -4,7 +4,9 @@ const {
   desktopCapturer,
   globalShortcut,
   ipcMain,
+  safeStorage,
   screen,
+  shell,
   systemPreferences
 } = require('electron');
 const WebSocket = require('ws');
@@ -32,6 +34,8 @@ const appProtocol = require('./shared/app-protocol');
 const { createGeminiRuntime } = require('./features/assistant/gemini-runtime');
 const { createScreenshotManager } = require('./features/assistant/screenshot-manager');
 const { registerAssistantIpc } = require('./features/assistant/ipc');
+const { registerContextIpc } = require('./features/context/context-ipc');
+const { registerWebSyncIpc } = require('./features/context/web-sync-ipc');
 const { createAssemblyAiService } = require('../services/assembly-ai/service');
 const { createGeminiSpeechService } = require('../services/stt/gemini-speech-service');
 const { createQuestionLatencyTracker } = require('../services/latency/question-latency-tracker');
@@ -157,6 +161,7 @@ async function startApplication() {
   let activeAssemblyAiSpeechModel = defaultAssemblyAiSpeechModel;
 
   let screenshotManager = null;
+  let webSyncControl = null;
   let windowController = null;
 
   const baseSendToRenderer = createSafeSender(() => {
@@ -185,12 +190,23 @@ async function startApplication() {
       probe: await nativeSystemAudio.probe(),
       state: nativeSystemAudio.getState()
     }),
+    // Companion access is off until the user enables it; the choice persists
+    // in its own file (the shared app-state sanitizer drops unknown keys).
+    enabledStore: require('./features/mobile-server/server').createFileEnabledStore(
+      require('path').join(app.getPath('userData'), 'companion-settings.json')
+    ),
+    // Returns the insertion result for 'send-answer-to-editor' so the phone
+    // is only told "sent" after the desktop really inserted the text.
     notifyDesktop:        (channel, data) => {
-      if (channel === 'send-answer-to-editor' && aiOrchestrator) {
-        aiOrchestrator.sendLastAnswerToEditor();
-      } else {
-        baseSendToRenderer(channel, data);
+      if (channel === 'send-answer-to-editor') {
+        const inserter = aiOrchestrator?.textInserter;
+        if (!inserter || typeof inserter.insertText !== 'function') {
+          return Promise.reject(new Error('The desktop text inserter is not ready.'));
+        }
+        return inserter.insertText(String(data?.text || ''));
       }
+      baseSendToRenderer(channel, data);
+      return undefined;
     }
   });
 
@@ -324,6 +340,7 @@ async function startApplication() {
 
   function cleanupTransientResources() {
     nativeSystemAudio.stop().catch(() => {});
+    webSyncControl?.cleanup();
     assemblyAiService.dispose();
     screenshotManager.cleanupTransientResources();
     windowController.unregisterShortcuts();
@@ -359,6 +376,11 @@ async function startApplication() {
     return TotpAuth.shared(app).generateToken();
   });
 
+  // Companion (phone) access. Off by default; urls never contain credentials.
+  ipcMain.handle('companion:get-state', () => mobileServer.getStatus());
+  ipcMain.handle('companion:set-enabled', (_event, enabled) => mobileServer.setEnabled(enabled === true));
+  ipcMain.handle('companion:revoke-sessions', () => mobileServer.revokeSessions());
+
   /*
    * Real interview-session bug report: nothing in the assistant window ever
    * told the user whether the resume/JD/company they'd entered through the
@@ -369,6 +391,41 @@ async function startApplication() {
    * it, not the raw text, so a resume that happens to be several KB doesn't
    * cross the IPC boundary just to answer "is anything loaded at all".
    */
+  // Real permission state for the onboarding and status screens.
+  ipcMain.handle('get-media-access-status', () => ({
+    microphone: process.platform === 'darwin' ? systemPreferences.getMediaAccessStatus('microphone') : 'granted'
+  }));
+  ipcMain.handle('request-microphone-access', async () => ({ granted: await ensureMicrophoneAccess() }));
+
+  /**
+   * Onboarding "test answer": one tiny real request through the same realtime
+   * lane and key failover as live answers. Reports time to first token.
+   */
+  ipcMain.handle('ai-test-answer', async () => {
+    const started = Date.now();
+    let firstTokenAt = null;
+    try {
+      const text = await geminiRuntime.executeWithKeyFailover((service) => {
+        if (!service) throw new Error('AI service not initialized. Check your API key.');
+        if (typeof service.generateText !== 'function') throw new Error('The selected provider does not support a test answer.');
+        return service.generateText('Reply with exactly: Synapse is ready.', {
+          priority: 'realtime',
+          generation: { maxOutputTokens: 40, thinkingLevel: 'low' },
+          onChunk: () => { if (firstTokenAt === null) firstTokenAt = Date.now(); }
+        });
+      });
+      return {
+        success: true,
+        text: String(text || '').trim().slice(0, 120),
+        firstTokenMs: firstTokenAt ? firstTokenAt - started : null,
+        totalMs: Date.now() - started,
+        model: geminiRuntime.getActiveGeminiModel()
+      };
+    } catch (error) {
+      return { success: false, error: error.message, totalMs: Date.now() - started };
+    }
+  });
+
   ipcMain.handle('get-interview-context-status', () => {
     const context = interviewContext.load();
     return {
@@ -401,6 +458,22 @@ async function startApplication() {
     };
   });
 
+  registerContextIpc({
+    ipcMain,
+    dialog,
+    getMainWindow: () => windowController.getMainWindow()
+  });
+
+  // Website account link and context sync (docs/desktop-web-contract.md).
+  // State goes to this window only (baseSendToRenderer), never the phone.
+  webSyncControl = registerWebSyncIpc({
+    ipcMain,
+    app,
+    shell,
+    safeStorage,
+    sendToWindow: baseSendToRenderer
+  });
+
   registerAssistantIpc({
     ipcMain,
     screenshotManager,
@@ -418,7 +491,18 @@ async function startApplication() {
     assemblyAiService,
     ensureAudioInputAccess: ensureMicrophoneAccess,
     nativeSystemAudio,
-    onListeningStart: () => geminiRuntime.prewarmConnection(),
+    onListeningStart: () => {
+      geminiRuntime.prewarmConnection();
+      webSyncControl?.checkBeforeSession();
+    },
+    createTestCapture: (onFrame) => createNativeSystemAudio({
+      binaryPath: resolveHelperPath({ isPackaged: app.isPackaged }),
+      onFrame,
+      log: () => {}
+    }),
+    playTestSound: () => new Promise((resolve) => {
+      require('child_process').execFile('afplay', ['/System/Library/Sounds/Glass.aiff'], () => resolve());
+    }),
     // Keep Synapse's own sounds out of the interviewer channel.
     getExcludedPids: () => app.getAppMetrics().map((metric) => metric.pid)
   });
@@ -593,6 +677,23 @@ async function startApplication() {
     }
 
     console.log(`Window setup complete (${launchHidden ? 'hidden launch' : 'visible launch'})`);
+
+    // Development-only screenshot capture; inert unless the variable is set.
+    if (process.env.SYNAPSE_UI_CAPTURE) {
+      const { runUiCapture } = require('./dev/ui-capture');
+      const [width, height] = String(process.env.SYNAPSE_UI_CAPTURE_SIZE || '900x560').split('x').map(Number);
+      runUiCapture({
+        app,
+        getMainWindow: () => windowController.getMainWindow(),
+        baseSendToRenderer,
+        outDir: process.env.SYNAPSE_UI_CAPTURE,
+        sceneNames: String(process.env.SYNAPSE_UI_SCENES || '').split(',').filter(Boolean),
+        size: [width || 900, height || 560]
+      }).catch((error) => {
+        console.error('[ui-capture] failed:', error);
+        app.exit(1);
+      });
+    }
   });
 
   app.on('window-all-closed', () => {
