@@ -113,6 +113,8 @@ The server refuses to start in production without `DATABASE_URL` and `BLOB_READ_
 
 Off by default. Turn it on in the desktop app's Session panel, open the shown address on a phone on the same Wi-Fi, and sign in with the 6-digit code from the app. Each phone gets its own session (12 hours maximum, 60 minutes idle, up to 4 phones), which you can sign out or revoke. It shows the live transcript, streamed answers and past answers, and can send an answer to your editor.
 
+<img src="docs/screenshots/companion-live.png" alt="Phone companion streaming an answer" width="300">
+
 The connection is plain HTTP on your local network. It is not encrypted, so use it only on a network you trust.
 
 ## Testing
