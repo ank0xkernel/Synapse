@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop:
+    name: Desktop tests and native helper build
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      # Tests drive the services directly; the Electron binary is not needed.
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build the native macOS audio helper (universal)
+        run: npm run build:native
+      - name: Desktop test suite
+        run: npm test
+
+  web:
+    name: Web typecheck, build, tests and website-to-desktop E2E
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: synapse
+          POSTGRES_PASSWORD: synapse
+          POSTGRES_DB: synapse_web_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U synapse"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Throwaway CI-only database; not a secret.
+      TEST_DATABASE_URL: postgres://synapse:synapse@localhost:5432/synapse_web_test
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            web/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run build
+      - run: npm test
+      - name: Install desktop dependencies for the E2E
+        working-directory: .
+        run: npm ci
+      - name: Website-to-desktop E2E (real Next.js server + Postgres)
+        working-directory: .
+        env:
+          REQUIRE_WEB_E2E: '1'
+        run: node tests/test-web-desktop-e2e.mjs

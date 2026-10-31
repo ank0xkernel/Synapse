@@ -9,7 +9,8 @@
  * browser following the redirect to the desktop's real 127.0.0.1 listener.
  * Interview context is written to a temp dir, never the user's real one.
  *
- * Skips (exit 0, with the reason) when web/ has no production build or the
+ * Skips (exit 0, with the reason; exit 1 when REQUIRE_WEB_E2E is set, as in
+ * CI) when web/ has no production build or the
  * local Postgres is unavailable.
  *
  * Run: node tests/test-web-desktop-e2e.mjs
@@ -26,7 +27,7 @@ const WEB = path.join(__dirname, '..', 'web');
 
 if (!fs.existsSync(path.join(WEB, '.next', 'BUILD_ID')) || !fs.existsSync(path.join(WEB, 'node_modules', 'pg'))) {
   console.log('Website→desktop E2E: SKIPPED (no web production build; run `cd web && npm install && npm run build`)');
-  process.exit(0);
+  process.exit(process.env.REQUIRE_WEB_E2E ? 1 : 0);
 }
 
 const { startServer, signup, makePdf, JD_TEXT } = await import(path.join(WEB, 'tests', 'helpers.mjs'));
@@ -65,7 +66,7 @@ try {
   S = await startServer();
 } catch (error) {
   console.log(`Website→desktop E2E: SKIPPED (${error.message.split('\n')[0]})`);
-  process.exit(0);
+  process.exit(process.env.REQUIRE_WEB_E2E ? 1 : 0);
 }
 
 const fakeSafeStorage = {
