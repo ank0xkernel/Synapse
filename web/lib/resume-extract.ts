@@ -30,7 +30,9 @@ export async function extractPdfText(buf: Buffer): Promise<string> {
     // The package root runs a debug routine when imported without a parent; the lib entry does not.
     const { default: pdfParse } = await import('pdf-parse/lib/pdf-parse.js');
     text = tidy(String((await pdfParse(buf)).text || ''));
-  } catch {
+  } catch (error) {
+    // The parser's own reason, for diagnosing real files; never the file contents.
+    console.warn(JSON.stringify({ level: 'warn', event: 'pdf_parse_failed', reason: error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200) }));
     throw new ApiError(422, 'This PDF could not be read. It may be encrypted, password protected or damaged.');
   }
   if (!text) throw new ApiError(422, 'No text could be extracted. This PDF looks like a scan or an image, and OCR (reading text from images) is not supported. Export a text-based PDF, or paste the text instead.');

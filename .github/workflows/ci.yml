@@ -69,6 +69,9 @@ jobs:
       - run: npx tsc --noEmit
       - run: npm run build
       - run: npm test
+      - name: Diagnose scanned-PDF fixture (temporary)
+        if: failure()
+        run: node -e "require('pdf-parse/lib/pdf-parse.js')(require('fs').readFileSync('tests/fixtures/scanned.pdf')).then(r=>console.log('ok len',r.text.length)).catch(e=>console.log('ERR',e && e.stack || e))"
       - name: Install desktop dependencies for the E2E
         working-directory: .
         run: npm ci
