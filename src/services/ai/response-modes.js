@@ -30,8 +30,8 @@ const RESPONSE_MODES = Object.freeze({
     description: 'Concise, contextual answer',
     maxOutputTokens: 800,
     thinkingLevel: 'low',
-    instruction: 'Give a concise, contextual answer that follows the depth and format guidance above. Tie it to the '
-      + 'role and the candidate\'s background where that is relevant.'
+    instruction: 'Adaptive depth: follow the length guidance in the communication style above for this kind of '
+      + 'question. Tie it to the role and the candidate\'s background only where that is relevant.'
   }),
   technical: Object.freeze({
     id: 'technical',

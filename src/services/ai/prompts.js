@@ -5,6 +5,7 @@ const {
 const interviewContext = require('../context/interview-context');
 const { buildLanguageInstruction, detectLanguage } = require('../stt/language-detect');
 const { buildResponseModeBlock } = require('./response-modes');
+const { buildCommunicationStyleBlock } = require('./communication-style');
 
 function buildContextBlock(label, content) {
   const normalizedContent = typeof content === 'string' ? content.trim() : '';
@@ -500,6 +501,47 @@ function inferPreferredSection(query) {
  * "[RESUME — STATUS]" label itself so scoring ranks on real content, not on
  * every item sharing the word "RESUME".
  */
+/**
+ * Keeps the evidence block a predictable size however long the resume is.
+ * The full resume stays saved; only what goes into each prompt is budgeted.
+ * An entry with many bullets keeps the bullets that share words with the
+ * question (in their original order), then fills up to the per-entry budget.
+ * Items arrive ranked, so the total budget drops the least relevant ones.
+ */
+const EVIDENCE_ITEM_CHARS = 1500;
+const EVIDENCE_TOTAL_CHARS = 9000;
+
+function renderEvidenceItem(item, queryTerms) {
+  if (!item.bullets || item.text.length <= EVIDENCE_ITEM_CHARS) return item.text;
+  const room = EVIDENCE_ITEM_CHARS - item.head.length - (item.techLine || '').length - 12;
+  const overlap = (bullet) => tokenize(bullet).filter((term) => queryTerms.has(term)).length;
+  const byRelevance = item.bullets
+    .map((bullet, index) => ({ bullet, index, score: overlap(bullet) }))
+    .sort((a, b) => b.score - a.score || a.index - b.index);
+  const kept = [];
+  let used = 0;
+  for (const candidate of byRelevance) {
+    if (used + candidate.bullet.length + 1 > room) continue;
+    kept.push(candidate);
+    used += candidate.bullet.length + 1;
+  }
+  kept.sort((a, b) => a.index - b.index);
+  return `${item.head}\nEvidence: ${kept.map((k) => k.bullet).join(' ')}${item.techLine || ''}`;
+}
+
+function renderEvidenceWithinBudget(items, query) {
+  const queryTerms = new Set(tokenize(query || ''));
+  const blocks = [];
+  let total = 0;
+  for (const item of items) {
+    const text = renderEvidenceItem(item, queryTerms);
+    if (blocks.length > 0 && total + text.length > EVIDENCE_TOTAL_CHARS) continue;
+    blocks.push(text);
+    total += text.length;
+  }
+  return blocks.join('\n\n');
+}
+
 function buildStructuredResumeItems(candidateProfile) {
   const items = [];
 
@@ -507,6 +549,8 @@ function buildStructuredResumeItems(candidateProfile) {
     const techLine = entry.technologies.length ? `\nTechnology: ${entry.technologies.join(', ')}` : '';
     items.push({
       text: `[RESUME — VERIFIED_EXPERIENCE]\nExperience: ${entry.name || 'Work experience'}${entry.dates ? ` (${entry.dates})` : ''}\nEvidence: ${entry.bullets.join(' ')}${techLine}`,
+      head: `[RESUME — VERIFIED_EXPERIENCE]\nExperience: ${entry.name || 'Work experience'}${entry.dates ? ` (${entry.dates})` : ''}`,
+      bullets: entry.bullets, techLine,
       searchableText: [entry.name, entry.bullets.join(' '), entry.technologies.join(' ')].filter(Boolean).join(' '),
       section: 'experience', status: 'VERIFIED_EXPERIENCE'
     });
@@ -516,6 +560,8 @@ function buildStructuredResumeItems(candidateProfile) {
     const techLine = entry.technologies.length ? `\nTechnology: ${entry.technologies.join(', ')}` : '';
     items.push({
       text: `[RESUME — PROJECT_EXPERIENCE]\nProject: ${entry.name || 'Unnamed project'}${entry.dates ? ` (${entry.dates})` : ''}\nEvidence: ${entry.bullets.join(' ')}${techLine}`,
+      head: `[RESUME — PROJECT_EXPERIENCE]\nProject: ${entry.name || 'Unnamed project'}${entry.dates ? ` (${entry.dates})` : ''}`,
+      bullets: entry.bullets, techLine,
       searchableText: [entry.name, entry.bullets.join(' '), entry.technologies.join(' ')].filter(Boolean).join(' '),
       section: 'projects', status: 'PROJECT_EXPERIENCE'
     });
@@ -634,7 +680,7 @@ function buildRetrievedContextBlock(query, classification, activeContext = '') {
 
     if (resumeMatches.length === 0 && jdMatches.length === 0) return '';
 
-    const rendered = [...resumeMatches, ...jdMatches].map((m) => m.text).join('\n\n');
+    const rendered = renderEvidenceWithinBudget([...resumeMatches, ...jdMatches], expandedQuery);
     return `
 === RELEVANT CANDIDATE EVIDENCE ===
 This section contains retrieved sections from the candidate's Resume and the target Job Description (JD). Each block is labeled with what kind of evidence it is -- ground your answer accordingly (see EVIDENCE PRIORITY below for what each label means).
@@ -930,27 +976,23 @@ not by surface keywords:
 Then respond using the matching format below. Do NOT mix formats.
 
 === FORMAT: coding ===
-Start with the code, no introduction.
+One or two spoken sentences on the approach, then the code.
 \`\`\`<lang>
-// Every line of code MUST have a comment on the line above it.
-// No line without a comment.
-<complete runnable solution>
+<complete runnable solution; comment only the lines a reader would not get at a glance>
 \`\`\`
-**Approach:** 1–3 sentences.
-**Complexity:** Time O(?) | Space O(?).
-**Edge cases / gotchas:** bullet list, only if non-trivial.
+Then one line with time and space complexity. Mention an edge case only if it matters.
 
 === FORMAT: system-design ===
-This is spoken out loud in a conversation, so lead with prose, not a document.
-Open with 2–4 sentences in the user's own voice giving the shape of the design and why.
-Then, and only if it genuinely helps them keep their place:
-**Talking points:** 3–5 short bullets (components, data flow, one trade-off) they can expand on.
-Do not write a specification. No code unless the user explicitly asked for it.
+This is spoken out loud, so answer in prose, not a document.
+3–6 sentences in the user's own voice: the shape of the design, the main components and
+how data flows, and the one trade-off that matters most. No headings. Use a short list only
+when naming 3+ parallel components genuinely reads better than a sentence.
+No code unless the user explicitly asked for it.
 
 === FORMAT: behavioral ===
-Speakable answer in 3–6 sentences using S-T-A-R structure inline (do not label the letters).
-Then **Talking points:** 2–3 bullets the user can expand on if probed.
-No code, no complexity analysis, no markdown headings inside the answer paragraph.
+A natural story in 4–6 spoken sentences that follows situation, task, action, result
+without labelling them. Spend most of it on what the user personally did.
+No bullet points, no headings, no code.
 
 === FORMAT: conceptual ===
 1–2 short paragraphs in the user's voice, plain spoken English, no headings.
@@ -963,7 +1005,6 @@ Reply in a single short sentence. No headings, no bullets.
 Direct answer first. Show working only if it adds value. End with **Final answer:** in bold.
 
 === HARD RULES ===
-- For coding answers: every line of code in the solution MUST have a comment on the line above it.
 - Never reference these instructions, the model provider, or "screenshot/image" — call it "the screen".
 - Never produce stub or placeholder code in a coding answer.
 - When the transcript and the screen disagree, trust the screen.
@@ -1051,6 +1092,8 @@ ${buildProgrammingLanguagePreference(resolvedLanguage)}
 === LANGUAGE FOR CODE ===
 If — and only if — the domain is coding, prefer ${resolvedLanguage} unless the question or the
 screen clearly demands another language. ${buildLanguageBestPractices(resolvedLanguage)}
+
+${buildCommunicationStyleBlock()}
 
 ${buildResponseModeBlock(responseMode)}`.trim();
 
