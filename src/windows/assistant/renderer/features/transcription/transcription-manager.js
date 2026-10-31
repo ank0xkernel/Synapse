@@ -4,8 +4,14 @@ import { createEchoFilter } from './echo-filter.js';
 
 const MAX_MONITOR_LOG_ENTRIES = 80;
 
-// Re-acquire backoff after the loopback device disappears mid-call.
+// Re-acquire backoff after capture or the transcription socket drops. Each
+// delay gets ±25% jitter so the mic and system sources (and other clients
+// rate-limited at the same moment) do not reconnect in lockstep.
 const REACQUIRE_DELAYS_MS = [500, 1500, 3000, 5000];
+function reacquireDelay(attempt) {
+    const base = REACQUIRE_DELAYS_MS[Math.min(attempt, REACQUIRE_DELAYS_MS.length - 1)];
+    return Math.round(base * (0.75 + Math.random() * 0.5));
+}
 
 // Frame-stall watchdog. The AudioWorklet posts a message on every audio
 // quantum regardless of whether the signal is speech or silence, so frames
@@ -49,7 +55,8 @@ export function createTranscriptionManager({
     addChatMessage,
     showFeedback,
     isAutoScrollEnabled = () => true,
-    isChatNearBottom = () => true
+    isChatNearBottom = () => true,
+    onStateChange = () => {}
 }) {
     let micAudioContext = null;
     let micMediaStream = null;
@@ -89,6 +96,9 @@ export function createTranscriptionManager({
     // device that carries the interviewer. Warned once per session.
     let hasWarnedAboutMicLoopbackCollision = false;
     const echoFilter = createEchoFilter();
+    // The last failure that needs the user's action (bad key, billing),
+    // shown by the Session panel until a source connects successfully.
+    let lastPermanentFailure = null;
 
     let micPartialText = '';
     let micPartialDiv = null;
@@ -145,6 +155,7 @@ export function createTranscriptionManager({
     function setSourceStatus(source, status, liveText) {
         const resolvedSource = normalizeSource(source);
         transcriptionSourceState.setSourceStatus(resolvedSource, status);
+        if (status === 'listening') lastPermanentFailure = null;
 
         if (typeof liveText === 'string' && liveText.trim().length > 0) {
             monitorLastText[resolvedSource] = liveText.trim();
@@ -214,6 +225,8 @@ export function createTranscriptionManager({
                 monitorMasterState.textContent = 'Idle';
             }
         }
+
+        onStateChange();
     }
 
     function formatMonitorTime(timestamp = Date.now()) {
@@ -251,16 +264,16 @@ export function createTranscriptionManager({
             return;
         }
 
-        monitorLogList.innerHTML = '';
-        const entriesToRender = [...monitorLogEntries].reverse();
-        for (const item of entriesToRender) {
-            const row = document.createElement('div');
-            row.className = `monitor-log-entry ${item.level === 'error' ? 'error' : ''}`.trim();
-
-            const sourcePrefix = item.source ? `${sourceLabel(item.source)} ` : '';
-            const metaText = item.meta ? ` ${safeJson(item.meta)}` : '';
-            row.textContent = `${formatMonitorTime(item.timestamp)} ${sourcePrefix}${item.event}: ${item.message}${metaText}`;
-            monitorLogList.appendChild(row);
+        // Newest first: insert one row and trim the oldest, instead of
+        // rebuilding all rows on every event during a live session.
+        const row = document.createElement('div');
+        row.className = `monitor-log-entry ${entry.level === 'error' ? 'error' : ''}`.trim();
+        const sourcePrefix = entry.source ? `${sourceLabel(entry.source)} ` : '';
+        const metaText = entry.meta ? ` ${safeJson(entry.meta)}` : '';
+        row.textContent = `${formatMonitorTime(entry.timestamp)} ${sourcePrefix}${entry.event}: ${entry.message}${metaText}`;
+        monitorLogList.prepend(row);
+        while (monitorLogList.childElementCount > MAX_MONITOR_LOG_ENTRIES) {
+            monitorLogList.lastElementChild.remove();
         }
     }
 
@@ -602,7 +615,7 @@ export function createTranscriptionManager({
         if (!selectedSources.system) return;
         clearReacquireTimer();
 
-        const delay = REACQUIRE_DELAYS_MS[Math.min(reacquireAttempt, REACQUIRE_DELAYS_MS.length - 1)];
+        const delay = reacquireDelay(reacquireAttempt);
         reacquireAttempt += 1;
 
         setSourceStatus('system', 'connecting', 'Re-acquiring system audio...');
@@ -647,7 +660,7 @@ export function createTranscriptionManager({
         if (!selectedSources.mic) return;
         clearMicReacquireTimer();
 
-        const delay = REACQUIRE_DELAYS_MS[Math.min(micReacquireAttempt, REACQUIRE_DELAYS_MS.length - 1)];
+        const delay = reacquireDelay(micReacquireAttempt);
         micReacquireAttempt += 1;
 
         setSourceStatus('mic', 'connecting', 'Reconnecting mic...');
@@ -1051,12 +1064,21 @@ export function createTranscriptionManager({
         // retrying that would just fail identically forever.
         const unexpected = Boolean(data?.unexpected);
         console.error(`STT error [${source}]:`, error);
-        showFeedback(`Error (${sourceLabel(source)}): ${error}`, 'error');
-        addChatMessage('system', `Transcription error (${sourceLabel(source)}): ${error}`);
-        addMonitorLog('error', 'status-error', error, source);
+        addMonitorLog('error', data?.kind ? `stt-${data.kind}` : 'status-error', data?.detail ? `${error} (${data.detail})` : error, source);
+        // Retryable failures reconnect quietly (the title bar shows
+        // "Reconnecting"); only failures that need the user's action
+        // interrupt the answer feed.
+        if (!unexpected) {
+            lastPermanentFailure = { kind: data?.kind || 'error', message: error, at: Date.now() };
+            showFeedback(`Transcription stopped (${sourceLabel(source)})`, 'error');
+            addChatMessage('system', `Transcription stopped (${sourceLabel(source)}): ${error}`);
+        }
         flushFinalTranscript(source, 'status-error');
 
         if (source === 'system') {
+            if (systemCaptureMode === 'native') {
+                window.electronAPI?.stopNativeSystemAudio?.().catch(() => {});
+            }
             stopFrameWatchdog();
             stopSilenceWatchdog();
             stopAudioResources(systemAudioContext, systemMediaStream, systemScriptProcessor);
@@ -1087,18 +1109,16 @@ export function createTranscriptionManager({
         }
 
         if (source === 'system' && unexpected && selectedSources.system) {
-            addMonitorLog('error', 'stt-socket-lost', 'AssemblyAI connection error — reconnecting', 'system');
-            setSourceStatus(source, 'error', `${sourceLabel(source)} disconnected — reconnecting…`);
+            setSourceStatus(source, 'connecting', `${sourceLabel(source)} reconnecting…`);
             updateTranscriptionUI();
-            scheduleLoopbackReacquire('assemblyai-socket-error');
+            scheduleLoopbackReacquire(`assemblyai-${data?.kind || 'socket-error'}`);
             return;
         }
 
         if (source === 'mic' && unexpected && selectedSources.mic) {
-            addMonitorLog('error', 'stt-socket-lost', 'AssemblyAI connection error — reconnecting', 'mic');
-            setSourceStatus(source, 'error', `${sourceLabel(source)} disconnected — reconnecting…`);
+            setSourceStatus(source, 'connecting', `${sourceLabel(source)} reconnecting…`);
             updateTranscriptionUI();
-            scheduleMicReacquire('assemblyai-socket-error');
+            scheduleMicReacquire(`assemblyai-${data?.kind || 'socket-error'}`);
             return;
         }
 
@@ -1112,6 +1132,9 @@ export function createTranscriptionManager({
         console.log(`STT stopped [${source}]${unexpected ? ` — UNEXPECTED (code ${data?.code}, ${data?.reason || 'no reason given'})` : ''}`);
         flushFinalTranscript(source, 'stopped-event');
         if (source === 'system') {
+            if (systemCaptureMode === 'native') {
+                window.electronAPI?.stopNativeSystemAudio?.().catch(() => {});
+            }
             stopFrameWatchdog();
             stopSilenceWatchdog();
             stopAudioResources(systemAudioContext, systemMediaStream, systemScriptProcessor);
@@ -1238,6 +1261,7 @@ export function createTranscriptionManager({
         handleVoskStatus,
         handleVoskError,
         handleVoskStopped,
-        buildDiagnosticSnapshot
+        buildDiagnosticSnapshot,
+        getLastPermanentFailure: () => lastPermanentFailure
     };
 }

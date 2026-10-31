@@ -4,6 +4,7 @@ const {
   normalizeSttSource
 } = require('./stt-history');
 const { looksLikeMistranscription } = require('../stt/language-detect');
+const { classifyStreamingFailure } = require('./failure-classifier');
 
 const ASSEMBLY_AI_SAMPLE_RATE = 16000;
 
@@ -133,6 +134,37 @@ function createAssemblyAiService({
     }
   }
 
+  /**
+   * Reports one classified failure per socket to the renderer. Retryable
+   * failures (network, server, rate limit, session cap) are flagged
+   * `unexpected` so the renderer reconnects with backoff; permanent ones
+   * (bad or disabled key, billing, protocol bug) are not, because an
+   * unchanged retry fails the same way. The key never appears here.
+   */
+  function reportStreamFailure(source, ws, failure, closeCode = null) {
+    if (ws.synapseFailureReported) return;
+    ws.synapseFailureReported = true;
+    emitSttDebug({
+      source,
+      level: 'error',
+      event: `stream-failure-${failure.kind}`,
+      message: failure.detail || failure.message,
+      meta: { kind: failure.kind, retryable: failure.retryable, code: closeCode }
+    });
+    sttHistoryManager.flushSttHistoryBuffer(source, `failure-${failure.kind}`);
+    resetSourceState(source);
+    cleanupAssemblyWs(ws);
+    sendToRenderer('vosk-error', {
+      source,
+      error: failure.message,
+      kind: failure.kind,
+      detail: failure.detail,
+      unexpected: failure.retryable,
+      permanent: !failure.retryable,
+      code: closeCode
+    });
+  }
+
   function startAssemblyAiStream(source) {
     const resolvedSource = normalizeSttSource(source);
     const apiKey = getAssemblyApiKey();
@@ -152,17 +184,25 @@ function createAssemblyAiService({
       return { success: false, error: 'AssemblyAI API key not configured. Add it in Settings.' };
     }
 
-    if (isSourceStreaming(resolvedSource)) {
+    // One session per source. `streaming` only turns true on 'open', so a
+    // socket still connecting must count too: otherwise a second start during
+    // the handshake opens a second session and orphans the first, which keeps
+    // running (and billing, since AssemblyAI bills connection time).
+    const existingSocket = getSourceSocket(resolvedSource);
+    const existingLive = existingSocket
+      && (existingSocket.readyState === WebSocket.CONNECTING || existingSocket.readyState === WebSocket.OPEN);
+    if (isSourceStreaming(resolvedSource) || existingLive) {
       emitSttDebug({
         source: resolvedSource,
         event: 'start-skipped',
-        message: 'Start requested while source is already streaming'
+        message: 'Start requested while a session for this source is already open or connecting'
       });
       return {
         success: true,
         message: resolvedSource === 'system' ? 'System audio already streaming' : 'Mic already streaming'
       };
     }
+    if (existingSocket) cleanupAssemblyWs(existingSocket);
 
     try {
       const queryParams = new URLSearchParams({
@@ -290,6 +330,20 @@ function createAssemblyAiService({
               }
               break;
 
+            case 'Error':
+              // Sent just before the server closes on an error. The close
+              // reason is usually truncated to "See Error message for
+              // details", so this frame is the real cause.
+              ws.synapseLastError = { code: msg.error_code, text: String(msg.error || '') };
+              emitSttDebug({
+                source: resolvedSource,
+                level: 'error',
+                event: 'provider-error',
+                message: String(msg.error || 'AssemblyAI error'),
+                meta: { code: msg.error_code }
+              });
+              break;
+
             case 'Termination':
               console.log(
                 `AssemblyAI terminated [${resolvedSource}]. Duration:`,
@@ -324,22 +378,7 @@ function createAssemblyAiService({
       ws.on('error', (error) => {
         if (getSourceSocket(resolvedSource) !== ws) return; // superseded by a newer connection
         console.error(`AssemblyAI WebSocket error [${resolvedSource}]:`, error.message);
-        emitSttDebug({
-          source: resolvedSource,
-          level: 'error',
-          event: 'ws-error',
-          message: error.message
-        });
-        sttHistoryManager.flushSttHistoryBuffer(resolvedSource, 'ws-error');
-        sendToRenderer('vosk-error', {
-          source: resolvedSource,
-          error: `Connection error (${resolvedSource}): ${error.message}`,
-          // Distinguishes a live socket dying (worth reconnecting) from the
-          // missing-API-key vosk-error sent before any socket exists (not
-          // worth reconnecting — it would just fail the same way forever).
-          unexpected: true
-        });
-        resetSourceState(resolvedSource);
+        reportStreamFailure(resolvedSource, ws, classifyStreamingFailure({ socketError: error.message }));
       });
 
       ws.on('close', (code, reason) => {
@@ -372,15 +411,18 @@ function createAssemblyAiService({
          * never distinguish a clean stop from a dead connection worth
          * recovering. `unexpected: true` is that missing signal.
          */
-        if (isSourceStreaming(resolvedSource)) {
-          sttHistoryManager.flushSttHistoryBuffer(resolvedSource, 'ws-close');
-          resetSourceState(resolvedSource);
-          sendToRenderer('vosk-stopped', {
-            source: resolvedSource,
-            unexpected: true,
-            code,
-            reason: reason?.toString() || ''
+        if (isSourceStreaming(resolvedSource) && !ws.synapseFailureReported) {
+          const failure = classifyStreamingFailure({
+            code: ws.synapseLastError?.code ?? code,
+            errorText: ws.synapseLastError?.text || reason?.toString() || ''
           });
+          if (failure.kind === 'normal') {
+            sttHistoryManager.flushSttHistoryBuffer(resolvedSource, 'ws-close');
+            resetSourceState(resolvedSource);
+            sendToRenderer('vosk-stopped', { source: resolvedSource, code });
+          } else {
+            reportStreamFailure(resolvedSource, ws, failure, code);
+          }
         }
       });
 

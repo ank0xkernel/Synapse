@@ -70,8 +70,10 @@ function createNativeSystemAudio({
   }
 
   /** What this Mac supports. Cached: OS version and binary do not change while running. */
-  function probe() {
-    if (probeCache) return Promise.resolve(probeCache);
+  function probe({ fresh = false } = {}) {
+    // Capabilities never change while running, but the default output device
+    // does; `fresh` re-runs the (fast) helper probe to report the current one.
+    if (probeCache && !fresh) return Promise.resolve(probeCache);
 
     if (!isSupportedPlatform()) {
       probeCache = { available: false, reason: 'not-macos' };

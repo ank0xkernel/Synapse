@@ -173,14 +173,26 @@ function checkAssemblyKey(state) {
       headers: { Authorization: apiKey },
       timeout: 10000
     }, (response) => {
-      response.resume();
-      if (response.statusCode === 200) {
-        pass('AssemblyAI key accepted');
-        resolve(true);
-      } else {
-        fail(`AssemblyAI rejected the key (HTTP ${response.statusCode})`);
+      let body = '';
+      response.setEncoding('utf8');
+      response.on('data', (chunk) => { body += chunk; });
+      response.on('end', () => {
+        if (response.statusCode === 200) {
+          pass('AssemblyAI key accepted');
+          resolve(true);
+          return;
+        }
+        // The API's own error text says why (bad key, account state, billing).
+        // The key itself is never printed.
+        let reason = '';
+        try {
+          reason = JSON.parse(body).error || '';
+        } catch (_error) {
+          reason = body.slice(0, 200);
+        }
+        fail(`AssemblyAI returned HTTP ${response.statusCode}`, reason || 'No error message in the response.');
         resolve(false);
-      }
+      });
     });
 
     request.on('timeout', () => {
