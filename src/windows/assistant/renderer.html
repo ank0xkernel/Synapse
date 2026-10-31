@@ -1,14 +1,13 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <!--
     Everything this window needs is served from its own synapse:// origin, and
-    all network access goes through the main process over IPC — so the policy
-    can deny remote script, remote connections and framing outright.
-    'unsafe-inline' is present for style only, to allow the inline style
-    attribute used for layout; no inline <script> exists here.
+    all network access goes through the main process over IPC, so the policy
+    denies remote script, remote connections and framing outright.
+    'unsafe-inline' is for style only (a few display toggles set from JS).
   -->
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'none';
@@ -22,12 +21,11 @@
                  base-uri 'none';
                  object-src 'none'">
   <title>Synapse</title>
-  <link rel="stylesheet" href="styles.css">
-  <!-- Loaded second: the shell restyles the header and command bar on top. -->
-  <link rel="stylesheet" href="ui-shell.css">
+  <link rel="stylesheet" href="ui/tokens.css">
+  <link rel="stylesheet" href="ui/app.css">
 </head>
-<body>
-  <div id="app" class="glass-container">
+<body class="theme-dark">
+  <div id="app" class="app">
     <div class="window-resize-handle resize-handle-n" data-resize-handle="n" aria-hidden="true"></div>
     <div class="window-resize-handle resize-handle-e" data-resize-handle="e" aria-hidden="true"></div>
     <div class="window-resize-handle resize-handle-s" data-resize-handle="s" aria-hidden="true"></div>
@@ -36,73 +34,45 @@
     <div class="window-resize-handle resize-handle-se" data-resize-handle="se" aria-hidden="true"></div>
     <div class="window-resize-handle resize-handle-sw" data-resize-handle="sw" aria-hidden="true"></div>
     <div class="window-resize-handle resize-handle-nw" data-resize-handle="nw" aria-hidden="true"></div>
-    <!--
-      One header row, and the row itself is the drag region.
 
-      This replaced a separate `.drag-handle` element that styles.css pinned
-      absolutely across the top 30px at full width. The utility buttons live in
-      that same top-right corner, so the quit button was drawn directly on top
-      of hide/settings — two controls occupying one spot, which is what made
-      the bar look misaligned. Controls now sit in a single flow row and opt
-      out of the drag region individually.
-    -->
-    <div class="main-interface">
-      <!-- Status Section with Timer and Count -->
-      <div class="status-section">
-        <div class="status-dot" data-tip="Transcription status"></div>
-        <span class="timer" data-tip="Session length">00:00</span>
-        <div class="screenshot-count" id="screenshot-count" data-tip="Screenshots captured">0</div>
-        <button id="mobile-server-pill" class="mobile-server-pill off" type="button" data-tip="Mobile companion — open on your phone">
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <rect x="6" y="2" width="12" height="20" rx="2"/>
-            <line x1="12" y1="18" x2="12" y2="18"/>
-          </svg>
-          <span id="mobile-server-pill-label">Mobile</span>
-        </button>
-        <button id="show-mobile-code-btn" class="mobile-server-pill idle" type="button" data-tip="Show mobile pairing passcode" style="display: none;">
-          🔑 Code
-        </button>
+    <!-- Title bar. The bar is the drag region; every control opts out. -->
+    <header class="topbar main-interface">
+      <div class="topbar-start">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 12h3l2-6 4 12 2-6h5"/></svg>
+        </span>
+        <div id="session-state" class="session-state" data-state="ready" role="status" aria-live="polite">
+          <span class="session-dot" aria-hidden="true"></span>
+          <span id="session-state-label" class="session-label">Ready</span>
+          <span class="session-sep" aria-hidden="true">·</span>
+          <span class="timer" aria-label="Session length">00:00</span>
+        </div>
       </div>
-      
-      <!-- Action Buttons - Compact -->
-      <div class="content-section">
+
+      <div class="topbar-center content-section">
         <div class="action-buttons">
-          <div id="transcription-control" class="transcription-control">
-            <button id="transcription-toggle" class="action-btn transcription-btn" type="button" aria-label="Toggle transcription" data-tip="Transcription  ⌥⇧T">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M3 10v4" />
-                <path d="M7 7v10" />
-                <path d="M11 4v16" />
-                <path d="M15 7v10" />
-                <path d="M19 10v4" />
-              </svg>
+          <div id="transcription-control" class="listen-group transcription-control" role="group" aria-label="Listening">
+            <button id="transcription-toggle" class="listen-btn transcription-btn" type="button" aria-label="Start or stop listening" data-tip="Listen  ⌥⇧T">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M4 10v4"/><path d="M8 7v10"/><path d="M12 4v16"/><path d="M16 7v10"/><path d="M20 10v4"/></svg>
+              <span class="listen-label">Listen</span>
             </button>
-            <div id="transcription-sources" class="transcription-sources" role="group" aria-label="Transcription sources">
-              <button id="source-system-toggle" class="source-toggle source-system selected" type="button" aria-label="Transcribe system audio" data-tip="Host audio — the other person">
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
-                </svg>
+            <div id="transcription-sources" class="source-group transcription-sources" role="group" aria-label="Audio sources">
+              <button id="source-system-toggle" class="source-toggle source-system selected" type="button" aria-label="System audio: the other person on the call" data-tip="System audio">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>
               </button>
-              <button id="source-mic-toggle" class="source-toggle source-mic" type="button" aria-label="Transcribe microphone" data-tip="Your mic">
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
-                  <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-                  <path d="M12 19v4"/>
-                  <path d="M8 23h8"/>
-                </svg>
+              <button id="source-mic-toggle" class="source-toggle source-mic" type="button" aria-label="Microphone: your own voice (optional)" data-tip="Microphone (optional)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg>
               </button>
             </div>
           </div>
 
-          <!-- Answers the interviewer automatically when they finish asking. -->
-          <button id="auto-answer-toggle" class="action-btn auto-answer-toggle active" type="button" aria-pressed="true" aria-label="Auto-answer" data-tip="Auto-answer questions">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/>
-            </svg>
+          <div class="toolbar-divider" aria-hidden="true"></div>
+
+          <button id="auto-answer-toggle" class="icon-btn auto-answer-toggle active" type="button" aria-pressed="true" aria-label="Auto-answer" data-tip="Auto-answer">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 3 4 14h7l-1 7 9-11h-7l1-7z"/></svg>
           </button>
 
-          <!-- Answer style. Changes the model's instructions and length budget, not just a label. -->
-          <label class="response-mode" data-tip="Answer style">
+          <label class="mode-select response-mode" data-tip="Answer style">
             <span class="visually-hidden">Answer style</span>
             <select id="response-mode-select" class="response-mode-select">
               <option value="quick">Quick</option>
@@ -113,428 +83,486 @@
             </select>
           </label>
 
-          <button id="screenshot-btn" class="action-btn screenshot-btn" type="button" aria-label="Capture screen" data-tip="Capture screen  ⌥⇧S">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M9 2 7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z"/>
-            </svg>
+          <button id="screenshot-btn" class="icon-btn screenshot-btn" type="button" aria-label="Capture screen" data-tip="Capture screen  ⌥⇧S">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8V6a2 2 0 0 1 2-2h2"/><path d="M16 4h2a2 2 0 0 1 2 2v2"/><path d="M20 16v2a2 2 0 0 1-2 2h-2"/><path d="M8 20H6a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3"/></svg>
+            <span id="screenshot-count" class="count-badge screenshot-count" aria-label="Screenshots captured" hidden>0</span>
           </button>
 
-          <!--
-            These six actions are no longer buttons on the bar. They are all
-            "run an AI pass over the current context", differing only by prompt,
-            which is what made the toolbar feel like a wall of similar buttons.
-            They are now slash-commands in the command bar (see
-            renderer/features/command-bar/command-bar.js).
-
-            The elements stay in the DOM on purpose: every existing listener,
-            disabled-state toggle and keyboard shortcut still binds to them, and
-            the command bar dispatches a real click. Removing them outright
-            would mean rewiring five feature managers for no user-visible gain.
-          -->
+          <!-- Slash-command targets: kept as real buttons so listeners, shortcuts and disabled state still bind. -->
           <div class="command-targets" hidden>
-            <button id="analyze-btn" class="action-btn analyze-btn" type="button" title="Answer using transcript, screenshots and chat context  (⌥⇧A)">
-              Ask AI
-            </button>
-
-            <button id="screen-ai-btn" class="action-btn screen-ai-btn" type="button" title="Analyse the selected screenshots only  (⌥⇧E)">
-              Screen AI
-            </button>
-
-            <button id="suggest-btn" class="action-btn suggest-btn" type="button" aria-label="Suggest what to say next" title="Suggest what to say next  (⌥⇧G)">
-              Suggest
-            </button>
-
-            <button id="notes-btn" class="action-btn notes-btn" type="button" aria-label="Generate notes" title="Generate notes from the conversation  (⌥⇧N)">
-              Notes
-            </button>
-
-            <button id="insights-btn" class="action-btn insights-btn" type="button" aria-label="Find key insights" title="Find key insights in the conversation  (⌥⇧I)">
-              Insights
-            </button>
-
-            <button id="clear-btn" class="action-btn clear-btn" type="button" aria-label="Clear chat and screenshots" title="Clear chat, screenshots and history  (⌥⇧C)">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
-              </svg>
-            </button>
-          </div>
-
-          <div class="utility-buttons">
-            <button
-              id="theme-toggle-btn"
-              class="action-btn theme-toggle-btn"
-              type="button"
-              aria-label="Switch to dark mode"
-              aria-pressed="false"
-              data-tip="Light / dark theme"
-              data-tip-align="end"
-            >
-              <svg class="theme-toggle-icon theme-toggle-icon-moon" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <path d="M12.25 2.1a1 1 0 0 0-.92 1.34 8.5 8.5 0 0 1-9.88 11.22 1 1 0 0 0-1.08 1.52A11 11 0 1 0 12.25 2.1z" />
-              </svg>
-              <svg class="theme-toggle-icon theme-toggle-icon-sun" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <circle cx="12" cy="12" r="4" />
-                <path d="M12 2v2" />
-                <path d="M12 20v2" />
-                <path d="m4.93 4.93 1.41 1.41" />
-                <path d="m17.66 17.66 1.41 1.41" />
-                <path d="M2 12h2" />
-                <path d="M20 12h2" />
-                <path d="m6.34 17.66-1.41 1.41" />
-                <path d="m19.07 4.93-1.41 1.41" />
-              </svg>
-            </button>
-
-            <button id="settings-btn" class="action-btn settings-btn" type="button" aria-label="Settings" data-tip="Settings" data-tip-align="end">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"/>
-              </svg>
-            </button>
-
-            <!--
-              Eye-off, not a cross. This used to carry the same ✕ glyph as the
-              quit button in the title bar, so the window appeared to have two
-              exit buttons and hiding felt like quitting.
-            -->
-            <button id="hide-btn" class="action-btn hide-btn" type="button" aria-label="Hide overlay" data-tip="Hide overlay  ⌥⇧X" data-tip-align="end">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/>
-                <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/>
-                <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/>
-                <line x1="2" y1="2" x2="22" y2="22"/>
-              </svg>
-            </button>
-
-            <!--
-              Different from hide-btn above: hide-btn makes the window fully
-              invisible (opacity), for the moment you need it gone entirely.
-              This shrinks it to a small status pill instead -- still visible,
-              still listening, just out of the way of whatever's underneath
-              (the call, a shared editor). The icon and aria-label swap
-              between compress/expand in renderer.js as the mode toggles.
-            -->
-            <button id="compact-mode-btn" class="action-btn compact-mode-btn" type="button" aria-label="Shrink to compact mode" data-tip="Compact mode" data-tip-align="end">
-              <svg class="compact-mode-icon-shrink" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M8 3v3a2 2 0 0 1-2 2H3"/>
-                <path d="M21 8h-3a2 2 0 0 1-2-2V3"/>
-                <path d="M3 16h3a2 2 0 0 1 2 2v3"/>
-                <path d="M16 21v-3a2 2 0 0 1 2-2h3"/>
-              </svg>
-              <svg class="compact-mode-icon-expand" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: none;">
-                <path d="M8 3H5a2 2 0 0 0-2 2v3"/>
-                <path d="M21 8V5a2 2 0 0 0-2-2h-3"/>
-                <path d="M3 16v3a2 2 0 0 0 2 2h3"/>
-                <path d="M16 21h3a2 2 0 0 0 2-2v-3"/>
-              </svg>
-            </button>
-
-            <!--
-              Quit. Moved here out of the old absolutely-positioned drag strip,
-              where it overlapped the three buttons above it.
-            -->
-            <button id="close-app-btn" class="action-btn close-app-btn" type="button" aria-label="Quit Synapse" data-tip="Quit Synapse" data-tip-align="end">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                <path d="M6 6l12 12M18 6L6 18"/>
-              </svg>
-            </button>
+            <button id="analyze-btn" class="analyze-btn" type="button">Ask AI</button>
+            <button id="screen-ai-btn" class="screen-ai-btn" type="button">Screen AI</button>
+            <button id="suggest-btn" class="suggest-btn" type="button">Suggest</button>
+            <button id="notes-btn" class="notes-btn" type="button">Notes</button>
+            <button id="insights-btn" class="insights-btn" type="button">Insights</button>
+            <button id="clear-btn" class="clear-btn" type="button">Clear</button>
           </div>
         </div>
       </div>
-    </div>
-    
-    <div id="transcription-monitor" class="transcription-monitor">
-      <div class="monitor-header">
-        <span class="monitor-title">Transcription Monitor</span>
-        <span id="monitor-master-state" class="monitor-master-state">Idle</span>
-        <!--
-          Phase 13: reuses the existing, already-styled, unscoped .action-btn
-          class (styles.css) as-is -- no new CSS -- and the same icon-only +
-          data-tip pattern already used by close-app-btn/settings-btn above,
-          rather than a text label that risks overflowing this row's
-          space-between layout on a narrow window. Technical diagnostics
-          only; see diagnostic-snapshot.js for exactly what this copies.
-        -->
-        <button id="copy-diagnostics-btn" class="action-btn" type="button" aria-label="Copy diagnostics" data-tip="Copy technical audio/latency diagnostics" data-tip-align="end">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="8" y="2" width="8" height="4" rx="1"/>
-            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
-          </svg>
+
+      <div class="topbar-end utility-buttons">
+        <button id="mobile-server-pill" class="icon-btn mobile-server-pill off" type="button" aria-label="Phone companion" data-tip="Phone companion" data-tip-align="end">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="3" width="10" height="18" rx="2"/><path d="M11 17h2"/></svg>
+          <span id="mobile-server-pill-label" class="visually-hidden">Mobile</span>
+        </button>
+        <button id="show-mobile-code-btn" class="icon-btn mobile-server-pill idle" type="button" aria-label="Show phone pairing code" data-tip="Pairing code" data-tip-align="end" style="display: none;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="m10.8 12.2 7.7-7.7"/><path d="m16 7 2 2"/></svg>
+        </button>
+        <button id="context-btn" class="icon-btn" type="button" aria-label="Resume and interview context" data-tip="Resume & context" data-tip-align="end">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6"/><path d="M9 17h4"/></svg>
+        </button>
+        <button id="status-btn" class="icon-btn" type="button" aria-label="Session status" data-tip="Session status" data-tip-align="end">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3 7 4-14 3 7h4"/></svg>
+        </button>
+        <button id="settings-btn" class="icon-btn settings-btn" type="button" aria-label="Settings" data-tip="Settings" data-tip-align="end">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h10"/><path d="M18 7h2"/><circle cx="16" cy="7" r="2"/><path d="M4 17h4"/><path d="M12 17h8"/><circle cx="10" cy="17" r="2"/></svg>
+        </button>
+        <button id="hide-btn" class="icon-btn hide-btn" type="button" aria-label="Hide overlay" data-tip="Hide  ⌥⇧X" data-tip-align="end">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.9 4.2A10 10 0 0 1 12 4c7 0 10 8 10 8a17 17 0 0 1-2.2 3.4"/><path d="M6.6 6.6A16.5 16.5 0 0 0 2 12s3 8 10 8a9.7 9.7 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/><path d="m2 2 20 20"/></svg>
+        </button>
+        <button id="compact-mode-btn" class="icon-btn compact-mode-btn" type="button" aria-label="Shrink to compact mode" data-tip="Compact" data-tip-align="end">
+          <svg class="compact-mode-icon-shrink" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg>
+          <svg class="compact-mode-icon-expand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display: none;"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+        </button>
+        <button id="close-app-btn" class="icon-btn close-app-btn" type="button" aria-label="Quit Synapse" data-tip="Quit" data-tip-align="end">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
         </button>
       </div>
-      <div class="monitor-source-grid">
-        <div class="monitor-source-row">
-          <span class="monitor-source-label">Host</span>
-          <span id="monitor-status-system" class="monitor-status-badge off">Off</span>
-          <span id="monitor-live-system" class="monitor-live-text">No transcript yet</span>
-        </div>
-        <div class="monitor-source-row">
-          <span class="monitor-source-label">Mic</span>
-          <span id="monitor-status-mic" class="monitor-status-badge off">Off</span>
-          <span id="monitor-live-mic" class="monitor-live-text">No transcript yet</span>
-        </div>
-      </div>
-      <div id="monitor-log-list" class="monitor-log-list"></div>
-    </div>
+    </header>
 
-    <!-- Chat Interface -->
-    <div id="chat-container" class="chat-container">
-      <!--
-        The "🤖 AI Assistant" title bar that used to sit here was removed: the
-        whole window is the assistant, so it was a labelled box wrapped around
-        a labelled box and cost a row of vertical space on a 400px overlay.
-      -->
-      <div id="chat-messages" class="chat-messages">
-        <!--
-          Empty state. CSS hides this automatically as soon as a .chat-message
-          exists, so no JS has to remember to tear it down.
-        -->
+    <!-- Live answer feed -->
+    <main id="chat-container" class="chat-container">
+      <div id="chat-messages" class="chat-messages" role="log" aria-live="polite" aria-label="Transcript and answers"></div>
+      <!-- Outside #chat-messages so Clear (which empties the feed) cannot remove it;
+           CSS hides it whenever the feed has a message. -->
         <div class="chat-empty-state" id="chat-empty-state">
-          <div class="chat-empty-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
-          <p class="chat-empty-title">Ready when you are</p>
-          <p class="chat-empty-body">
-            Turn on transcription, then ask for an answer. Everything stays on this machine.
-          </p>
+          <p class="chat-empty-title">Ready when the interview starts</p>
+          <p class="chat-empty-body">Press Listen. Synapse hears your call through your normal speakers or headphones, and answers appear here as the interviewer finishes a question.</p>
           <ul class="chat-empty-keys">
-            <li><kbd>⌥</kbd><kbd>⇧</kbd><kbd>T</kbd><span>Start transcribing</span></li>
-            <li><kbd>⌥</kbd><kbd>⇧</kbd><kbd>A</kbd><span>Answer the question</span></li>
-            <li><kbd>⌥</kbd><kbd>⇧</kbd><kbd>G</kbd><span>Suggest what to say</span></li>
-            <li><kbd>⌥</kbd><kbd>⇧</kbd><kbd>X</kbd><span>Hide this window</span></li>
+            <li><span class="keys"><kbd>⌥</kbd><kbd>⇧</kbd><kbd>T</kbd></span><span>Listen</span></li>
+            <li><span class="keys"><kbd>⌥</kbd><kbd>⇧</kbd><kbd>A</kbd></span><span>Answer now</span></li>
+            <li><span class="keys"><kbd>⌥</kbd><kbd>⇧</kbd><kbd>G</kbd></span><span>Suggest a reply</span></li>
+            <li><span class="keys"><kbd>⌥</kbd><kbd>⇧</kbd><kbd>X</kbd></span><span>Hide window</span></li>
           </ul>
           <p class="chat-empty-hint" id="chat-empty-hint" hidden></p>
         </div>
-        <!-- Messages will be added here dynamically -->
-      </div>
-      <!--
-        Command bar. `chat-manual-input` and `chat-manual-send` keep their ids
-        and their original "add this as context" behaviour; the command layer
-        sits on top and decides whether a submission is a plain question, a
-        slash-command, or context to stage.
-      -->
-      <div id="chat-composer" class="chat-composer command-bar">
-        <div class="command-bar-lead" aria-hidden="true">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="m9 10 3 3-3 3"/><path d="M14 17h4"/><rect x="3" y="4" width="18" height="16" rx="2"/>
-          </svg>
-        </div>
+
+      <div id="chat-composer" class="composer chat-composer command-bar">
+        <span class="composer-lead" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+        </span>
         <textarea
           id="chat-manual-input"
           class="chat-manual-input"
           rows="1"
-          placeholder="Ask anything, or / for commands"
+          placeholder="Ask anything, or type / for commands"
           aria-label="Ask a question or run a command"
           aria-autocomplete="list"
           aria-controls="command-suggestions"
         ></textarea>
-        <button
-          id="chat-autoscroll-toggle"
-          class="chat-autoscroll-toggle"
-          type="button"
-          aria-pressed="true"
-          aria-label="Toggle auto-scroll"
-          data-tip="Auto-scroll"
-          data-tip-align="end"
-          data-tip-above
-        >&#x21E9;</button>
+        <button id="chat-autoscroll-toggle" class="icon-btn icon-btn-sm chat-autoscroll-toggle" type="button" aria-pressed="true" aria-label="Follow new answers" data-tip="Auto-scroll" data-tip-align="end" data-tip-above>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="m6 13 6 6 6-6"/></svg>
+        </button>
         <kbd class="command-bar-hint" id="command-bar-hint">⌘K</kbd>
-        <button id="chat-manual-send" class="chat-manual-send" type="button" data-tip="Send  ↵" data-tip-align="end" data-tip-above>Ask</button>
+        <button id="chat-manual-send" class="btn btn-primary btn-sm chat-manual-send" type="button" data-tip="Send  ↵" data-tip-align="end" data-tip-above>Ask</button>
       </div>
-
-      <!-- Inline command suggestions, filtered as you type after "/" -->
       <div id="command-suggestions" class="command-suggestions" role="listbox" aria-label="Commands" hidden></div>
       <div id="chat-resize-handle" class="chat-resize-handle" aria-hidden="true"></div>
+    </main>
+
+    <!-- Toast -->
+    <div id="status-text" class="toast status-text" role="status" aria-live="polite" style="display: none;"></div>
+
+    <!-- Legacy results panel: unused visually, kept for listeners that still reference it. -->
+    <div id="results-panel" class="results-panel hidden" aria-hidden="true">
+      <div class="results-content"><div id="result-text" class="result-text"></div></div>
+      <button id="close-results" class="close-btn" type="button" aria-label="Close" hidden></button>
     </div>
-    
-    <!-- Hidden status text for feedback -->
-    <div id="status-text" class="status-text" style="display: none;">AI Assistant</div>
-    
-    <!-- Expandable Results Panel (Legacy - now using chat) -->
-    <div id="results-panel" class="results-panel hidden">
-      <div class="results-header">
-        <div class="results-title">
-          <span class="ai-response-icon">&#x2728;</span>
-          <span>AI Response</span>
-        </div>
-        <div class="results-actions">
-          <button id="close-results" class="close-btn" type="button" aria-label="Close AI response" data-tip="Close" data-tip-align="end">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M18.3 5.71a1 1 0 0 0-1.41 0L12 10.59 7.11 5.7a1 1 0 1 0-1.42 1.42L10.59 12l-4.9 4.89a1 1 0 0 0 1.42 1.42L12 13.41l4.89 4.9a1 1 0 0 0 1.42-1.42L13.41 12l4.9-4.89a1 1 0 0 0 0-1.4Z"/>
-            </svg>
-          </button>
-        </div>
-      </div>
-      <div class="results-content">
-        <div id="result-text" class="result-text"></div>
-      </div>
-    </div>
-    
-    <!-- Settings Panel -->
-    <div id="settings-panel" class="settings-panel hidden">
-      <div class="settings-header">
-        <span class="settings-title">Settings</span>
-        <button id="close-settings" class="close-btn" type="button" aria-label="Close settings" data-tip="Close" data-tip-align="end">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M18.3 5.71a1 1 0 0 0-1.41 0L12 10.59 7.11 5.7a1 1 0 1 0-1.42 1.42L10.59 12l-4.9 4.89a1 1 0 0 0 1.42 1.42L12 13.41l4.89 4.9a1 1 0 0 0 1.42-1.42L13.41 12l4.9-4.89a1 1 0 0 0 0-1.4Z"/>
-          </svg>
+
+    <!-- Session status -->
+    <aside id="status-panel" class="sheet hidden" role="dialog" aria-labelledby="status-title">
+      <header class="sheet-header">
+        <h2 id="status-title" class="sheet-title" tabindex="-1" data-autofocus>Session</h2>
+        <button id="status-refresh" class="btn btn-ghost btn-sm" type="button">Refresh</button>
+        <button id="close-status" class="icon-btn" type="button" aria-label="Close session status">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
         </button>
-      </div>
-      <div class="settings-body">
-        <div class="settings-group">
-          <label class="settings-label">AI Provider</label>
-          <select id="setting-ai-provider" class="settings-input">
-            <option value="gemini">Gemini</option>
-            <option value="ollama">Ollama (Local)</option>
-          </select>
-        </div>
-        <div id="gemini-settings-group">
-          <div class="settings-group">
-            <label class="settings-label">Gemini API Key(s)</label>
-            <div class="settings-input-row">
-              <input type="password" id="setting-gemini-key" class="settings-input" placeholder="Enter Gemini API key(s), comma-separated..." />
-              <button
-                type="button"
-                id="toggle-gemini-key-visibility"
-                class="settings-input-toggle"
-                aria-label="Show Gemini API key"
-                aria-pressed="false"
-              >
-                Show
-              </button>
-            </div>
-            <div class="settings-helper-text">Multiple Gemini keys are supported as comma-separated values.</div>
+      </header>
+      <div class="sheet-body">
+        <ul class="checklist" aria-label="Readiness">
+          <li class="check-row" data-check="system-audio" data-tone="idle"><span class="check-dot" aria-hidden="true"></span><span class="check-text"><span class="check-title">System audio</span><span class="check-detail">Checking…</span></span><span class="check-value"></span></li>
+          <li class="check-row" data-check="playback" data-tone="idle"><span class="check-dot" aria-hidden="true"></span><span class="check-text"><span class="check-title">Playback</span><span class="check-detail">Checking…</span></span><span class="check-value"></span></li>
+          <li class="check-row" data-check="microphone" data-tone="idle"><span class="check-dot" aria-hidden="true"></span><span class="check-text"><span class="check-title">Microphone</span><span class="check-detail">Checking…</span></span><span class="check-value"></span></li>
+          <li class="check-row" data-check="transcription" data-tone="idle"><span class="check-dot" aria-hidden="true"></span><span class="check-text"><span class="check-title">Transcription</span><span class="check-detail">Checking…</span></span><span class="check-value"></span></li>
+          <li class="check-row" data-check="ai" data-tone="idle"><span class="check-dot" aria-hidden="true"></span><span class="check-text"><span class="check-title">AI answers</span><span class="check-detail">Checking…</span></span><span class="check-value"></span></li>
+          <li class="check-row" data-check="profile" data-tone="idle"><span class="check-dot" aria-hidden="true"></span><span class="check-text"><span class="check-title">Candidate profile</span><span class="check-detail">Checking…</span></span><span class="check-value"></span></li>
+          <li class="check-row" data-check="companion" data-tone="idle"><span class="check-dot" aria-hidden="true"></span><span class="check-text"><span class="check-title">Phone companion</span><span class="check-detail">Checking…</span></span><span class="check-value"></span></li>
+        </ul>
+        <section class="sheet-section companion-box" aria-labelledby="companion-heading">
+          <div class="section-head">
+            <h3 id="companion-heading" class="section-title">Phone companion</h3>
+            <button id="companion-toggle" class="btn btn-sm" type="button" aria-pressed="false">Turn on</button>
           </div>
-          <div class="settings-group">
-            <label class="settings-label">Gemini Model</label>
-            <select id="setting-gemini-model" class="settings-input"></select>
+          <p id="companion-detail" class="field-help">Off. Turn it on to follow answers on your phone over this Wi-Fi.</p>
+          <div class="section-actions" id="companion-actions" hidden>
+            <button id="companion-code" class="btn btn-ghost btn-sm" type="button">Show pairing code</button>
+            <button id="companion-revoke" class="btn btn-ghost btn-sm" type="button">Sign out all phones</button>
           </div>
-        </div>
-        <div id="ollama-settings-group" class="hidden">
-          <div class="settings-group">
-            <label class="settings-label">Ollama Server URL</label>
-            <input type="text" id="setting-ollama-base-url" class="settings-input" placeholder="http://localhost:11434" />
-            <div class="settings-helper-text">URL of your running Ollama instance.</div>
-          </div>
-          <div class="settings-group">
-            <label class="settings-label">Ollama Model</label>
-            <div class="settings-input-row">
-              <input type="text" id="setting-ollama-model" class="settings-input" placeholder="llama3.2" />
-              <button type="button" id="fetch-ollama-models" class="settings-input-toggle" aria-label="Fetch available Ollama models">
-                Fetch
-              </button>
-            </div>
-            <div class="settings-helper-text">Enter a model name or click Fetch to list installed models.</div>
-            <select id="setting-ollama-model-select" class="settings-input hidden"></select>
-          </div>
-        </div>
-        <div class="settings-group">
-          <label class="settings-label">Programming Language</label>
-          <select id="setting-programming-language" class="settings-input"></select>
-        </div>
-        <div class="settings-group">
-          <label class="settings-label">AssemblyAI API Key</label>
-          <div class="settings-input-row">
-            <input type="password" id="setting-assembly-key" class="settings-input" placeholder="Enter AssemblyAI API key..." />
-            <button
-              type="button"
-              id="toggle-assembly-key-visibility"
-              class="settings-input-toggle"
-              aria-label="Show AssemblyAI API key"
-              aria-pressed="false"
-            >
-              Show
-            </button>
-          </div>
-        </div>
-        <div class="settings-group">
-          <label class="settings-label">AssemblyAI Speech Model</label>
-          <select id="setting-assembly-model" class="settings-input"></select>
-        </div>
-        <div class="settings-group">
-          <div class="settings-label-row">
-            <label class="settings-label" for="setting-window-opacity">Window Opacity</label>
-            <span id="setting-window-opacity-value" class="settings-value-chip">10/10</span>
-          </div>
-          <input
-            type="range"
-            id="setting-window-opacity"
-            class="settings-range"
-            min="1"
-            max="10"
-            step="1"
-            value="10"
-          />
-        </div>
-        <div class="settings-group">
-          <label class="settings-label">Appearance</label>
-          <div class="appearance-row">
-            <label for="setting-transparency">Transparency</label>
-            <input type="range" id="setting-transparency" min="20" max="100" step="1" value="82">
-            <output id="setting-transparency-value">82%</output>
-          </div>
-          <div class="appearance-row">
-            <label for="setting-brightness">Brightness</label>
-            <input type="range" id="setting-brightness" min="50" max="140" step="1" value="100">
-            <output id="setting-brightness-value">100%</output>
-          </div>
-          <div class="appearance-row">
-            <label for="setting-glass-intensity">Glass</label>
-            <input type="range" id="setting-glass-intensity" min="0" max="100" step="1" value="44" aria-label="Glass intensity, soft to strong">
-            <output id="setting-glass-intensity-value">44%</output>
-          </div>
+          <p class="field-help">Pairing needs the 6-digit code. Traffic is plain HTTP on your local network, not end-to-end encrypted; use it only on a network you trust.</p>
+        </section>
+
+        <div class="sheet-actions">
+          <button id="status-audio-test" class="btn" type="button">Test audio</button>
+          <button id="copy-diagnostics-btn" class="btn btn-ghost" type="button" aria-label="Copy technical diagnostics">Copy diagnostics</button>
+          <button id="status-open-setup" class="btn btn-ghost" type="button">Setup guide</button>
         </div>
 
-        <div class="settings-group">
-          <label class="settings-label">Keyboard Shortcuts</label>
-          <p class="settings-hint">Click a shortcut, then press the keys you want.</p>
+        <section class="sheet-section" aria-labelledby="monitor-heading">
+          <div id="transcription-monitor" class="monitor transcription-monitor">
+            <div class="monitor-header">
+              <h3 id="monitor-heading" class="section-title monitor-title">Live transcription</h3>
+              <span id="monitor-master-state" class="monitor-master-state">Idle</span>
+            </div>
+            <div class="monitor-source-grid">
+              <div class="monitor-source-row">
+                <span class="monitor-source-label">System</span>
+                <span id="monitor-status-system" class="monitor-status-badge off">Off</span>
+                <span id="monitor-live-system" class="monitor-live-text">No transcript yet</span>
+              </div>
+              <div class="monitor-source-row">
+                <span class="monitor-source-label">Mic</span>
+                <span id="monitor-status-mic" class="monitor-status-badge off">Off</span>
+                <span id="monitor-live-mic" class="monitor-live-text">No transcript yet</span>
+              </div>
+            </div>
+            <div id="monitor-log-list" class="monitor-log-list" aria-label="Event log"></div>
+          </div>
+        </section>
+      </div>
+    </aside>
+
+    <!-- Resume and interview context -->
+    <aside id="context-panel" class="sheet sheet-wide hidden" role="dialog" aria-labelledby="context-title">
+      <header class="sheet-header">
+        <h2 id="context-title" class="sheet-title" tabindex="-1" data-autofocus>Resume &amp; context</h2>
+        <button id="close-context" class="icon-btn" type="button" aria-label="Close resume and context">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </header>
+      <div class="sheet-body">
+        <section class="settings-section web-account" id="ctx-web" data-status="unlinked" aria-labelledby="ctx-web-title">
+          <div class="section-head">
+            <h3 id="ctx-web-title" class="section-title">Synapse web account</h3>
+            <span class="sync-badge" id="ctx-web-badge">Not linked</span>
+          </div>
+          <p class="field-help" id="ctx-web-detail">Link this Mac to your Synapse website account to use the resume and job description you manage there.</p>
+          <div class="field" id="ctx-web-url-field">
+            <label class="field-label" for="ctx-web-url">Website address</label>
+            <input id="ctx-web-url" class="input" type="url" placeholder="https://your-synapse-site.com" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="pending-card" id="ctx-web-pending" hidden>
+            <span class="pending-title">Newer context on the website</span>
+            <span class="pending-detail" id="ctx-web-pending-detail"></span>
+          </div>
+          <div class="section-actions wrap">
+            <button id="ctx-web-link" class="btn btn-primary btn-sm" type="button">Link with browser</button>
+            <button id="ctx-web-apply" class="btn btn-primary btn-sm" type="button" hidden>Use this context</button>
+            <button id="ctx-web-check" class="btn btn-sm" type="button" hidden>Refresh</button>
+            <button id="ctx-web-pdf" class="btn btn-ghost btn-sm" type="button" hidden>View PDF</button>
+            <button id="ctx-web-unlink" class="btn btn-ghost btn-sm" type="button" hidden>Unlink</button>
+          </div>
+        </section>
+
+        <section class="readiness" id="ctx-readiness" data-ready="false" aria-labelledby="ctx-readiness-title">
+          <div class="readiness-head">
+            <span class="readiness-dot" aria-hidden="true"></span>
+            <h3 id="ctx-readiness-title" class="readiness-title">Checking…</h3>
+          </div>
+          <ul class="readiness-list" id="ctx-readiness-list"></ul>
+        </section>
+
+        <section class="settings-section" aria-labelledby="ctx-target-title">
+          <h3 id="ctx-target-title" class="section-title">Target role</h3>
+          <div class="field-grid">
+            <div class="field"><label class="field-label" for="ctx-role">Role</label><input id="ctx-role" class="input" maxlength="200" placeholder="e.g. Backend Engineer" autocomplete="off"></div>
+            <div class="field"><label class="field-label" for="ctx-company">Company</label><input id="ctx-company" class="input" maxlength="200" placeholder="e.g. Stripe" autocomplete="off"></div>
+          </div>
+          <div class="field">
+            <label class="field-label" for="ctx-type">Interview type</label>
+            <select id="ctx-type" class="input">
+              <option value="auto">Detect from the question</option>
+              <option value="coding">Coding</option>
+              <option value="system-design">System design</option>
+              <option value="behavioural">Behavioral</option>
+              <option value="general">General</option>
+            </select>
+          </div>
+        </section>
+
+        <section class="settings-section" aria-labelledby="ctx-resume-title">
+          <div class="section-head">
+            <h3 id="ctx-resume-title" class="section-title">Resume</h3>
+            <div class="section-actions">
+              <button id="ctx-import" class="btn btn-sm" type="button">Import PDF…</button>
+              <button id="ctx-remove" class="btn btn-ghost btn-sm" type="button">Remove</button>
+            </div>
+          </div>
+          <div id="ctx-resume-meta" class="doc-meta"></div>
+          <p id="ctx-resume-alert" class="inline-alert" role="alert" hidden></p>
+          <details class="disclosure" id="ctx-resume-text-wrap">
+            <summary>Resume text <span class="summary-hint">Edit to correct what was extracted</span></summary>
+            <textarea id="ctx-background" class="input textarea" rows="10" spellcheck="false" aria-label="Resume text"></textarea>
+            <p class="field-help" id="ctx-background-count"></p>
+          </details>
+        </section>
+
+        <section class="settings-section" aria-labelledby="ctx-profile-title">
+          <h3 id="ctx-profile-title" class="section-title">What Synapse found in your resume</h3>
+          <p class="field-help">Read straight from the resume text, not generated. Empty sections were not found; fix them by editing the resume text above.</p>
+          <div id="ctx-profile" class="profile-groups"></div>
+        </section>
+
+        <section class="settings-section" aria-labelledby="ctx-jd-title">
+          <h3 id="ctx-jd-title" class="section-title">Job description</h3>
+          <textarea id="ctx-jd" class="input textarea" rows="7" placeholder="Paste the job description" aria-labelledby="ctx-jd-title" spellcheck="false"></textarea>
+          <p class="field-help" id="ctx-jd-count"></p>
+          <div id="ctx-match" class="match-groups"></div>
+        </section>
+
+        <section class="settings-section" aria-labelledby="ctx-ai-title">
+          <h3 id="ctx-ai-title" class="section-title">What the AI receives</h3>
+          <ul class="facts-list" id="ctx-ai-facts"></ul>
+        </section>
+      </div>
+      <footer class="sheet-footer">
+        <span class="save-state" id="ctx-save-state" role="status" aria-live="polite"></span>
+        <button id="ctx-save" class="btn btn-primary" type="button">Save changes</button>
+      </footer>
+    </aside>
+
+    <!-- Settings -->
+    <aside id="settings-panel" class="sheet settings-panel hidden" role="dialog" aria-labelledby="settings-title">
+      <header class="sheet-header settings-header">
+        <h2 id="settings-title" class="sheet-title settings-title">Settings</h2>
+        <button id="close-settings" class="icon-btn close-btn" type="button" aria-label="Close settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </header>
+      <div class="sheet-body settings-body">
+        <section class="settings-section">
+          <h3 class="section-title">AI answers</h3>
+          <div class="field settings-group">
+            <label class="field-label settings-label" for="setting-ai-provider">Provider</label>
+            <select id="setting-ai-provider" class="input settings-input">
+              <option value="gemini">Gemini</option>
+              <option value="ollama">Ollama (local)</option>
+            </select>
+          </div>
+          <div id="gemini-settings-group">
+            <div class="field settings-group">
+              <label class="field-label settings-label" for="setting-gemini-key">Gemini API keys</label>
+              <div class="input-row settings-input-row">
+                <input type="password" id="setting-gemini-key" class="input settings-input" placeholder="Paste one or more keys, comma-separated" autocomplete="off" spellcheck="false" />
+                <button type="button" id="toggle-gemini-key-visibility" class="btn btn-ghost btn-sm settings-input-toggle" aria-label="Show Gemini API key" aria-pressed="false">Show</button>
+              </div>
+              <p class="field-help settings-helper-text">With several keys, a rate-limited key hands the answer to the next one immediately.</p>
+            </div>
+            <div class="field settings-group">
+              <label class="field-label settings-label" for="setting-gemini-model">Model</label>
+              <select id="setting-gemini-model" class="input settings-input"></select>
+            </div>
+          </div>
+          <div id="ollama-settings-group" class="hidden">
+            <div class="field settings-group">
+              <label class="field-label settings-label" for="setting-ollama-base-url">Ollama server</label>
+              <input type="text" id="setting-ollama-base-url" class="input settings-input" placeholder="http://localhost:11434" spellcheck="false" />
+            </div>
+            <div class="field settings-group">
+              <label class="field-label settings-label" for="setting-ollama-model">Ollama model</label>
+              <div class="input-row settings-input-row">
+                <input type="text" id="setting-ollama-model" class="input settings-input" placeholder="llama3.2" spellcheck="false" />
+                <button type="button" id="fetch-ollama-models" class="btn btn-ghost btn-sm settings-input-toggle" aria-label="Fetch installed Ollama models">Fetch</button>
+              </div>
+              <select id="setting-ollama-model-select" class="input settings-input hidden" aria-label="Installed Ollama models"></select>
+            </div>
+          </div>
+          <div class="field settings-group">
+            <label class="field-label settings-label" for="setting-programming-language">Language for coding answers</label>
+            <select id="setting-programming-language" class="input settings-input"></select>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h3 class="section-title">Transcription</h3>
+          <div class="field settings-group">
+            <label class="field-label settings-label" for="setting-assembly-key">AssemblyAI API key</label>
+            <div class="input-row settings-input-row">
+              <input type="password" id="setting-assembly-key" class="input settings-input" placeholder="Paste your AssemblyAI key" autocomplete="off" spellcheck="false" />
+              <button type="button" id="toggle-assembly-key-visibility" class="btn btn-ghost btn-sm settings-input-toggle" aria-label="Show AssemblyAI API key" aria-pressed="false">Show</button>
+            </div>
+          </div>
+          <div class="field settings-group">
+            <label class="field-label settings-label" for="setting-assembly-model">Speech model</label>
+            <select id="setting-assembly-model" class="input settings-input"></select>
+          </div>
+          <p class="field-help">System audio is captured directly from your Mac. Keep your normal speakers or headphones selected.</p>
+        </section>
+
+        <section class="settings-section">
+          <h3 class="section-title">Reading</h3>
+          <div class="field settings-group">
+            <span class="field-label settings-label" id="answer-size-label">Answer text size</span>
+            <div class="stepper" role="group" aria-labelledby="answer-size-label">
+              <button id="answer-size-down" class="btn btn-ghost btn-sm" type="button" aria-label="Smaller answer text">A−</button>
+              <output id="setting-answer-size-value" class="stepper-value">14px</output>
+              <button id="answer-size-up" class="btn btn-ghost btn-sm" type="button" aria-label="Larger answer text">A+</button>
+            </div>
+            <p class="field-help">Also ⌘= and ⌘−, and ⌘0 to reset.</p>
+          </div>
+          <div class="field settings-group">
+            <div class="field-label-row settings-label-row">
+              <label class="field-label settings-label" for="setting-window-opacity">Window opacity</label>
+              <span id="setting-window-opacity-value" class="value-chip settings-value-chip">10/10</span>
+            </div>
+            <input type="range" id="setting-window-opacity" class="range settings-range" min="1" max="10" step="1" value="10" />
+          </div>
+          <div class="field settings-group">
+            <div class="field-label-row"><label class="field-label" for="setting-transparency">Background</label><output id="setting-transparency-value" class="value-chip">82%</output></div>
+            <input type="range" id="setting-transparency" class="range" min="20" max="100" step="1" value="82">
+          </div>
+          <div class="field settings-group">
+            <div class="field-label-row"><label class="field-label" for="setting-brightness">Brightness</label><output id="setting-brightness-value" class="value-chip">100%</output></div>
+            <input type="range" id="setting-brightness" class="range" min="50" max="140" step="1" value="100">
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h3 class="section-title">Keyboard shortcuts</h3>
+          <p class="field-help settings-hint">Click a shortcut, then press the new keys. Esc cancels.</p>
           <div id="settings-shortcuts-list" class="settings-shortcuts-list"></div>
-          <!--
-            This used to read "Shortcuts are read-only here. Edit src/config.js
-            to customize", directly under a hint telling you to click and press
-            keys. Rebinding does work — shortcut-manager.js captures the combo
-            and saves it — so the stale sentence just made the panel look broken.
-          -->
-          <div class="settings-helper-text">Cmd+arrow keys move the overlay. Press Esc while recording to cancel.</div>
-        </div>
-        <button id="save-settings-btn" class="save-settings-btn">Save Settings</button>
+          <p class="field-help settings-helper-text">⌘ + arrow keys move the window.</p>
+        </section>
+      </div>
+      <footer class="sheet-footer">
+        <button id="save-settings-btn" class="btn btn-primary save-settings-btn" type="button">Save settings</button>
+      </footer>
+    </aside>
+
+    <!-- First-run setup -->
+    <div id="onboarding" class="modal-backdrop setup hidden" role="dialog" aria-modal="true" aria-labelledby="setup-title-welcome">
+      <div class="modal setup-card">
+        <ol class="setup-progress" aria-label="Setup progress">
+          <li data-state="current"><span class="visually-hidden">Welcome</span></li>
+          <li><span class="visually-hidden">Permissions</span></li>
+          <li><span class="visually-hidden">Audio test</span></li>
+          <li><span class="visually-hidden">AI setup</span></li>
+          <li><span class="visually-hidden">Profile</span></li>
+          <li><span class="visually-hidden">Test answer</span></li>
+          <li><span class="visually-hidden">Ready</span></li>
+        </ol>
+
+        <section class="setup-step" data-step="welcome">
+          <p class="setup-eyebrow">Welcome</p>
+          <h2 id="setup-title-welcome" tabindex="-1">Set up Synapse in about two minutes</h2>
+          <p>Synapse listens to your interview through the speakers or headphones you already use, and drafts answers from your own resume as each question ends.</p>
+          <p class="setup-note">You never need to change your Mac's sound output or install audio drivers.</p>
+        </section>
+
+        <section class="setup-step" data-step="permissions" hidden>
+          <p class="setup-eyebrow">Step 1 of 5 · Permissions</p>
+          <h2 tabindex="-1">Let Synapse hear your call</h2>
+          <p>macOS asks once for permission to record system audio. Synapse only listens while Listen is on, and macOS shows its recording indicator in the menu bar whenever it does.</p>
+          <p class="setup-result" data-result="permissions-audio" hidden></p>
+          <div class="setup-row">
+            <div><strong>Microphone</strong><span>Optional. Lets Synapse transcribe your own answers.</span></div>
+            <button class="btn btn-sm" type="button" data-setup="request-mic">Allow microphone</button>
+          </div>
+          <p class="setup-result" data-result="permissions-mic" hidden></p>
+        </section>
+
+        <section class="setup-step" data-step="audio" hidden>
+          <p class="setup-eyebrow">Step 2 of 5 · Audio test</p>
+          <h2 tabindex="-1">Check that Synapse can hear your Mac</h2>
+          <p>Synapse plays a short sound and listens for it, with your output left exactly as it is. The first run shows the macOS permission prompt.</p>
+          <button class="btn btn-primary" type="button" data-setup="audio-test">Run audio test</button>
+          <p class="setup-result" data-result="audio" hidden></p>
+        </section>
+
+        <section class="setup-step" data-step="ai" hidden>
+          <p class="setup-eyebrow">Step 3 of 5 · AI setup</p>
+          <h2 tabindex="-1">Connect your AI and transcription keys</h2>
+          <p class="setup-result" data-result="ai" hidden></p>
+          <p class="setup-result" data-result="transcription" hidden></p>
+          <button class="btn" type="button" data-setup="open-settings">Open settings</button>
+        </section>
+
+        <section class="setup-step" data-step="profile" hidden>
+          <p class="setup-eyebrow">Step 4 of 5 · Your profile</p>
+          <h2 tabindex="-1">Add your resume and the job description</h2>
+          <p>Answers use only experience from your resume. Add both from the phone companion; you can do this any time before the interview.</p>
+          <p class="setup-result" data-result="profile" hidden></p>
+          <p class="setup-result" data-result="companion" hidden></p>
+        </section>
+
+        <section class="setup-step" data-step="test-answer" hidden>
+          <p class="setup-eyebrow">Step 5 of 5 · Test answer</p>
+          <h2 tabindex="-1">Send one test question</h2>
+          <p>This makes one small real request and shows how quickly the first words arrive.</p>
+          <button class="btn btn-primary" type="button" data-setup="test-answer">Send test question</button>
+          <p class="setup-result" data-result="test-answer" hidden></p>
+        </section>
+
+        <section class="setup-step" data-step="ready" hidden>
+          <p class="setup-eyebrow">Ready</p>
+          <h2 tabindex="-1">You are set</h2>
+          <p>Press <kbd>⌥</kbd><kbd>⇧</kbd><kbd>T</kbd> to start listening when the interview begins. The Session button in the title bar shows everything this setup checked, any time.</p>
+        </section>
+
+        <footer class="setup-footer">
+          <button class="btn btn-ghost" type="button" data-setup="skip">Skip setup</button>
+          <span class="setup-spacer"></span>
+          <button class="btn btn-ghost" type="button" data-setup="back" hidden>Back</button>
+          <button class="btn btn-primary" type="button" data-setup="next">Continue</button>
+        </footer>
       </div>
     </div>
 
-    <!-- Close Confirmation -->
-    <div id="close-confirmation-dialog" class="close-confirmation hidden" role="dialog" aria-modal="true" aria-labelledby="close-confirmation-title">
-      <div class="close-confirmation-card">
-        <div id="close-confirmation-title" class="close-confirmation-title">Close App?</div>
-        <div class="close-confirmation-text">This will stop voice capture and close the assistant.</div>
-        <div class="close-confirmation-actions">
-          <button id="cancel-close-btn" class="close-confirmation-btn close-confirmation-btn-secondary">Cancel</button>
-          <button id="confirm-close-btn" class="close-confirmation-btn close-confirmation-btn-danger">Close App</button>
+    <!-- Quit confirmation -->
+    <div id="close-confirmation-dialog" class="modal-backdrop close-confirmation hidden" role="dialog" aria-modal="true" aria-labelledby="close-confirmation-title">
+      <div class="modal modal-sm close-confirmation-card">
+        <h2 id="close-confirmation-title" class="modal-title close-confirmation-title">Quit Synapse?</h2>
+        <p class="modal-text close-confirmation-text">Listening stops and the overlay closes.</p>
+        <div class="modal-actions close-confirmation-actions">
+          <button id="cancel-close-btn" class="btn btn-ghost close-confirmation-btn" type="button">Cancel</button>
+          <button id="confirm-close-btn" class="btn btn-danger close-confirmation-btn" type="button">Quit</button>
         </div>
       </div>
     </div>
 
-    <!-- Mobile Code Dialog -->
-    <div id="mobile-code-dialog" class="close-confirmation hidden" role="dialog" aria-modal="true" aria-labelledby="mobile-code-title">
-      <div class="close-confirmation-card">
-        <div id="mobile-code-title" class="close-confirmation-title">Mobile Pairing Code</div>
-        <div class="close-confirmation-text" style="text-align: center; margin: 15px 0;">
-          <div id="mobile-code-display" style="font-size: 28px; font-weight: bold; letter-spacing: 4px; color: var(--accent-color, #a855f7); margin-bottom: 8px;">------</div>
-          <div id="mobile-code-timer" style="font-size: 11px; opacity: 0.7;">Rotates in --s</div>
+    <!-- Phone pairing code -->
+    <div id="mobile-code-dialog" class="modal-backdrop close-confirmation hidden" role="dialog" aria-modal="true" aria-labelledby="mobile-code-title">
+      <div class="modal modal-sm close-confirmation-card">
+        <h2 id="mobile-code-title" class="modal-title close-confirmation-title">Phone pairing code</h2>
+        <div class="pair-code">
+          <div id="mobile-code-display" class="pair-code-value">------</div>
+          <div id="mobile-code-timer" class="pair-code-timer">Rotates in --s</div>
         </div>
-        <div class="close-confirmation-actions">
-          <button id="close-mobile-code-btn" class="close-confirmation-btn close-confirmation-btn-secondary" style="width: 100%;">Close</button>
+        <div class="modal-actions close-confirmation-actions">
+          <button id="close-mobile-code-btn" class="btn close-confirmation-btn" type="button">Done</button>
         </div>
       </div>
     </div>
 
-    <!-- Loading Overlay -->
-    <div id="loading-overlay" class="loading-overlay hidden">
+    <!-- Screen analysis progress -->
+    <div id="loading-overlay" class="loading-overlay hidden" role="status" aria-live="polite">
       <div class="loading-content">
-        <div class="analyzing-icon">&#x1F9E0;</div>
-        <div class="loading-text">Analyzing screen...</div>
+        <span class="spinner" aria-hidden="true"></span>
+        <span class="loading-text">Analyzing screen…</span>
       </div>
     </div>
-    
-    <!-- Emergency Overlay -->
+
     <div id="emergency-overlay" class="emergency-overlay hidden">
-      <div class="emergency-message">HIDDEN</div>
+      <div class="emergency-message">Hidden</div>
     </div>
   </div>
 

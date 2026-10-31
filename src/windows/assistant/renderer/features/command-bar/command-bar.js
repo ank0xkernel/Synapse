@@ -400,15 +400,7 @@ function initCommandBar() {
 function initAppearanceControls() {
     const pairs = [
         { input: 'setting-transparency', output: 'setting-transparency-value', prop: '--shell-veil', store: 'synapse_veil', scale: 100 },
-        { input: 'setting-brightness', output: 'setting-brightness-value', prop: '--shell-brightness', store: 'synapse_brightness', scale: 100 },
-        {
-            input: 'setting-glass-intensity',
-            output: 'setting-glass-intensity-value',
-            prop: '--shell-blur',
-            store: 'synapse_blur',
-            scale: 100,
-            toCss: (value) => `${Math.round(8 + (value / 100) * 32)}px`
-        }
+        { input: 'setting-brightness', output: 'setting-brightness-value', prop: '--shell-brightness', store: 'synapse_brightness', scale: 100 }
     ];
 
     for (const { input, output, prop, store, scale, toCss } of pairs) {
@@ -418,6 +410,11 @@ function initAppearanceControls() {
 
         const apply = (value, persist) => {
             document.documentElement.style.setProperty(prop, toCss ? toCss(value) : String(value / scale));
+            // The brightness filter is applied only when it changes something;
+            // a filter on the whole window costs a full re-composite per update.
+            if (prop === '--shell-brightness') {
+                document.documentElement.toggleAttribute('data-brightness-adjusted', value !== 100);
+            }
             if (readout) readout.textContent = `${value}%`;
             if (persist) {
                 try { localStorage.setItem(store, String(value)); } catch (_) { /* non-fatal */ }

@@ -10,6 +10,14 @@ import { setupIpcListeners as setupIpcListenersModule } from './renderer/feature
 import { createShortcutManager } from './renderer/features/settings/shortcut-manager.js';
 import { createSettingsPanelManager } from './renderer/features/settings/settings-panel-manager.js';
 import { createTranscriptionManager } from './renderer/features/transcription/transcription-manager.js';
+import { deriveSessionState, applySessionState } from './renderer/features/session/session-state.js';
+import { initPanels } from './renderer/features/panels/panels.js';
+
+const sessionStateEl = document.getElementById('session-state');
+const sessionStateLabelEl = document.getElementById('session-state-label');
+const sessionAnswerState = { pending: false, streaming: false, error: null };
+let sessionWasListening = false;
+let transcriptionManagerReady = false;
 
 import {
     createTranscriptionSourceState,
@@ -332,7 +340,17 @@ const chatUiManager = createChatUiManager({
     },
     showFeedback: (message, type) => showFeedback(message, type),
     addMonitorLog: (...args) => addMonitorLog(...args),
-    isAutoScrollEnabled
+    isAutoScrollEnabled,
+    onStopAnswer: () => {
+        window.electronAPI?.cancelAskAi?.();
+    },
+    onRegenerateAnswer: () => {
+        if (analyzeBtn && !analyzeBtn.disabled) {
+            analyzeBtn.click();
+        } else {
+            showFeedback('Nothing to regenerate yet', 'info');
+        }
+    }
 });
 const settingsPanelManager = createSettingsPanelManager({
     settingsPanel,
@@ -378,8 +396,28 @@ const transcriptionManager = createTranscriptionManager({
     addChatMessage: (type, content, options) => addChatMessage(type, content, options),
     showFeedback: (message, type) => showFeedback(message, type),
     isAutoScrollEnabled,
-    isChatNearBottom: () => chatUiManager.isChatNearBottom()
+    isChatNearBottom: () => chatUiManager.isChatNearBottom(),
+    onStateChange: () => updateSessionStatus()
 });
+transcriptionManagerReady = true;
+
+initPanels({
+    getSourceStatuses: () => transcriptionManager.sourceStatuses,
+    getTranscriptionFailure: () => transcriptionManager.getLastPermanentFailure(),
+    openSettings: () => document.getElementById('settings-btn')?.click(),
+    showFeedback: (message, type) => showFeedback(message, type)
+});
+
+// Development screenshot harness only (src/main-process/dev/ui-capture.js):
+// renders an answer through the real stream handler, with chunks the harness
+// sends over the same ai-stream-chunk channel Gemini uses.
+window.__synapseBeginDemoStream = () => {
+    const stream = createStreamHandler('askAi');
+    stream.start('');
+    window.__synapseEndDemoStream = (finished = true) => {
+        if (finished) stream.cleanup();
+    };
+};
 
 /*
  * Phase 13: "Copy Diagnostics" — the one new user-facing action this phase
@@ -634,7 +672,14 @@ function createStreamHandler(actionId) {
 
     function start(headingPrefix) {
         accumulatedText = headingPrefix || '';
-        messageRecord = addChatMessage('ai-response', accumulatedText || '...');
+        messageRecord = addChatMessage('ai-response', accumulatedText || '');
+        if (messageRecord) chatUiManager.setMessageStreaming(messageRecord.id, true);
+        if (actionId === 'askAi') {
+            sessionAnswerState.pending = true;
+            sessionAnswerState.streaming = false;
+            sessionAnswerState.error = null;
+            updateSessionStatus();
+        }
 
         if (actionId === 'askAi') {
             // Read-and-clear: this is set once, synchronously, immediately
@@ -653,6 +698,8 @@ function createStreamHandler(actionId) {
             if (actionId === 'askAi' && !firstTokenLogged) {
                 firstTokenLogged = true;
                 console.log(`[AI] first-token id=${questionId || 'manual'} +${Date.now() - requestStartAt}ms`);
+                sessionAnswerState.streaming = true;
+                updateSessionStatus();
             }
 
             accumulatedText += data.text;
@@ -697,9 +744,25 @@ function createStreamHandler(actionId) {
             removeChunkListener();
             removeChunkListener = null;
         }
+        if (messageRecord) {
+            chatUiManager.setMessageStreaming(messageRecord.id, false, { regenerable: actionId === 'askAi' });
+        }
+        if (actionId === 'askAi') {
+            sessionAnswerState.pending = false;
+            sessionAnswerState.streaming = false;
+            updateSessionStatus();
+        }
     }
 
-    return { start, finalize, markInterrupted, cleanup };
+    /** A failed request: show it in the title-bar status until the next attempt. */
+    function fail(message) {
+        if (actionId === 'askAi') {
+            sessionAnswerState.error = message || 'The answer request failed';
+            updateSessionStatus();
+        }
+    }
+
+    return { start, finalize, markInterrupted, cleanup, fail };
 }
 
 function hasConfiguredGeminiApiKeys(value) {
@@ -1001,17 +1064,14 @@ async function askAiWithSessionContext() {
         const stream = createStreamHandler('askAi');
         try {
             setAnalyzing(true);
-            showLoadingOverlay('Analyzing full session context...');
-            stream.start('**Best Next Answer:**\n\n');
+            // The answer card shows its own "Thinking" state; no full-window
+            // overlay, so earlier answers stay readable while the next arrives.
+            stream.start('');
 
             const result = await window.electronAPI.askAiWithSessionContext(payload);
 
             if (result?.success && result?.text) {
-                const heading = result.usedScreenshots
-                    ? '**Best Next Answer (Transcript + Screen):**'
-                    : '**Best Next Answer (Transcript):**';
-                stream.finalize(`${heading}\n\n${result.text}`);
-                showFeedback('Ask AI ready', 'success');
+                stream.finalize(result.text);
             } else if (result?.cancelled) {
                 // Not a failure — auto-answer.js interrupted this on purpose
                 // because the host updated the question. No error toast.
@@ -1021,8 +1081,9 @@ async function askAiWithSessionContext() {
             }
         } catch (error) {
             console.error('Ask AI error:', error);
-            showFeedback('Ask AI failed', 'error');
-            addChatMessage('system', `Error: ${error.message}`);
+            showFeedback('Answer failed', 'error');
+            addChatMessage('system', `Answer failed: ${error.message}`);
+            stream.fail(error.message);
         } finally {
             stream.cleanup();
             setAnalyzing(false);
@@ -1030,6 +1091,67 @@ async function askAiWithSessionContext() {
         }
     });
 }
+
+// ─── Title-bar session state ────────────────────────────────────────────────
+// Derived from real state only: source statuses and the Ask AI lifecycle.
+// (State variables are declared at the top of the module: updateUI() can run
+// during start-up, before this point.)
+function updateSessionStatus() {
+    if (!transcriptionManagerReady) return;
+    const sources = transcriptionManager?.sourceStatuses || {};
+    if (sources.system === 'listening' || sources.mic === 'listening') sessionWasListening = true;
+    if (sources.system === 'off' && sources.mic === 'off') sessionWasListening = false;
+    const errorDetail = sessionAnswerState.error
+        || (sources.system === 'error' ? 'Host audio stopped' : null)
+        || (sources.mic === 'error' ? 'Microphone stopped' : null);
+    applySessionState(sessionStateEl, sessionStateLabelEl, deriveSessionState({
+        sources,
+        aiPending: sessionAnswerState.pending,
+        aiStreaming: sessionAnswerState.streaming,
+        error: sessionAnswerState.error,
+        wasListening: sessionWasListening
+    }), errorDetail || '');
+}
+
+// ─── Answer text size (⌘= / ⌘- / ⌘0), per device ─────────────────────────
+const ANSWER_SIZE_KEY = 'synapse.answerSize';
+const ANSWER_SIZE_MIN = 12;
+const ANSWER_SIZE_MAX = 22;
+
+function setAnswerSize(size, { announce = false } = {}) {
+    const next = Math.min(ANSWER_SIZE_MAX, Math.max(ANSWER_SIZE_MIN, Math.round(size)));
+    document.documentElement.style.setProperty('--answer-size', `${next}px`);
+    const readout = document.getElementById('setting-answer-size-value');
+    if (readout) readout.textContent = `${next}px`;
+    try { localStorage.setItem(ANSWER_SIZE_KEY, String(next)); } catch (_) { /* not persisted */ }
+    if (announce) showFeedback(`Answer text ${next}px`, 'info');
+    return next;
+}
+
+function getAnswerSize() {
+    return parseInt(getComputedStyle(document.documentElement).getPropertyValue('--answer-size'), 10) || 14;
+}
+
+(function initAnswerSize() {
+    let saved = null;
+    try { saved = Number(localStorage.getItem(ANSWER_SIZE_KEY)); } catch (_) { /* default */ }
+    if (saved) setAnswerSize(saved);
+    document.getElementById('answer-size-down')?.addEventListener('click', () => setAnswerSize(getAnswerSize() - 1));
+    document.getElementById('answer-size-up')?.addEventListener('click', () => setAnswerSize(getAnswerSize() + 1));
+    document.addEventListener('keydown', (event) => {
+        if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+        if (event.key === '=' || event.key === '+') {
+            event.preventDefault();
+            setAnswerSize(getAnswerSize() + 1, { announce: true });
+        } else if (event.key === '-') {
+            event.preventDefault();
+            setAnswerSize(getAnswerSize() - 1, { announce: true });
+        } else if (event.key === '0') {
+            event.preventDefault();
+            setAnswerSize(14, { announce: true });
+        }
+    });
+})();
 
 async function analyzeScreenshotsOnly() {
     if (!hasGeminiApiKeysConfigured) {
@@ -1101,7 +1223,7 @@ let isCompactModeActive = false;
 /**
  * Shrinks the window to a thin status strip (window-controller.js's
  * setCompactMode) and hides the chat/monitor panels (#app.compact-mode in
- * styles.css) so whatever is underneath — the call, a shared editor — is no
+ * ui/app.css) so whatever is underneath — the call, a shared editor — is no
  * longer covered. Distinct from emergencyHide/toggleStealth: this stays
  * fully visible, just small.
  */
@@ -1324,7 +1446,9 @@ function setAnalyzing(analyzing) {
 function updateUI() {
     if (screenshotCount) {
         screenshotCount.textContent = screenshotsCount;
+        screenshotCount.hidden = !screenshotsCount;
     }
+    updateSessionStatus();
 
     const aiBundle = buildFilteredAiContextBundle({
         charBudget: AI_CONTEXT_CHAR_BUDGET,

@@ -64,3 +64,14 @@ Open-Cluely-Latest/
 # Exclude compiled model files, build files, and build outputs of whisper.cpp (bin is cloned during setup)
 bin/
 
+
+# Resource profiler scratch output (scripts/profile-resources.js)
+.profile-tmp/
+
+# Local design-tool state
+.impeccable/
+
+# Next.js web app build output and local env (also in web/.gitignore)
+web/.next/
+web/.shots/
+

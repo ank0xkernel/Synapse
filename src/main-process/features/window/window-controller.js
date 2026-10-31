@@ -295,7 +295,7 @@ function createWindowController({
    *
    * Width is deliberately left untouched — only height shrinks. The header
    * row (status dot, timer, action buttons) that stays visible in compact
-   * mode (see #app.compact-mode in styles.css) was laid out assuming the
+   * mode (see .app.compact-mode in ui/app.css) was laid out assuming the
    * window's normal width; shrinking width too would risk those buttons
    * overflowing or wrapping in a way this change cannot visually verify
    * before shipping. Shrinking height alone still removes the vast majority
