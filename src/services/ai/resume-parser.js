@@ -66,37 +66,93 @@ class ResumeParser {
    * @returns {Array<{id: string, section: string, text: string}>}
    */
   extractSections(rawText) {
-    const lines = rawText.split('\n');
+    const lines = rawText.split('\n').map((line) => line.trim()).filter(Boolean);
     const sections = [];
-    let currentSection = 'Experience';
 
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim();
-      if (!line) continue;
+    // Lines before the first section heading are the name and contact block,
+    // not experience. Only when the resume has no headings at all does
+    // everything stay under Experience, so heading-less resumes still work.
+    const hasHeadings = lines.some((line) => matchHeading(line));
+    let currentSection = hasHeadings ? 'Header' : 'Experience';
 
-      // Phase 9: minimally extended (not a competing parser -- same function,
-      // same regex-header-detection strategy) to also recognize
-      // certifications/achievements headings, which candidate-profile.js
-      // needs and the original list didn't cover. Every previously-
-      // recognized header is untouched; resumes without these headings are
-      // completely unaffected.
-      if (/^(skills|experience|work|education|projects|summary|certifications?|achievements?|awards)/i.test(line)) {
-        currentSection = line.replace(/[^a-zA-Z]/g, '');
+    const push = (text) => {
+      if (text.length > 15) {
+        sections.push({ id: `res_bullet_${sections.length + 1}`, section: currentSection, text });
+      }
+    };
+
+    for (const line of lines) {
+      const heading = matchHeading(line);
+      if (heading) {
+        currentSection = heading.section;
+        // "Skills: Python, React, SQL" is a heading and content on one line;
+        // keep the content instead of dropping the whole line.
+        if (heading.rest) push(heading.rest);
         continue;
       }
-
-      if (line.length > 15) {
-        sections.push({
-          id: `res_bullet_${sections.length + 1}`,
-          section: currentSection,
-          text: line
-        });
-      }
+      push(line);
     }
 
     console.log(`[ResumeParser] Parsed ${sections.length} structured resume bullets.`);
     return sections;
   }
 }
+
+// Section headings as resumes actually write them: "EXPERIENCE",
+// "Work Experience", "PROFESSIONAL SUMMARY", "Technical Skills:", "Key
+// Projects". A heading is short and made only of an optional qualifier plus
+// a section word, so ordinary sentences that happen to start with "Skills"
+// or "Work" are not mistaken for headings.
+const SECTION_WORDS = [
+  [/^(summary|profile|objective|about me)$/, 'Summary'],
+  [/^(experience|work experience|employment|employment history|work history|internships?|experience and internships?)$/, 'Experience'],
+  [/^(education|academics?|qualifications?)$/, 'Education'],
+  [/^(projects?|personal projects|academic projects)$/, 'Projects'],
+  [/^(skills|technical skills|core skills|key skills|technologies|tech stack|tools)$/, 'Skills'],
+  [/^(certifications?|licenses? and certifications?|courses)$/, 'Certifications'],
+  [/^(achievements?|awards?|honou?rs|accomplishments)$/, 'Achievements']
+];
+const QUALIFIERS = /^(professional|technical|relevant|key|selected|notable|academic|personal|core|work)\s+/;
+
+function matchHeading(line) {
+  const [head, ...restParts] = line.split(':');
+  const rest = restParts.join(':').trim();
+  if (head.length > 40) return null;
+  let words = head.toLowerCase().replace(/[^a-z& ]/g, ' ').replace(/&/g, 'and').replace(/\s+/g, ' ').trim();
+  if (!words) return null;
+  for (const [pattern, section] of SECTION_WORDS) {
+    if (pattern.test(words)) return { section, rest };
+  }
+  words = words.replace(QUALIFIERS, '');
+  for (const [pattern, section] of SECTION_WORDS) {
+    if (pattern.test(words)) return { section, rest };
+  }
+
+  // Looser form for headings with extra words ("INTERNSHIP EXPERIENCE",
+  // "ACADEMIC PROJECTS & RESEARCH", "Projects (Selected)"): only for lines
+  // that look like headings, meaning ALL CAPS or at most 5 Title Case words
+  // with no sentence punctuation, and no content after a colon.
+  const raw = head.trim();
+  const letters = raw.replace(/[^A-Za-z]/g, '');
+  const isAllCaps = letters.length >= 4 && letters === letters.toUpperCase();
+  const titleWords = raw.split(/\s+/).filter((word) => /[A-Za-z]/.test(word));
+  const isTitleCase = titleWords.length <= 5 && titleWords.every((word) => /^[A-Z(&]/.test(word) || /^(and|of|the|in)$/.test(word));
+  if (rest || /[.!?,]/.test(raw) || !(isAllCaps || isTitleCase)) return null;
+  for (const [pattern, section] of KEYWORD_SECTIONS) {
+    if (pattern.test(words)) return { section, rest: '' };
+  }
+  return null;
+}
+
+// Checked in this order: the more specific section wins.
+const KEYWORD_SECTIONS = [
+  [/certificat|licen[cs]e/, 'Certifications'],
+  [/achievement|award|honou?r|accomplishment/, 'Achievements'],
+  [/education|academic background|qualification/, 'Education'],
+  [/project/, 'Projects'],
+  [/skill|technolog|tech stack|tools/, 'Skills'],
+  [/summary|profile|objective|about/, 'Summary'],
+  [/experience|internship|employment|work history|positions? of responsibility/, 'Experience']
+];
 
 module.exports = ResumeParser;

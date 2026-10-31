@@ -1,8 +1,13 @@
 // ============================================================================
 // GEMINI AI SERVICE - Invisibrain AI Assistant
 // ============================================================================
-// Rate limits: 15 RPM (free tier), 1M tokens/day
-// Configured for: 10 RPM to be safe (6 seconds between requests)
+// Two lanes:
+//   realtime    live interview answers. Start immediately (bounded
+//               concurrency), never wait behind background work, never wait
+//               on the self-imposed rate window. A provider 429 is surfaced at
+//               once so the runtime can fail over to another key.
+//   background  screenshots, notes, insights, emails. Serialized and kept
+//               inside the sliding rate window, with retry backoff.
 // ============================================================================
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
@@ -20,6 +25,7 @@ const {
   buildScreenshotAnalysisPrompt,
   buildSuggestResponsePrompt
 } = require('./prompts');
+const { getResponseMode } = require('./response-modes');
 
 class GeminiService {
   constructor(apiKey, options = {}) {
@@ -44,6 +50,15 @@ class GeminiService {
     this.maxRetries = 3;
     this.isProcessing = false;
 
+    // Realtime lane. Three concurrent answers covers an answer plus a
+    // superseding follow-up plus a manual ask; beyond that a request waits
+    // for a slot rather than piling onto the provider.
+    this.maxRealtimeConcurrent = 3;
+    this.realtimeInFlight = 0;
+    this.realtimeWaiters = [];
+    // Models that rejected thinkingConfig; requests to them omit it.
+    this.thinkingUnsupportedModels = new Set();
+
     this.dailyTokenCount = 0;
     this.maxDailyTokens = 4000000;
     this.lastResetTime = Date.now();
@@ -51,7 +66,32 @@ class GeminiService {
     this.conversationHistory = [];
     this.maxHistoryLength = 20;
 
+    // Cancellation — keyed by a caller-supplied tag (e.g. 'askAi') rather
+    // than a request id, since the caller (ipc.js) knows which logical slot
+    // it wants to interrupt but never sees an id until the promise already
+    // resolves. Only meaningful for the one tag callers actually cancel
+    // today; an untagged request is simply never cancellable.
+    this.activeRequestsByTag = new Map();
+
     this._initializeModel();
+  }
+
+  isAbortError(error) {
+    return error?.name === 'AbortError' || /aborted|abort error/i.test(String(error?.message || ''));
+  }
+
+  /**
+   * Aborts the in-flight request registered under `tag`, if any. The
+   * fetch-level abort stops local streaming (onChunk fires no further
+   * chunks) even though, per the SDK's own docs, the server-side generation
+   * may continue briefly — acceptable here since the goal is "stop showing
+   * the user a stale answer," not billing precision.
+   */
+  cancel(tag) {
+    const controller = this.activeRequestsByTag.get(tag);
+    if (!controller) return false;
+    controller.abort();
+    return true;
   }
 
   _initializeModel() {
@@ -212,6 +252,93 @@ class GeminiService {
     );
   }
 
+  isRateLimitError(error) {
+    const message = String(error?.message || '');
+    return message.includes('429') || /RATE_LIMIT|RESOURCE_EXHAUSTED|resource has been exhausted/i.test(message);
+  }
+
+  /** A 400 caused by thinkingConfig on a model that does not support it. */
+  isThinkingConfigError(error) {
+    const message = String(error?.message || '');
+    return message.includes('400') && /thinking/i.test(message);
+  }
+
+  /** Reads the provider's suggested retry delay ("retryDelay":"7s" / "retry in 7.2s"), in ms. */
+  parseRetryAfterMs(error) {
+    const message = String(error?.message || '');
+    const match = /retryDelay"?\s*:?\s*"?(\d+(?:\.\d+)?)s/i.exec(message) || /retry in (\d+(?:\.\d+)?)\s*s/i.exec(message);
+    return match ? Math.round(Number(match[1]) * 1000) : null;
+  }
+
+  /**
+   * Per-request generation config. Gemini 3 models think at a high level by
+   * default, which spends seconds before the first visible token and eats
+   * into maxOutputTokens; a live answer needs a low level.
+   */
+  buildGenerationConfig({ maxOutputTokens = 800, thinkingLevel = 'low' } = {}) {
+    const config = { temperature: 0.7, topP: 0.95, maxOutputTokens };
+    if (thinkingLevel && /^gemini-3/.test(this.modelName) && !this.thinkingUnsupportedModels.has(this.modelName)) {
+      config.thinkingConfig = { thinkingLevel };
+    }
+    return config;
+  }
+
+  /** Wraps the raw prompt/parts with a per-request generationConfig. */
+  buildRequestPayload(request) {
+    const parts = typeof request.data === 'string'
+      ? [{ text: request.data }]
+      : request.data.map((part) => (typeof part === 'string' ? { text: part } : part));
+    return {
+      contents: [{ role: 'user', parts }],
+      generationConfig: this.buildGenerationConfig(request.generation || {})
+    };
+  }
+
+  emitTiming(request, stage, extra = {}) {
+    if (typeof request.onTiming !== 'function') return;
+    try {
+      request.onTiming({ stage, at: Date.now(), ...extra });
+    } catch (_) {
+      // Instrumentation must never break a request.
+    }
+  }
+
+  async acquireRealtimeSlot() {
+    if (this.realtimeInFlight < this.maxRealtimeConcurrent) {
+      this.realtimeInFlight += 1;
+      return;
+    }
+    await new Promise((resolve) => this.realtimeWaiters.push(resolve));
+    this.realtimeInFlight += 1;
+  }
+
+  releaseRealtimeSlot() {
+    this.realtimeInFlight -= 1;
+    const next = this.realtimeWaiters.shift();
+    if (next) next();
+  }
+
+  async runRealtime(request) {
+    await this.acquireRealtimeSlot();
+    try {
+      // Counted in the window so background work sees the real request rate,
+      // but a live answer never waits on it.
+      this.requestTimestamps.push(Date.now());
+      return await this._executeRequest(request);
+    } finally {
+      this.releaseRealtimeSlot();
+    }
+  }
+
+  dispatch(request) {
+    if (request.priority === 'realtime') {
+      this.runRealtime(request).then(request.resolve, request.reject);
+      return;
+    }
+    this.requestQueue.push(request);
+    this.processQueue();
+  }
+
   async waitForRateLimit() {
     const now = Date.now();
     this.requestTimestamps = this.requestTimestamps.filter((t) => now - t < this.rateLimitWindowMs);
@@ -264,10 +391,17 @@ class GeminiService {
         throw new Error('Daily token limit reached');
       }
 
+      const requestOptions = request.controller ? { signal: request.controller.signal } : undefined;
+      if (request.type !== 'text' && request.type !== 'multimodal') {
+        throw new Error(`Unsupported Gemini request type: ${request.type}`);
+      }
+      const payload = this.buildRequestPayload(request);
+      this.emitTiming(request, 'dispatched', { attempt: retryCount + 1, model: this.modelName, thinking: payload.generationConfig.thinkingConfig?.thinkingLevel || null });
+
       // Streaming path: use generateContentStream when onChunk callback is provided
       if (typeof request.onChunk === 'function') {
-        console.log(`[Gemini API] Streaming ${request.type} request started`);
-        const streamResult = await this.model.generateContentStream(request.data);
+        console.log(`[Gemini API] Streaming ${request.type} request started (${request.priority || 'background'})`);
+        const streamResult = await this.model.generateContentStream(payload, requestOptions);
         let fullText = '';
         let chunkIndex = 0;
 
@@ -278,6 +412,7 @@ class GeminiService {
             chunkIndex += 1;
             if (!request._firstChunkSent) {
               request._firstChunkSent = true;
+              this.emitTiming(request, 'first-token');
             }
             request.onChunk({ text: chunkText, index: chunkIndex });
           }
@@ -288,16 +423,8 @@ class GeminiService {
         return fullText;
       }
 
-      // Non-streaming path (existing behavior)
-      console.log(`[Gemini API] Non-streaming ${request.type} request started`);
-      let result;
-      if (request.type === 'text') {
-        result = await this.model.generateContent(request.data);
-      } else if (request.type === 'multimodal') {
-        result = await this.model.generateContent(request.data);
-      } else {
-        throw new Error(`Unsupported Gemini request type: ${request.type}`);
-      }
+      console.log(`[Gemini API] Non-streaming ${request.type} request started (${request.priority || 'background'})`);
+      const result = await this.model.generateContent(payload, requestOptions);
 
       this.dailyTokenCount += estimatedTokens;
 
@@ -305,6 +432,20 @@ class GeminiService {
       console.log(`[Gemini API] Non-streaming ${request.type} request completed (${responseText.length} chars)`);
       return responseText;
     } catch (error) {
+      // A deliberate cancel() call, not a failure — the fetch-level abort
+      // surfaces here as a rejected generateContent(Stream) call. Must be
+      // checked before the quota/retry logic below: retrying an
+      // intentionally-interrupted request would re-issue the exact stale
+      // question the caller just asked to stop answering, and
+      // isSwitchEligibleError (gemini-runtime.js) would otherwise have no
+      // reason to treat "Request cancelled" as anything but a hard failure.
+      if (this.isAbortError(error) || request.controller?.signal?.aborted) {
+        console.log(`[Gemini API] ${request.type} request cancelled`);
+        const cancelledError = new Error('Request cancelled');
+        cancelledError.isCancelled = true;
+        throw cancelledError;
+      }
+
       console.error(`Request error (attempt ${retryCount + 1}):`, error.message);
 
       if (this.isQuotaExhaustedError(error)) {
@@ -317,12 +458,40 @@ class GeminiService {
         throw error;
       }
 
+      // The model does not accept thinkingConfig: remember that and resend
+      // immediately without it. Not counted as a retry.
+      if (this.isThinkingConfigError(error) && !this.thinkingUnsupportedModels.has(this.modelName)) {
+        console.warn(`[Gemini API] ${this.modelName} rejected thinkingConfig; continuing without it`);
+        this.thinkingUnsupportedModels.add(this.modelName);
+        return this._executeRequest(request, retryCount);
+      }
+
+      if (request.priority === 'realtime') {
+        // A live answer must not sit through 2 s + 4 s + 8 s of backoff on a
+        // rate-limited key. Surface it now; the runtime fails over to the next
+        // key, or retries once after the provider's own suggested delay.
+        if (this.isRateLimitError(error)) {
+          error.isRateLimited = true;
+          error.retryAfterMs = this.parseRetryAfterMs(error);
+          this.emitTiming(request, 'rate-limited', { retryAfterMs: error.retryAfterMs });
+          throw error;
+        }
+        // Transient server errors (500/503) get one quick retry.
+        if (retryCount === 0 && this.isRetryableError(error)) {
+          this.emitTiming(request, 'retry', { delayMs: 300, reason: 'server-error' });
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          return this._executeRequest(request, retryCount + 1);
+        }
+        throw error;
+      }
+
       if (retryCount < this.maxRetries) {
         const isRetryable = this.isRetryableError(error);
 
         if (isRetryable) {
           const backoffTime = Math.pow(2, retryCount) * 2000;
           console.log(`Retrying in ${backoffTime}ms...`);
+          this.emitTiming(request, 'retry', { delayMs: backoffTime, reason: 'backoff' });
           await new Promise((resolve) => setTimeout(resolve, backoffTime));
           return this._executeRequest(request, retryCount + 1);
         }
@@ -351,33 +520,58 @@ class GeminiService {
   }
 
   async generateText(prompt, options = {}) {
-    return new Promise((resolve, reject) => {
-      const request = {
-        type: 'text',
-        data: prompt,
-        resolve,
-        reject,
-        onChunk: typeof options.onChunk === 'function' ? options.onChunk : null
-      };
+    const tag = options.tag || null;
+    const controller = tag ? new AbortController() : null;
+    if (tag && controller) this.activeRequestsByTag.set(tag, controller);
 
-      this.requestQueue.push(request);
-      this.processQueue();
-    });
+    try {
+      return await new Promise((resolve, reject) => {
+        this.dispatch({
+          type: 'text',
+          data: prompt,
+          resolve,
+          reject,
+          controller,
+          priority: options.priority === 'realtime' ? 'realtime' : 'background',
+          generation: options.generation,
+          onTiming: options.onTiming,
+          onChunk: typeof options.onChunk === 'function' ? options.onChunk : null
+        });
+      });
+    } finally {
+      // Only clear the slot if it's still ours — a second request under the
+      // same tag (the very thing cancellation makes room for) may already
+      // have registered its own controller by the time this one unwinds.
+      if (tag && this.activeRequestsByTag.get(tag) === controller) {
+        this.activeRequestsByTag.delete(tag);
+      }
+    }
   }
 
   async generateMultimodal(parts, options = {}) {
-    return new Promise((resolve, reject) => {
-      const request = {
-        type: 'multimodal',
-        data: parts,
-        resolve,
-        reject,
-        onChunk: typeof options.onChunk === 'function' ? options.onChunk : null
-      };
+    const tag = options.tag || null;
+    const controller = tag ? new AbortController() : null;
+    if (tag && controller) this.activeRequestsByTag.set(tag, controller);
 
-      this.requestQueue.push(request);
-      this.processQueue();
-    });
+    try {
+      return await new Promise((resolve, reject) => {
+        this.dispatch({
+          type: 'multimodal',
+          data: parts,
+          resolve,
+          reject,
+          controller,
+          priority: options.priority === 'realtime' ? 'realtime' : 'background',
+          generation: options.generation,
+          onTiming: options.onTiming,
+          onChunk: typeof options.onChunk === 'function' ? options.onChunk : null
+        });
+      });
+    } finally {
+      if (tag && this.activeRequestsByTag.get(tag) === controller) {
+        this.activeRequestsByTag.delete(tag);
+      }
+    }
   }
 
   async analyzeScreenshots(imageParts, additionalContext = '', options = {}) {
@@ -414,6 +608,18 @@ class GeminiService {
     );
   }
 
+  /** Live answers: realtime lane, generation limits from the response mode. */
+  realtimeOptions(options = {}) {
+    const mode = getResponseMode(options.responseMode);
+    return {
+      onChunk: options.onChunk,
+      tag: options.tag,
+      onTiming: options.onTiming,
+      priority: 'realtime',
+      generation: { maxOutputTokens: mode.maxOutputTokens, thinkingLevel: mode.thinkingLevel }
+    };
+  }
+
   async askAiWithSessionContext(options = {}) {
     const contextString = typeof options.contextString === 'string'
       ? options.contextString
@@ -426,11 +632,11 @@ class GeminiService {
       relation: options.relation || '',
       confidence: options.confidence || '',
       screenshotCount: options.screenshotCount || 0,
-      mode: options.mode || 'best-next-answer'
+      programmingLanguage: this.programmingLanguage,
+      responseMode: options.responseMode
     }) + this._repeatVariationInstruction(contextString);
 
-    const streamOptions = { onChunk: options.onChunk };
-    const result = await this.generateText(prompt, streamOptions);
+    const result = await this.generateText(prompt, this.realtimeOptions(options));
     this.addToHistory('assistant', `Ask AI: ${result}`);
     return result;
   }
@@ -447,14 +653,14 @@ class GeminiService {
       relation: options.relation || '',
       confidence: options.confidence || '',
       screenshotCount: options.screenshotCount || imageParts.length,
-      mode: options.mode || 'best-next-answer'
+      programmingLanguage: this.programmingLanguage,
+      responseMode: options.responseMode
     });
 
-    const streamOptions = { onChunk: options.onChunk };
     const result = await this.generateMultimodal([
       { text: prompt },
       ...imageParts
-    ], streamOptions);
+    ], this.realtimeOptions(options));
 
     this.addToHistory('assistant', `Ask AI: ${result}`);
     return result;
@@ -504,8 +710,7 @@ class GeminiService {
       programmingLanguage: this.programmingLanguage
     });
 
-    const streamOptions = { onChunk: options.onChunk };
-    const result = await this.generateText(prompt, streamOptions);
+    const result = await this.generateText(prompt, this.realtimeOptions(options));
     this.addToHistory('user', question);
     this.addToHistory('assistant', result);
     return result;

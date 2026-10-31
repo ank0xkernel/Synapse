@@ -42,11 +42,26 @@ function createQuestionLatencyTracker({ onComplete = () => {}, log = console.log
     const id = nextId();
     inFlight.set(id, {
       id,
-      meta,
+      meta: { ...meta },
       timestamps: { T0: t0 },
+      retries: [],
       done: false
     });
     return id;
+  }
+
+  /** Merges facts learned mid-flight (model, thinking level, attempts) into the timeline's meta. */
+  function note(id, facts = {}) {
+    const entry = inFlight.get(id);
+    if (!entry || entry.done) return;
+    Object.assign(entry.meta, facts);
+  }
+
+  /** Records a retry or rate-limit event so delays added by recovery are visible, not folded into "provider time". */
+  function addRetry(id, delayMs = 0, reason = 'retry') {
+    const entry = inFlight.get(id);
+    if (!entry || entry.done) return;
+    entry.retries.push({ delayMs: Math.max(0, Math.round(delayMs || 0)), reason });
   }
 
   /**
@@ -54,11 +69,11 @@ function createQuestionLatencyTracker({ onComplete = () => {}, log = console.log
    * arrival wins. Accepts an explicit wall-clock time for stages measured in
    * another process (e.g. T1 from the renderer's own vosk-partial handler).
    */
-  function mark(id, stage, at = Date.now()) {
+  function mark(id, stage, at = Date.now(), { overwrite = false } = {}) {
     const entry = inFlight.get(id);
     if (!entry || entry.done) return;
     if (!STAGES.includes(stage)) return;
-    if (entry.timestamps[stage] !== undefined) return; // first arrival wins
+    if (entry.timestamps[stage] !== undefined && !overwrite) return; // first arrival wins by default
     entry.timestamps[stage] = at;
   }
 
@@ -69,14 +84,22 @@ function createQuestionLatencyTracker({ onComplete = () => {}, log = console.log
     const segments = {
       detection: seg('T0', 'T2'),        // question confirmed after being seen
       context: seg('T2', 'T3'),          // context retrieval/assembly
-      requestSetup: seg('T3', 'T4'),     // prompt build + request dispatch
-      geminiFirst: seg('T4', 'T5'),      // provider time-to-first-token
+      requestSetup: seg('T3', 'T4'),     // prompt build + realtime slot wait, until the final dispatch
+      geminiFirst: seg('T4', 'T5'),      // provider time-to-first-token on the attempt that answered
       browser: seg('T5', 'T6')           // delivery to the UI
     };
 
     const total = t.T0 !== undefined && t.T6 !== undefined ? Math.round(t.T6 - t.T0) : null;
+    const retries = entry.retries || [];
 
-    return { id: entry.id, meta: entry.meta, segments, total, timestamps: t };
+    return {
+      id: entry.id,
+      meta: entry.meta,
+      segments,
+      total,
+      retries: { count: retries.length, delayMs: retries.reduce((sum, r) => sum + r.delayMs, 0), reasons: retries.map((r) => r.reason) },
+      timestamps: t
+    };
   }
 
   // Phase 13: the diagnostic snapshot needs to read back "what actually
@@ -113,6 +136,10 @@ function createQuestionLatencyTracker({ onComplete = () => {}, log = console.log
       + `geminiFirst=${fmt(report.segments.geminiFirst)} `
       + `browser=${fmt(report.segments.browser)} `
       + `TOTAL=${fmt(report.total)}`
+      + (report.retries?.count ? ` retries=${report.retries.count} retryDelay=${report.retries.delayMs}ms(${report.retries.reasons.join(',')})` : '')
+      + (report.meta?.model ? ` model=${report.meta.model}` : '')
+      + (report.meta?.thinking ? ` thinking=${report.meta.thinking}` : '')
+      + (report.meta?.responseMode ? ` mode=${report.meta.responseMode}` : '')
     );
   }
 
@@ -141,7 +168,7 @@ function createQuestionLatencyTracker({ onComplete = () => {}, log = console.log
     return [...inFlight.values()].map(buildReport);
   }
 
-  return { start, mark, complete, abandon, activeCount, getLastReport, getActiveReports, STAGE_LABELS };
+  return { start, mark, note, addRetry, complete, abandon, activeCount, getLastReport, getActiveReports, STAGE_LABELS };
 }
 
 module.exports = { createQuestionLatencyTracker, STAGES, STAGE_LABELS };

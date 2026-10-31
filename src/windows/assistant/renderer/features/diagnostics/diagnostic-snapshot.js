@@ -6,14 +6,14 @@
  * conclusion was either "the code looks right" (static analysis) or
  * "couldn't launch the app" (this execution environment can't run the GUI).
  * This closes that gap: a pure function that turns already-existing raw
- * state (frame timestamps, chunk counters, silence tracking, routing
- * checks) into one structured, technical-metrics-only report the user can
+ * state (frame timestamps, chunk counters, silence tracking, native capture
+ * state) into one structured, technical-metrics-only report the user can
  * copy and send back.
  *
  * Deliberately NOT a new tracking system: every raw input here already
  * exists somewhere in the app (audio-pipeline.js's silence tracker,
  * transcription-manager.js's watchdog state, assembly-ai/service.js's chunk
- * counters, system-health.js's routing checks, question-latency-tracker.js's
+ * counters, native-system-audio.js's helper state, question-latency-tracker.js's
  * own reports). This module only assembles and labels what's already
  * tracked -- it introduces no new continuous state of its own.
  */
@@ -27,12 +27,7 @@ export const MicState = Object.freeze({
 export const SystemAudioState = Object.freeze({
   OK: 'SYSTEM_AUDIO_OK',
   SILENT: 'SYSTEM_AUDIO_SILENT',
-  NOT_ROUTED: 'SYSTEM_AUDIO_NOT_ROUTED'
-});
-
-export const BlackHoleState = Object.freeze({
-  DETECTED: 'BLACKHOLE_DETECTED',
-  MISSING: 'BLACKHOLE_MISSING'
+  CAPTURE_FAILED: 'SYSTEM_AUDIO_CAPTURE_FAILED'
 });
 
 export const AssemblyAiState = Object.freeze({
@@ -77,22 +72,15 @@ function deriveMicState({ status, pcmState }) {
 }
 
 /**
- * SYSTEM_AUDIO_OK / SILENT / NOT_ROUTED. The NOT_ROUTED distinction needs
- * BOTH renderer state (is it actually silent right now) and the main
- * process's own routing check (system-health.js's checkAudioOutputRouting)
- * -- audio-pipeline.js only ever sees the symptom (silence), not whether
- * the OS-level routing is the reason, so this is the one state that can
- * only be derived once both halves of the snapshot are merged.
+ * SYSTEM_AUDIO_OK / SILENT / CAPTURE_FAILED. CAPTURE_FAILED needs both halves
+ * of the snapshot: the renderer sees silence, the main process knows whether
+ * the native capture helper reported an error (native-system-audio.js).
  */
-function deriveSystemAudioState({ status, pcmState, audioRoutingOk }) {
-  if (status === 'error') return SystemAudioState.NOT_ROUTED;
+function deriveSystemAudioState({ status, pcmState, captureError }) {
+  if (status === 'error') return SystemAudioState.CAPTURE_FAILED;
   if (status !== 'listening') return null;
   if (pcmState === PcmState.FLOWING) return SystemAudioState.OK;
-  // Silent or stalled while "listening": distinguish a known-bad routing
-  // configuration from a genuine, unexplained silence with routing that
-  // looks correct -- the latter is the more mysterious case worth flagging
-  // differently (see system-health.js's own "unverified" framing).
-  return audioRoutingOk === false ? SystemAudioState.NOT_ROUTED : SystemAudioState.SILENT;
+  return captureError ? SystemAudioState.CAPTURE_FAILED : SystemAudioState.SILENT;
 }
 
 function computeAvgFramesPerSecond(chunkCount, startedAt, now) {
@@ -124,7 +112,7 @@ export function buildDiagnosticReport(raw) {
     active: system.active, lastFrameAt: system.lastFrameAt, silenceInfo: system.silenceInfo, now
   });
 
-  const audioRoutingOk = raw.audioRouting ? raw.audioRouting.ok : null;
+  const captureError = raw.nativeAudio?.state?.lastError || null;
 
   return {
     generatedAt: new Date(now).toISOString(),
@@ -175,20 +163,20 @@ export function buildDiagnosticReport(raw) {
       }
     },
 
-    routing: {
-      blackHole: raw.blackHole || { ok: null, detail: 'not checked' },
-      audioOutputRouting: raw.audioRouting || { ok: null, detail: 'not checked' },
-      synapseOutputDeviceActive: raw.synapseOutputDeviceActive ?? null
+    systemAudioCapture: {
+      mode: raw.systemCaptureMode || null,
+      probe: raw.nativeAudio?.probe || null,
+      backend: raw.nativeAudio?.state?.backend || null,
+      running: raw.nativeAudio?.state ? !!raw.nativeAudio.state.running : null,
+      droppedSamples: raw.nativeAudio?.state?.lastStats?.droppedSamples ?? null,
+      lastError: captureError
     },
 
     latency: raw.latency || null,
 
     health: {
       mic: deriveMicState({ status: mic.status, pcmState: micPcmState }),
-      systemAudio: deriveSystemAudioState({ status: system.status, pcmState: systemPcmState, audioRoutingOk }),
-      blackHole: raw.blackHole
-        ? (raw.blackHole.ok ? BlackHoleState.DETECTED : BlackHoleState.MISSING)
-        : null,
+      systemAudio: deriveSystemAudioState({ status: system.status, pcmState: systemPcmState, captureError }),
       assemblyAiMic: raw.transcription?.mic
         ? (raw.transcription.mic.streaming ? AssemblyAiState.CONNECTED : AssemblyAiState.DISCONNECTED)
         : null,

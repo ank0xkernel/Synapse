@@ -46,9 +46,75 @@ function getLanAddresses() {
   return [...real, ...virtual];
 }
 
-const MOBILE_PORT = 7823;
-const MOBILE_HTML_PATH = path.join(__dirname, 'mobile.html');
 
+const MOBILE_PORT = 7823;
+// The single consolidated Web Companion page (login gate, live remote
+// control, interview context editor, status panel and logs).
+const COMPANION_HTML_PATH = path.join(__dirname, 'companion.html');
+
+// ── Security / resource limits ───────────────────────────────────────────────
+const SESSION_ABSOLUTE_MS = 12 * 60 * 60 * 1000;
+const SESSION_IDLE_MS = 60 * 60 * 1000;
+const MAX_SESSIONS = 4;
+const MAX_SOCKETS = 4;
+const WS_MAX_PAYLOAD = 64 * 1024;
+const HEARTBEAT_MS = 20 * 1000;
+const MAX_MISSED_PONGS = 2;
+const CHUNK_BATCH_MS = 50;
+const MAX_SOCKET_BACKLOG = 1024 * 1024;
+const ANSWER_CAP = 16 * 1024;
+const QUESTION_CAP = 500;
+const HISTORY_ITEMS = 10;
+const USED_CODE_TTL_MS = 90 * 1000;
+const WS_PROTOCOL = 'synapse.v1';
+const WS_AUTH_PROTOCOL_PREFIX = 'synapse.auth.';
+
+// Only these events ever reach a phone. Anything else the desktop broadcasts
+// (settings, resume/context traffic, ...) is dropped at the door.
+const PHONE_CHANNELS = new Set([
+  'ai-stream-start', 'ai-stream-chunk', 'ai-stream-end',
+  'synapse-haptic', 'synapse-token', 'synapse-complete', 'synapse-error',
+  'synapse-mode', 'synapse-nudge', 'synapse-queue',
+  'vosk-final', 'vosk-partial', 'vosk-status', 'vosk-stopped', 'vosk-error',
+  'system-audio-status', 'native-system-audio-status',
+  'screenshot-taken-stealth', 'clear-done', 'answer-superseded',
+  'mic-state', 'autopilot-state', 'typing-speed', 'history', 'error'
+]);
+
+const cap = (value, n) => String(value == null ? '' : value).slice(0, n);
+const sha256 = (value) => crypto.createHash('sha256').update(String(value || '')).digest('hex');
+
+/**
+ * Persists the "companion enabled" choice in a small JSON file. The shared
+ * app-state sanitizer drops unknown keys, so the flag lives in its own file.
+ */
+function createFileEnabledStore(filePath) {
+  return {
+    load() {
+      try {
+        return JSON.parse(fs.readFileSync(filePath, 'utf8')).companionEnabled === true;
+      } catch (_) {
+        return false;
+      }
+    },
+    save(value) {
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.writeFileSync(filePath, `${JSON.stringify({ companionEnabled: !!value })}\n`, { encoding: 'utf8', mode: 0o600 });
+    }
+  };
+}
+
+/**
+ * Mobile companion server.
+ *
+ * Disabled by default: nothing listens until start()/setEnabled(true). The
+ * choice is persisted through `enabledStore` (default: off, nothing persisted).
+ *
+ * Transport is plain HTTP/WS on the trusted LAN. It is NOT end-to-end
+ * encrypted: anyone who can sniff the Wi-Fi can read answers and the session
+ * token. Authentication is the rotating TOTP code; the code is exchanged for a
+ * per-phone session token (12 h absolute / 60 min idle, at most 4 at once).
+ */
 function createMobileServer({
   getGeminiRuntime,
   getScreenshotManager,
@@ -56,64 +122,96 @@ function createMobileServer({
   // Optional: supplied by the composition root so the dashboard's service
   // panel, restart buttons and JD indexing act on the real services.
   getAiOrchestrator = () => null,
-  getLocalServices = () => ({})
+  getLocalServices = () => ({}),
+  getSystemAudioCapture = () => null,
+  enabledStore = { load: () => false, save: () => {} },
+  port = MOBILE_PORT,
+  getAddresses = getLanAddresses,
+  totp = null,
+  now = Date.now,
+  autoStart = true,
+  heartbeatMs = HEARTBEAT_MS
 }) {
   const clients = new Set();
+  let enabled = false;
+  try { enabled = enabledStore.load() === true; } catch (_) { enabled = false; }
   const status = {
+    enabled,
     listening: false,
-    port: MOBILE_PORT,
+    port,
     urls: [],
     clientCount: 0,
     error: null
   };
 
-  // Bearer credential for every API call and WebSocket upgrade on this server.
-  //
-  // This was previously a 6-digit number, which is only 900k possibilities — a
-  // LAN attacker can exhaust that in seconds. It is not typed by a human (the
-  // human types the rotating TOTP code, which is exchanged for this), so there
-  // is no reason to keep it short.
-  const sessionToken = crypto.randomBytes(32).toString('hex');
+  // ── Sessions ───────────────────────────────────────────────────────────────
+  // Only the sha256 of each bearer is kept; the token itself exists on the
+  // phone alone. Never copied onto `status`.
+  const sessions = new Map(); // sha256(token) -> { createdAt, lastSeen }
 
-  // Deliberately NOT copied onto `status`: getStatus() is surfaced to the
-  // renderer and to /api/status, and leaking the bearer there defeats the gate.
-
-  /** Constant-time compare that tolerates length mismatch without throwing. */
-  function tokensMatch(candidate) {
-    const a = Buffer.from(String(candidate || ''), 'utf8');
-    const b = Buffer.from(sessionToken, 'utf8');
-    if (a.length !== b.length) {
-      return false;
-    }
-    return crypto.timingSafeEqual(a, b);
+  function sessionAlive(key) {
+    const s = sessions.get(key);
+    if (!s) return false;
+    const t = now();
+    return t - s.createdAt < SESSION_ABSOLUTE_MS && t - s.lastSeen < SESSION_IDLE_MS;
   }
 
-  /** Extracts a bearer token from the Authorization header or ?token= query. */
+  function closeSocketsOf(key) {
+    for (const ws of clients) {
+      if (ws.sessionKey === key) { try { ws.close(1008, 'Session ended'); } catch (_) { /* ignore */ } }
+    }
+  }
+
+  function revokeSession(key) {
+    sessions.delete(key);
+    closeSocketsOf(key);
+  }
+
+  function issueSession() {
+    while (sessions.size >= MAX_SESSIONS) {
+      let oldest = null;
+      for (const [key, s] of sessions) {
+        if (oldest === null || s.createdAt < sessions.get(oldest).createdAt) oldest = key;
+      }
+      revokeSession(oldest);
+    }
+    const token = crypto.randomBytes(32).toString('hex');
+    sessions.set(sha256(token), { createdAt: now(), lastSeen: now() });
+    return token;
+  }
+
+  function revokeAllSessions() {
+    sessions.clear();
+    for (const ws of clients) { try { ws.close(1008, 'Session ended'); } catch (_) { /* ignore */ } }
+  }
+
+  /** Bearer from `Authorization` or the WebSocket subprotocol list. Never from the URL. */
   function extractToken(req) {
-    const header = req.headers?.authorization || '';
-    const bearer = /^Bearer\s+(.+)$/i.exec(header);
-    if (bearer) {
-      return bearer[1].trim();
-    }
-
-    try {
-      const parsed = new URL(req.url || '/', 'http://localhost');
-      return parsed.searchParams.get('token') || '';
-    } catch (_) {
-      return '';
-    }
+    const bearer = /^Bearer\s+(.+)$/i.exec(req.headers?.authorization || '');
+    if (bearer) return bearer[1].trim();
+    const offered = String(req.headers?.['sec-websocket-protocol'] || '').split(',').map((p) => p.trim());
+    const auth = offered.find((p) => p.startsWith(WS_AUTH_PROTOCOL_PREFIX));
+    return auth ? auth.slice(WS_AUTH_PROTOCOL_PREFIX.length) : '';
   }
 
-  function isAuthorized(req) {
-    return tokensMatch(extractToken(req));
+  /** Returns the session key for a valid, unexpired bearer (and refreshes idle time), else null. */
+  function authenticate(req) {
+    const token = extractToken(req);
+    if (!token) return null;
+    const key = sha256(token);
+    if (!sessions.has(key)) return null;
+    if (!sessionAlive(key)) { revokeSession(key); return null; }
+    sessions.get(key).lastSeen = now();
+    return key;
   }
 
   /** Guards a REST route. Returns true when the request may proceed. */
   function requireAuth(req, res) {
-    if (isAuthorized(req)) {
+    const key = authenticate(req);
+    if (key) {
+      req.sessionKey = key;
       return true;
     }
-
     res.writeHead(401, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: false, error: 'Unauthorized' }));
     return false;
@@ -121,77 +219,303 @@ function createMobileServer({
 
   // ── Login throttling ───────────────────────────────────────────────────────
   // The TOTP space is 10^6 with a +/-1 step drift window, so roughly 3 codes are
-  // valid at any moment. Unthrottled, that is guessable over a LAN; this keeps
-  // an attacker to a few attempts per minute per address.
+  // valid at any moment. This keeps an attacker to a few attempts per minute per
+  // address. A code that already logged someone in is single-use, so a code
+  // sniffed off plain HTTP cannot be replayed.
   const LOGIN_MAX_ATTEMPTS = 10;
   const LOGIN_WINDOW_MS = 60 * 1000;
   const loginAttempts = new Map();
+  const usedCodes = new Map(); // code -> expiry
 
   function loginRateLimited(remoteAddress) {
     const key = String(remoteAddress || 'unknown');
-    const now = Date.now();
-    const recent = (loginAttempts.get(key) || []).filter((t) => now - t < LOGIN_WINDOW_MS);
-
+    const t = now();
+    const recent = (loginAttempts.get(key) || []).filter((at) => t - at < LOGIN_WINDOW_MS);
     if (recent.length >= LOGIN_MAX_ATTEMPTS) {
       loginAttempts.set(key, recent);
       return true;
     }
-
-    recent.push(now);
+    recent.push(t);
     loginAttempts.set(key, recent);
     return false;
   }
 
-  function broadcastHapticAlert() {
-    broadcast('synapse-haptic', { timestamp: Date.now() });
+  function getTotp() {
+    return totp || require('../security/totp-auth').shared();
   }
 
-  function broadcastToken(token) {
-    broadcast('synapse-token', { token });
+  // ── Live-state snapshot (bounded; updated O(1) per broadcast) ──────────────
+  let seq = 0;
+  let streamCounter = 0;
+  const live = {
+    listening: { system: 'off', mic: 'off' },
+    errors: { system: null, mic: null },
+    systemAudio: null,
+    lastQuestion: '',
+    answer: null, // { streamId, text, status, truncated, source }
+    mic: null,
+    autopilot: null,
+    typingSpeed: null,
+    screenshots: 0,
+    mode: null,
+    history: []
+  };
+
+  function newStreamId() {
+    streamCounter += 1;
+    return `${streamCounter.toString(36)}-${crypto.randomBytes(3).toString('hex')}`;
   }
 
-  function broadcastComplete() {
-    broadcast('synapse-complete', { timestamp: Date.now() });
+  function startAnswer(source) {
+    if (live.answer && live.answer.status === 'streaming') live.answer.status = 'cancelled';
+    live.answer = { streamId: newStreamId(), text: '', status: 'streaming', truncated: false, source };
+    return live.answer;
   }
 
-  function broadcastError(message) {
-    broadcast('synapse-error', { message });
-  }
-
-  function emitStatus() {
-    if (typeof notifyDesktop === 'function') {
-      try { notifyDesktop('mobile-server-status', { ...status }); } catch (_) { /* ignore */ }
+  function appendAnswer(text) {
+    const a = live.answer;
+    const room = ANSWER_CAP - a.text.length;
+    if (text.length > room) {
+      a.text += text.slice(0, Math.max(0, room));
+      a.truncated = true;
+    } else {
+      a.text += text;
     }
   }
 
-  function refreshUrls() {
-    status.urls = getLanAddresses().map(({ name, address, virtual }) => ({
-      name,
-      address,
-      virtual: !!virtual,
-      url: `http://${address}:${MOBILE_PORT}?token=${sessionToken}`
-    }));
+  const answering = () => live.answer && live.answer.status === 'streaming';
+  const sourceOf = (data) => (data && data.source === 'mic' ? 'mic' : 'system');
+
+  /**
+   * Folds a desktop event into the snapshot and returns what the phone should
+   * receive ({ ch, data }) or null to drop it.
+   */
+  function track(channel, data) {
+    data = data && typeof data === 'object' ? data : {};
+    switch (channel) {
+      case 'ai-stream-start':
+        if (data.actionId !== 'askAi') return null;
+        return { ch: channel, data: { actionId: 'askAi', streamId: startAnswer('ask').streamId } };
+
+      case 'ai-stream-chunk': {
+        if (data.actionId !== 'askAi' || !answering()) return null;
+        if (data.streamId && data.streamId !== live.answer.streamId) return null;
+        const text = String(data.text || '');
+        appendAnswer(text);
+        return { ch: channel, data: { actionId: 'askAi', streamId: live.answer.streamId, text, index: data.index } };
+      }
+
+      case 'ai-stream-end': {
+        if (data.actionId !== 'askAi' || !answering()) return null;
+        live.answer.status = 'done';
+        return { ch: channel, data: { actionId: 'askAi', streamId: live.answer.streamId } };
+      }
+
+      case 'synapse-haptic':
+        if (!(answering() && live.answer.source === 'local')) startAnswer('local');
+        return { ch: channel, data: { timestamp: data.timestamp, streamId: live.answer.streamId } };
+
+      case 'synapse-token': {
+        if (!(answering() && live.answer.source === 'local')) startAnswer('local');
+        const token = String(data.token || '');
+        appendAnswer(token);
+        return { ch: channel, data: { token, streamId: live.answer.streamId } };
+      }
+
+      case 'synapse-complete':
+        if (!(answering() && live.answer.source === 'local')) return null;
+        live.answer.status = 'done';
+        return { ch: channel, data: { streamId: live.answer.streamId } };
+
+      case 'error':
+      case 'synapse-error':
+        if (answering()) live.answer.status = 'failed';
+        return { ch: channel, data: { message: cap(data.message, 300), streamId: live.answer ? live.answer.streamId : undefined } };
+
+      case 'answer-superseded':
+        if (answering()) live.answer.status = 'cancelled';
+        return { ch: channel, data: {} };
+
+      case 'history': {
+        const items = (Array.isArray(data.items) ? data.items : []).slice(-HISTORY_ITEMS)
+          .map((i) => ({ question: cap(i && i.question, 300), answer: cap(i && i.answer, 2000) }));
+        live.history = items;
+        return { ch: channel, data: { items } };
+      }
+
+      case 'vosk-status': {
+        const source = sourceOf(data);
+        live.listening[source] = cap(data.status, 24) || 'off';
+        if (data.status === 'listening') live.errors[source] = null;
+        return { ch: channel, data: { source, status: live.listening[source], message: cap(data.message, 200) } };
+      }
+
+      case 'vosk-stopped': {
+        const source = sourceOf(data);
+        live.listening[source] = 'stopped';
+        return { ch: channel, data: { source } };
+      }
+
+      case 'vosk-error': {
+        const source = sourceOf(data);
+        live.listening[source] = 'error';
+        const err = {
+          source,
+          error: cap(data.error, 300),
+          kind: cap(data.kind, 40),
+          permanent: !!data.permanent,
+          unexpected: !!data.unexpected,
+          detail: cap(data.detail, 300)
+        };
+        live.errors[source] = err;
+        return { ch: channel, data: err };
+      }
+
+      case 'vosk-final':
+        if (data.source !== 'system') return null;
+        live.lastQuestion = cap(data.text, QUESTION_CAP);
+        return { ch: channel, data: { source: 'system', text: live.lastQuestion } };
+
+      case 'vosk-partial':
+        if (data.source !== 'system') return null;
+        return { ch: channel, data: { source: 'system', text: cap(data.text, QUESTION_CAP) } };
+
+      case 'system-audio-status':
+      case 'native-system-audio-status': {
+        live.systemAudio = { status: cap(data.status, 24), device: cap(data.device, 120), message: cap(data.message, 200) };
+        return { ch: 'system-audio-status', data: live.systemAudio };
+      }
+
+      case 'mic-state':
+        live.mic = !!data.enabled;
+        return { ch: channel, data: { enabled: live.mic } };
+
+      case 'autopilot-state':
+        live.autopilot = !!data.enabled;
+        return { ch: channel, data: { enabled: live.autopilot } };
+
+      case 'typing-speed':
+        if (data.speed != null) live.typingSpeed = Number(data.speed) || null;
+        return { ch: channel, data: { speed: data.speed } };
+
+      case 'screenshot-taken-stealth':
+        live.screenshots = Number(data.count) || 0;
+        return { ch: channel, data: { count: live.screenshots } };
+
+      case 'synapse-mode':
+        live.mode = cap(data.mode, 40) || null;
+        return { ch: channel, data: { mode: live.mode } };
+
+      case 'clear-done':
+        live.answer = null;
+        live.lastQuestion = '';
+        live.screenshots = 0;
+        live.history = [];
+        return { ch: channel, data: {} };
+
+      default:
+        return { ch: channel, data };
+    }
+  }
+
+  function snapshot() {
+    const sm = getScreenshotManager && getScreenshotManager();
+    const a = live.answer;
+    return {
+      listening: { ...live.listening },
+      errors: { ...live.errors },
+      systemAudio: live.systemAudio,
+      lastQuestion: live.lastQuestion,
+      answer: a ? { streamId: a.streamId, text: a.text, status: a.status, truncated: a.truncated } : null,
+      mic: live.mic,
+      autopilot: live.autopilot,
+      typingSpeed: live.typingSpeed,
+      screenshots: sm ? sm.getScreenshotsCount() : live.screenshots,
+      mode: live.mode,
+      history: live.history
+    };
+  }
+
+  // ── Outgoing messages ──────────────────────────────────────────────────────
+  function rawSend(ws, ev) {
+    if (ws.readyState !== 1 /* OPEN */) return;
+    if (ws.bufferedAmount > MAX_SOCKET_BACKLOG) { ws.terminate(); return; }
+    try { ws.send(JSON.stringify(ev)); } catch (_) { /* dead socket; heartbeat reaps it */ }
+  }
+
+  function flushPending(ws) {
+    const p = ws.pending;
+    if (!p) return;
+    ws.pending = null;
+    rawSend(ws, { type: p.type, data: { ...p.data, [p.field]: p.text }, seq: p.seq, ts: p.ts });
+  }
+
+  function armChunkTimer(ws) {
+    ws.chunkTimer = setTimeout(() => {
+      ws.chunkTimer = null;
+      if (ws.pending) { flushPending(ws); armChunkTimer(ws); }
+    }, CHUNK_BATCH_MS);
+  }
+
+  /** Answer chunks: first one goes out immediately, the rest coalesce to <= 1 send per 50 ms. */
+  function deliver(ws, ev) {
+    const field = ev.type === 'ai-stream-chunk' ? 'text' : ev.type === 'synapse-token' ? 'token' : null;
+    if (!field) {
+      flushPending(ws);
+      rawSend(ws, ev);
+      return;
+    }
+    if (ws.pending && ws.pending.data.streamId !== ev.data.streamId) flushPending(ws);
+    if (ws.pending) {
+      ws.pending.text += ev.data[field];
+      ws.pending.seq = ev.seq;
+      ws.pending.ts = ev.ts;
+      if (ws.pending.text.length >= ANSWER_CAP) flushPending(ws);
+      return;
+    }
+    if (!ws.chunkTimer) {
+      rawSend(ws, ev);
+      armChunkTimer(ws);
+      return;
+    }
+    ws.pending = { type: ev.type, field, data: ev.data, text: ev.data[field], seq: ev.seq, ts: ev.ts };
+  }
+
+  function broadcast(channel, data) {
+    if (!PHONE_CHANNELS.has(channel)) return;
+    const out = track(channel, data);
+    if (!out || clients.size === 0) {
+      if (out) seq += 1;
+      return;
+    }
+    const ev = { type: out.ch, data: out.data, seq: ++seq, ts: now() };
+    for (const ws of clients) deliver(ws, ev);
+  }
+
+  /** Direct reply to one socket. Carries the current seq without consuming one. */
+  function sendTo(ws, type, data) {
+    flushPending(ws);
+    rawSend(ws, { type, data, seq, ts: now() });
+  }
+
+  function broadcastHapticAlert() { broadcast('synapse-haptic', { timestamp: now() }); }
+  function broadcastToken(token) { broadcast('synapse-token', { token }); }
+  function broadcastComplete() { broadcast('synapse-complete', { timestamp: now() }); }
+  function broadcastError(message) { broadcast('synapse-error', { message }); }
+
+  function emitStatus() {
+    if (typeof notifyDesktop === 'function') {
+      try { notifyDesktop('mobile-server-status', getStatus()); } catch (_) { /* ignore */ }
+    }
+  }
+
+  function getStatus() {
+    return { ...status, urls: status.urls.map((u) => ({ ...u })) };
   }
 
   function setClientCount(n) {
     status.clientCount = n;
     emitStatus();
-  }
-
-  function broadcast(channel, data) {
-    if (clients.size === 0) return;
-    const message = JSON.stringify({ channel, data });
-    for (const ws of clients) {
-      if (ws.readyState === 1 /* WebSocket.OPEN */) {
-        try { ws.send(message); } catch (_) { /* ignore dead socket */ }
-      }
-    }
-  }
-
-  function sendTo(ws, channel, data) {
-    try {
-      if (ws.readyState === 1) ws.send(JSON.stringify({ channel, data }));
-    } catch (_) { /* ignore */ }
   }
 
   /** Reads and parses a bounded JSON request body. */
@@ -237,7 +561,8 @@ function createMobileServer({
 
     return systemHealth.probeAll({
       ollamaBaseUrl,
-      firstTokenMs: ollama?.lastFirstTokenMs ?? null
+      firstTokenMs: ollama?.lastFirstTokenMs ?? null,
+      getSystemAudioCapture
     });
   }
 
@@ -317,27 +642,12 @@ function createMobileServer({
 
     try {
       await fs.promises.writeFile(tmpPath, buffer);
-      const ResumeParser = require('../../../services/ai/resume-parser');
-      const parser = new ResumeParser();
-      const sections = await parser.parseResume(tmpPath);
-
-      // parseResume returns structured sections; flatten to text for the brief.
-      if (Array.isArray(sections)) {
-        return sections
-          .map((section) => (typeof section === 'string' ? section : section?.text || ''))
-          .filter(Boolean)
-          .join('\n');
-      }
-
-      if (sections && typeof sections === 'object') {
-        return Object.values(sections)
-          .flat()
-          .map((entry) => (typeof entry === 'string' ? entry : entry?.text || ''))
-          .filter(Boolean)
-          .join('\n');
-      }
-
-      return String(sections || '');
+      // Same importer as the desktop's Import PDF: validates the PDF
+      // signature, reports scanned PDFs, and keeps the raw text with its
+      // section headings (the parser's flattened output drops them).
+      const { extractResumeText: importResume } = require('../../../services/context/resume-import');
+      const { text } = await importResume(tmpPath);
+      return text;
     } finally {
       fs.promises.unlink(tmpPath).catch(() => {});
     }
@@ -385,8 +695,6 @@ function createMobileServer({
     }
   }
 
-  const DASHBOARD_DIR = path.join(__dirname, 'dashboard');
-
   /*
    * Every asset here was served with a Content-Type and nothing else — no
    * Cache-Control, no ETag, no Last-Modified. With no validator and no explicit
@@ -412,89 +720,14 @@ function createMobileServer({
     res.end(body);
   }
 
-  const httpServer = http.createServer((req, res) => {
+  function handleRequest(req, res) {
     const url = (req.url || '/').split('?')[0];
 
-    // Serve 3D Sci-Fi Dashboard Static Files
-    if (url === '/dashboard/login.html' || url === '/dashboard/login') {
-      try {
-        const html = fs.readFileSync(path.join(DASHBOARD_DIR, 'login.html'), 'utf8');
-        sendAsset(res, html, 'text/html; charset=utf-8');
-      } catch (err) { res.writeHead(500); res.end('Login UI unavailable'); }
-      return;
-    }
-
-    if (url === '/context' || url === '/dashboard/context' || url === '/dashboard/context.html') {
-      try {
-        const html = fs.readFileSync(path.join(DASHBOARD_DIR, 'context.html'), 'utf8');
-        sendAsset(res, html, 'text/html; charset=utf-8');
-      } catch (err) {
-        res.writeHead(500);
-        res.end('Context page unavailable');
-      }
-      return;
-    }
-
-    if (url === '/dashboard' || url === '/dashboard/' || url === '/dashboard/index.html') {
-      try {
-        const html = fs.readFileSync(path.join(DASHBOARD_DIR, 'index.html'), 'utf8');
-        sendAsset(res, html, 'text/html; charset=utf-8');
-      } catch (err) { res.writeHead(500); res.end('Dashboard UI unavailable'); }
-      return;
-    }
-
-    if (url === '/dashboard/css/style.css' || url === '/dashboard/styles.css') {
-      try {
-        const css = fs.readFileSync(path.join(DASHBOARD_DIR, 'css', 'style.css'), 'utf8');
-        sendAsset(res, css, 'text/css; charset=utf-8');
-      } catch (_) { res.writeHead(404); res.end(); }
-      return;
-    }
-
-    if (url === '/dashboard/js/audio.js') {
-      try {
-        const js = fs.readFileSync(path.join(DASHBOARD_DIR, 'js', 'audio.js'), 'utf8');
-        sendAsset(res, js, 'application/javascript; charset=utf-8');
-      } catch (_) { res.writeHead(404); res.end(); }
-      return;
-    }
-
-    if (url === '/dashboard/js/api.js') {
-      try {
-        const js = fs.readFileSync(path.join(DASHBOARD_DIR, 'js', 'api.js'), 'utf8');
-        sendAsset(res, js, 'application/javascript; charset=utf-8');
-      } catch (_) { res.writeHead(404); res.end(); }
-      return;
-    }
-
-    // Optional vendored libraries (e.g. three.min.js). Absent by default, in
-    // which case the dashboard renders without the decorative backdrop.
-    if (url.startsWith('/dashboard/js/vendor/')) {
-      const requested = path.basename(url);
-      const vendorPath = path.join(DASHBOARD_DIR, 'js', 'vendor', requested);
-
-      // basename() already strips traversal, but assert containment anyway.
-      if (!vendorPath.startsWith(path.join(DASHBOARD_DIR, 'js', 'vendor') + path.sep)) {
-        res.writeHead(403);
-        res.end();
-        return;
-      }
-
-      try {
-        const js = fs.readFileSync(vendorPath, 'utf8');
-        sendAsset(res, js, 'application/javascript; charset=utf-8');
-      } catch (_) {
-        res.writeHead(404);
-        res.end();
-      }
-      return;
-    }
-
-    if (url === '/dashboard/js/main.js' || url === '/dashboard/app.js') {
-      try {
-        const js = fs.readFileSync(path.join(DASHBOARD_DIR, 'js', 'main.js'), 'utf8');
-        sendAsset(res, js, 'application/javascript; charset=utf-8');
-      } catch (_) { res.writeHead(404); res.end(); }
+    // The old /dashboard and /context pages were merged into '/'. Bookmarks
+    // redirect there; no credential is ever carried in the URL.
+    if (url === '/dashboard' || url.startsWith('/dashboard/') || url === '/context') {
+      res.writeHead(302, { Location: '/', ...NO_STORE });
+      res.end();
       return;
     }
 
@@ -506,31 +739,36 @@ function createMobileServer({
         return;
       }
 
-      let body = '';
-      req.on('data', (chunk) => {
-        body += chunk;
-        if (body.length > 4096) {
-          req.destroy();
-        }
-      });
-      req.on('end', () => {
-        try {
-          const { token } = JSON.parse(body);
-          const TotpAuth = require('../security/totp-auth');
-          // shared(), not new — a fresh instance would carry a fresh secret and
-          // reject every passcode the tray displays.
-          const totp = TotpAuth.shared();
-          // Either the rotating passcode the user reads off the tray, or an
-          // already-issued bearer being resumed by a returning client.
-          if (totp.verifyToken(token) || tokensMatch(token)) {
+      readJsonBody(req, 4096)
+        .then(({ token }) => {
+          const code = String(token || '').trim();
+          const t = now();
+          // shared(), not new: a fresh instance would carry a fresh secret and
+          // reject every passcode the tray displays. Login accepts only the
+          // rotating code, never an existing bearer, and each code works once.
+          if (!usedCodes.has(code) && getTotp().verifyToken(code)) {
+            usedCodes.set(code, t + USED_CODE_TTL_MS);
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ ok: true, sessionToken }));
+            res.end(JSON.stringify({
+              ok: true,
+              sessionToken: issueSession(),
+              expiresInMs: SESSION_ABSOLUTE_MS,
+              idleTimeoutMs: SESSION_IDLE_MS
+            }));
           } else {
             res.writeHead(401, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ ok: false, error: 'Invalid passcode' }));
           }
-        } catch (e) { res.writeHead(400); res.end(); }
-      });
+        })
+        .catch(() => { res.writeHead(400); res.end(); });
+      return;
+    }
+
+    if (url === '/api/logout' && req.method === 'POST') {
+      if (!requireAuth(req, res)) return;
+      revokeSession(req.sessionKey);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
       return;
     }
 
@@ -635,7 +873,13 @@ function createMobileServer({
 
           const interviewContext = require('../../../services/context/interview-context');
           const current = interviewContext.load();
-          const saved = interviewContext.save({ ...current, background: extracted });
+          const saved = interviewContext.save({
+            ...current,
+            background: extracted,
+            resumeFileName: contentBase64 ? String(filename || '').slice(0, 260) : '',
+            resumeImportedAt: new Date().toISOString(),
+            resumeSource: 'companion'
+          });
           const indexed = await reindexContext(saved);
 
           console.log(`[MobileServer] Resume indexed (${extracted.length} chars, ${indexed.resumeBullets} bullets).`);
@@ -805,31 +1049,34 @@ function createMobileServer({
 
     if (url === '/' || url === '/index.html') {
       try {
-        const html = fs.readFileSync(MOBILE_HTML_PATH, 'utf8');
+        const html = fs.readFileSync(COMPANION_HTML_PATH, 'utf8');
         sendAsset(res, html, 'text/html; charset=utf-8');
       } catch (err) {
         res.writeHead(500);
-        res.end('Mobile UI unavailable');
+        res.end('Companion UI unavailable');
       }
       return;
     }
 
     res.writeHead(404);
     res.end('Not found');
-  });
+  }
 
   // ── WebSocket server ───────────────────────────────────────────────────────
 
-  // `noServer` + an explicit upgrade handler is what lets us reject an
-  // unauthenticated socket before it is ever established. Attaching via
-  // `{ server }` accepts every upgrade first and leaves authentication to the
-  // message handler — which is how this server previously let any device on the
-  // LAN issue `take-screenshot`, `ask-ai` and `send-answer-to-editor` without
-  // presenting a passcode.
-  const wss = new WebSocketServer({ noServer: true });
+  // `noServer` + an explicit upgrade handler rejects an unauthenticated socket
+  // before it is ever established. The bearer travels in the subprotocol list
+  // (`synapse.auth.<token>`), never in the URL, so it stays out of logs and
+  // history. The server only ever echoes the constant `synapse.v1`.
+  const wss = new WebSocketServer({
+    noServer: true,
+    maxPayload: WS_MAX_PAYLOAD,
+    handleProtocols: (protocols) => (protocols.has(WS_PROTOCOL) ? WS_PROTOCOL : false)
+  });
 
-  httpServer.on('upgrade', (req, socket, head) => {
-    if (!isAuthorized(req)) {
+  function onUpgrade(req, socket, head) {
+    const key = enabled ? authenticate(req) : null;
+    if (!key) {
       console.warn(
         `[MobileServer] Rejected unauthenticated WebSocket upgrade from ${req.socket?.remoteAddress}`
       );
@@ -839,26 +1086,45 @@ function createMobileServer({
     }
 
     wss.handleUpgrade(req, socket, head, (ws) => {
+      ws.sessionKey = key;
       wss.emit('connection', ws, req);
     });
-  });
+  }
 
   wss.on('connection', (ws) => {
+    if (clients.size >= MAX_SOCKETS) {
+      ws.close(1013, 'Too many companion connections');
+      return;
+    }
+
+    ws.missedPongs = 0;
+    ws.pending = null;
+    ws.chunkTimer = null;
     clients.add(ws);
     setClientCount(clients.size);
     console.log(`[MobileServer] Client connected (total: ${clients.size})`);
 
-    // Send initial state
-    const screenshotMgr = getScreenshotManager();
-    sendTo(ws, 'connected', {
-      screenshotsCount: screenshotMgr ? screenshotMgr.getScreenshotsCount() : 0
-    });
+    ws.on('pong', () => { ws.missedPongs = 0; });
+
+    // Current state first, so a reconnecting phone never replays stale history.
+    sendTo(ws, 'snapshot', snapshot());
 
     ws.on('message', async (rawData, _isBinary) => {
+      // Re-check on every command: the session may have expired or been revoked.
+      if (!sessionAlive(ws.sessionKey)) {
+        ws.close(1008, 'Session ended');
+        return;
+      }
+      sessions.get(ws.sessionKey).lastSeen = now();
+
       let msg;
       try {
         msg = JSON.parse(rawData.toString());
       } catch (_) {
+        sendTo(ws, 'error', { message: 'Invalid message format' });
+        return;
+      }
+      if (!msg || typeof msg !== 'object') {
         sendTo(ws, 'error', { message: 'Invalid message format' });
         return;
       }
@@ -870,8 +1136,30 @@ function createMobileServer({
 
         // ── Send answer to the focused desktop editor ────────────────────────
         case 'send-answer-to-editor': {
-          if (typeof notifyDesktop === 'function') {
-            notifyDesktop('send-answer-to-editor', {});
+          // Types the answer this server tracked (cloud or local), and only
+          // reports success once the desktop has actually inserted it.
+          const a = live.answer;
+          let failure = null;
+          if (!a || !a.text) failure = 'No answer to send yet.';
+          else if (a.status === 'streaming') failure = 'The answer is still being written.';
+          else if (a.status !== 'done') failure = 'The last answer did not finish. Ask again first.';
+          else if (a.truncated) failure = 'That answer is too long to send from the phone. Use the desktop shortcut.';
+          else if (typeof notifyDesktop !== 'function') failure = 'Desktop is not ready.';
+
+          if (failure) {
+            sendTo(ws, 'editor-result', { ok: false, error: failure });
+            break;
+          }
+
+          try {
+            const result = await notifyDesktop('send-answer-to-editor', { text: a.text });
+            if (!result || result.method === 'skipped' || !result.chars) {
+              sendTo(ws, 'editor-result', { ok: false, error: 'Nothing was inserted. Another insertion may be running.' });
+            } else {
+              sendTo(ws, 'editor-result', { ok: true, method: result.method, chars: result.chars });
+            }
+          } catch (err) {
+            sendTo(ws, 'editor-result', { ok: false, error: cap(err && err.message, 200) || 'Sending to the editor failed.' });
           }
           break;
         }
@@ -958,8 +1246,9 @@ function createMobileServer({
               broadcast('ai-stream-end', { actionId: 'askAi' });
             } catch (err) {
               console.error('[MobileServer] ask-ai error:', err.message);
-              broadcast('ai-stream-end', { actionId: 'askAi' });
+              // Error first so the stream is recorded as failed, not done.
               broadcast('error', { message: err.message });
+              broadcast('ai-stream-end', { actionId: 'askAi' });
             }
           })();
           break;
@@ -1023,48 +1312,198 @@ function createMobileServer({
         default:
           sendTo(ws, 'error', { message: `Unknown command: ${msg.type}` });
       }
+
     });
 
-    ws.on('close', () => {
-      clients.delete(ws);
-      setClientCount(clients.size);
-      console.log(`[MobileServer] Client disconnected (total: ${clients.size})`);
-    });
+    function dropSocket() {
+      clearTimeout(ws.chunkTimer);
+      ws.pending = null;
+      if (clients.delete(ws)) {
+        setClientCount(clients.size);
+        console.log(`[MobileServer] Client disconnected (total: ${clients.size})`);
+      }
+    }
+
+    ws.on('close', dropSocket);
 
     ws.on('error', (err) => {
       console.error('[MobileServer] WebSocket error:', err.message);
-      clients.delete(ws);
-      setClientCount(clients.size);
+      dropSocket();
     });
   });
 
-  // ── Start listening ────────────────────────────────────────────────────────
+  // ── Lifecycle ──────────────────────────────────────────────────────────────
 
-  httpServer.listen(MOBILE_PORT, '0.0.0.0', () => {
-    refreshUrls();
-    status.listening = true;
+  let servers = [];
+  let timer = null;
+  let generation = 0;
+  let starting = null;
+
+  /** Closes sockets whose session lapsed, reaps dead peers, prunes bookkeeping. */
+  function sweep() {
+    const t = now();
+    for (const [key] of sessions) {
+      if (!sessionAlive(key)) revokeSession(key);
+    }
+    for (const [addr, stamps] of loginAttempts) {
+      if (!stamps.some((at) => t - at < LOGIN_WINDOW_MS)) loginAttempts.delete(addr);
+    }
+    for (const [code, expiry] of usedCodes) {
+      if (expiry <= t) usedCodes.delete(code);
+    }
+    for (const ws of clients) {
+      if (!sessionAlive(ws.sessionKey)) { try { ws.close(1008, 'Session ended'); } catch (_) { /* ignore */ } }
+    }
+  }
+
+  function heartbeat() {
+    for (const ws of clients) {
+      if (ws.missedPongs >= MAX_MISSED_PONGS) { ws.terminate(); continue; }
+      ws.missedPongs += 1;
+      try { ws.ping(); } catch (_) { /* terminated next tick */ }
+    }
+    sweep();
+  }
+
+  /**
+   * Binds one listener per LAN interface address instead of 0.0.0.0, so the
+   * port is not exposed on interfaces a phone could not use anyway. Virtual/VPN
+   * adapters are skipped unless nothing else exists; with no network at all it
+   * falls back to loopback.
+   */
+  function bindTargets() {
+    const all = getAddresses() || [];
+    const real = all.filter((a) => !a.virtual);
+    const picked = real.length ? real : all;
+    const unique = [...new Map(picked.map((a) => [a.address, a])).values()];
+    return unique.length ? unique : [{ name: 'loopback', address: '127.0.0.1', virtual: false }];
+  }
+
+  function createHttpServer() {
+    const srv = http.createServer(handleRequest);
+    srv.on('upgrade', onUpgrade);
+    return srv;
+  }
+
+  function listenOn(srv, p, address) {
+    return new Promise((resolve, reject) => {
+      srv.once('error', reject);
+      srv.listen(p, address, () => { srv.off('error', reject); resolve(); });
+    });
+  }
+
+  function closeServers() {
+    for (const srv of servers) {
+      try { srv.close(); srv.closeAllConnections?.(); } catch (_) { /* ignore */ }
+    }
+    servers = [];
+  }
+
+  /** Starts listening (idempotent). Does not persist; see setEnabled(). */
+  async function start() {
+    if (starting) return starting;
+    if (servers.length) return getStatus();
+
+    enabled = true;
+    status.enabled = true;
     status.error = null;
-    emitStatus();
-    console.log(`[MobileServer] Listening on 0.0.0.0:${MOBILE_PORT}`);
-    console.log(`[MobileServer] Local:   http://localhost:${MOBILE_PORT}`);
-    for (const { name, url, virtual } of status.urls) {
-      const tag = virtual ? '  [virtual — phone probably cannot reach]' : '';
-      console.log(`[MobileServer] Network: ${url}  (${name})${tag}`);
-    }
-    console.log('[MobileServer] On the phone, open one of the Network URLs.');
-    console.log('[MobileServer] If the phone cannot reach the PC, allow inbound TCP 7823 in Windows Firewall.');
-  });
+    const myGeneration = ++generation;
 
-  httpServer.on('error', (err) => {
-    status.listening = false;
-    status.error = err.message;
-    emitStatus();
-    if (err.code === 'EADDRINUSE') {
-      console.error(`[MobileServer] Port ${MOBILE_PORT} already in use — mobile companion disabled`);
-    } else {
-      console.error('[MobileServer] HTTP server error:', err.message);
+    starting = (async () => {
+      const opened = [];
+      const failures = [];
+      let boundPort = port;
+
+      for (const target of bindTargets()) {
+        const srv = createHttpServer();
+        try {
+          await listenOn(srv, boundPort, target.address);
+          boundPort = srv.address().port;
+          srv.on('error', (err) => console.error('[MobileServer] HTTP server error:', err.message));
+          opened.push({ srv, target });
+        } catch (err) {
+          failures.push(`${target.address}: ${err.code === 'EADDRINUSE' ? `port ${boundPort} already in use` : err.message}`);
+          try { srv.close(); } catch (_) { /* never listened */ }
+        }
+      }
+
+      if (myGeneration !== generation) {
+        // stop() ran while binding.
+        for (const { srv } of opened) { try { srv.close(); } catch (_) { /* ignore */ } }
+        return;
+      }
+
+      if (!opened.length) {
+        status.listening = false;
+        status.error = failures.join('; ') || 'Could not bind any address';
+        console.error(`[MobileServer] Companion could not start: ${status.error}`);
+        emitStatus();
+        return;
+      }
+
+      servers = opened.map((o) => o.srv);
+      status.port = boundPort;
+      status.urls = opened.map(({ target }) => ({
+        name: target.name,
+        address: target.address,
+        virtual: !!target.virtual,
+        url: `http://${target.address}:${boundPort}`
+      }));
+      status.listening = true;
+      status.error = failures.length ? failures.join('; ') : null;
+      timer = setInterval(heartbeat, heartbeatMs);
+      if (timer.unref) timer.unref();
+      emitStatus();
+
+      console.log(`[MobileServer] Companion enabled on port ${boundPort} (HTTP, LAN only, not end-to-end encrypted)`);
+      for (const { name, url, virtual } of status.urls) {
+        console.log(`[MobileServer] Network: ${url}  (${name})${virtual ? '  [virtual adapter]' : ''}`);
+      }
+      console.log('[MobileServer] Pair the phone with the rotating passcode from the tray menu.');
+    })().finally(() => { starting = null; });
+
+    await starting;
+    return getStatus();
+  }
+
+  /** Stops listening, drops every socket and invalidates every phone session. */
+  function stop() {
+    enabled = false;
+    status.enabled = false;
+    generation += 1;
+    if (timer) { clearInterval(timer); timer = null; }
+    for (const ws of clients) {
+      clearTimeout(ws.chunkTimer);
+      try { ws.terminate(); } catch (_) { /* ignore */ }
     }
-  });
+    clients.clear();
+    sessions.clear();
+    closeServers();
+    status.listening = false;
+    status.urls = [];
+    status.clientCount = 0;
+    emitStatus();
+    return getStatus();
+  }
+
+  /** Persists the user's choice, then applies it. */
+  async function setEnabled(value) {
+    const next = value === true;
+    let saveError = null;
+    try {
+      enabledStore.save(next);
+    } catch (err) {
+      saveError = `Could not save the setting: ${err.message}`;
+      console.error(`[MobileServer] ${saveError}`);
+    }
+    if (next) await start(); else stop();
+    if (saveError) status.error = saveError;
+    return getStatus();
+  }
+
+  if (autoStart && enabled) {
+    start().catch((err) => console.error('[MobileServer] Start failed:', err.message));
+  }
 
   return {
     broadcast,
@@ -1072,19 +1511,17 @@ function createMobileServer({
     broadcastToken,
     broadcastComplete,
     broadcastError,
-    sessionToken,
-    getStatus: () => ({ ...status }),
+    start,
+    stop,
+    setEnabled,
+    revokeSessions() { revokeAllSessions(); return getStatus(); },
+    get isEnabled() { return enabled; },
+    getStatus,
+    getSnapshot: snapshot,
     emitStatus,
-    close() {
-      try {
-        wss.close();
-        httpServer.close();
-        status.listening = false;
-        status.clientCount = 0;
-        emitStatus();
-      } catch (_) { /* ignore */ }
-    }
+    sweep,
+    close: stop
   };
 }
 
-module.exports = { createMobileServer };
+module.exports = { createMobileServer, createFileEnabledStore, getLanAddresses };

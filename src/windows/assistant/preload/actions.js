@@ -8,6 +8,12 @@ function createInvokeActions(ipcRenderer) {
       fallback: (error) => ({ error: error.message })
     }),
 
+    setCompactMode: invokeWithFallback(ipcRenderer, {
+      channel: 'set-compact-mode',
+      label: 'setCompactMode',
+      fallback: (error) => ({ error: error.message })
+    }),
+
     emergencyHide: invokeWithFallback(ipcRenderer, {
       channel: 'emergency-hide',
       label: 'emergencyHide',
@@ -38,6 +44,12 @@ function createInvokeActions(ipcRenderer) {
       fallback: (error) => ({ success: false, error: error.message })
     }),
 
+    cancelAskAi: invokeWithFallback(ipcRenderer, {
+      channel: 'cancel-ask-ai',
+      label: 'cancelAskAi',
+      fallback: () => ({ success: false, cancelled: false })
+    }),
+
     clearStealth: invokeWithFallback(ipcRenderer, {
       channel: 'clear-stealth',
       label: 'clearStealth',
@@ -48,6 +60,12 @@ function createInvokeActions(ipcRenderer) {
       channel: 'get-screenshots-count',
       label: 'getScreenshotsCount',
       fallback: () => 0
+    }),
+
+    getInterviewContextStatus: invokeWithFallback(ipcRenderer, {
+      channel: 'get-interview-context-status',
+      label: 'getInterviewContextStatus',
+      fallback: () => ({ hasResume: false, hasJd: false, role: '', company: '', updatedAt: null })
     }),
 
     getWindowBounds: invokeWithFallback(ipcRenderer, {
@@ -81,6 +99,107 @@ function createInvokeActions(ipcRenderer) {
       label: 'stopVoiceRecognition',
       transformArgs: (args) => [{ source: args[0] }],
       fallback: (error) => ({ error: error.message })
+    }),
+
+    // Legacy BlackHole input path: needs the microphone permission gate.
+    startLegacyLoopbackRecognition: invokeWithFallback(ipcRenderer, {
+      channel: 'start-voice-recognition',
+      label: 'startLegacyLoopbackRecognition',
+      transformArgs: () => [{ source: 'system', legacyLoopback: true }],
+      fallback: (error) => ({ error: error.message })
+    }),
+
+    probeNativeSystemAudio: invokeWithFallback(ipcRenderer, {
+      channel: 'native-system-audio-probe',
+      label: 'probeNativeSystemAudio',
+      transformArgs: (args) => [{ fresh: Boolean(args[0]?.fresh) }],
+      fallback: (error) => ({ available: false, reason: error.message })
+    }),
+
+    companionGetState: invokeWithFallback(ipcRenderer, { channel: 'companion:get-state', label: 'companionGetState', fallback: () => null }),
+    companionSetEnabled: invokeWithFallback(ipcRenderer, {
+      channel: 'companion:set-enabled',
+      label: 'companionSetEnabled',
+      transformArgs: (args) => [args[0] === true],
+      fallback: () => null
+    }),
+    companionRevokeSessions: invokeWithFallback(ipcRenderer, { channel: 'companion:revoke-sessions', label: 'companionRevokeSessions', fallback: () => null }),
+
+    webSyncState: invokeWithFallback(ipcRenderer, { channel: 'web-sync:state', label: 'webSyncState', fallback: () => null }),
+    webSyncLink: invokeWithFallback(ipcRenderer, {
+      channel: 'web-sync:link',
+      label: 'webSyncLink',
+      transformArgs: (args) => [{ baseUrl: String(args[0] || '') }],
+      fallback: () => null
+    }),
+    webSyncCancelLink: invokeWithFallback(ipcRenderer, { channel: 'web-sync:cancel-link', label: 'webSyncCancelLink', fallback: () => null }),
+    webSyncCheck: invokeWithFallback(ipcRenderer, { channel: 'web-sync:check', label: 'webSyncCheck', fallback: () => null }),
+    webSyncApply: invokeWithFallback(ipcRenderer, { channel: 'web-sync:apply', label: 'webSyncApply', fallback: () => null }),
+    webSyncUnlink: invokeWithFallback(ipcRenderer, { channel: 'web-sync:unlink', label: 'webSyncUnlink', fallback: () => null }),
+    webSyncViewPdf: invokeWithFallback(ipcRenderer, {
+      channel: 'web-sync:view-pdf',
+      label: 'webSyncViewPdf',
+      fallback: (error) => ({ success: false, error: error.message })
+    }),
+
+    getContext: invokeWithFallback(ipcRenderer, {
+      channel: 'context:get',
+      label: 'getContext',
+      fallback: () => null
+    }),
+
+    updateContext: invokeWithFallback(ipcRenderer, {
+      channel: 'context:update',
+      label: 'updateContext',
+      fallback: (error) => ({ success: false, error: error.message })
+    }),
+
+    importResume: invokeWithFallback(ipcRenderer, {
+      channel: 'context:import-resume',
+      label: 'importResume',
+      fallback: (error) => ({ success: false, error: error.message })
+    }),
+
+    removeResume: invokeWithFallback(ipcRenderer, {
+      channel: 'context:remove-resume',
+      label: 'removeResume',
+      fallback: (error) => ({ success: false, error: error.message })
+    }),
+
+    testNativeSystemAudio: invokeWithFallback(ipcRenderer, {
+      channel: 'native-system-audio-test',
+      label: 'testNativeSystemAudio',
+      fallback: (error) => ({ success: false, code: 'IPC_FAILED', error: error.message })
+    }),
+
+    getMediaAccessStatus: invokeWithFallback(ipcRenderer, {
+      channel: 'get-media-access-status',
+      label: 'getMediaAccessStatus',
+      fallback: () => ({ microphone: 'unknown' })
+    }),
+
+    requestMicrophoneAccess: invokeWithFallback(ipcRenderer, {
+      channel: 'request-microphone-access',
+      label: 'requestMicrophoneAccess',
+      fallback: () => ({ granted: false })
+    }),
+
+    runAiTestAnswer: invokeWithFallback(ipcRenderer, {
+      channel: 'ai-test-answer',
+      label: 'runAiTestAnswer',
+      fallback: (error) => ({ success: false, error: error.message })
+    }),
+
+    startNativeSystemAudio: invokeWithFallback(ipcRenderer, {
+      channel: 'native-system-audio-start',
+      label: 'startNativeSystemAudio',
+      fallback: (error) => ({ success: false, code: 'IPC_FAILED', error: error.message })
+    }),
+
+    stopNativeSystemAudio: invokeWithFallback(ipcRenderer, {
+      channel: 'native-system-audio-stop',
+      label: 'stopNativeSystemAudio',
+      fallback: () => ({ success: false })
     }),
 
     sendAudioChunk: (source, audioData) => {
@@ -210,12 +329,6 @@ function createInvokeActions(ipcRenderer) {
       channel: 'mobile-server-get-passcode',
       label: 'getMobilePasscode',
       fallback: () => ''
-    }),
-
-    getAudioRoutingStatus: invokeWithFallback(ipcRenderer, {
-      channel: 'get-audio-routing-status',
-      label: 'getAudioRoutingStatus',
-      fallback: () => ({ applicable: false, ok: false, detail: 'Routing check unavailable' })
     }),
 
     getDiagnosticSnapshot: invokeWithFallback(ipcRenderer, {

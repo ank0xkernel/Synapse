@@ -1,6 +1,5 @@
 'use strict';
 
-const { exec } = require('child_process');
 const http = require('http');
 
 const { WHISPER_HOST, WHISPER_PORT } = require('./stt/stt-constants');
@@ -73,152 +72,49 @@ function checkOllama(baseUrl) {
 }
 
 /**
- * BlackHole is the macOS loopback device used to capture system audio. On other
- * platforms system audio is captured through desktopCapturer, so the check is
- * reported as not-applicable rather than failing.
+ * Projects the native capture helper's live state (native-system-audio.js)
+ * into the same {ok, applicable, detail} shape the other probes use. `ok` is
+ * null while capture is simply not running: that is not a fault.
  */
-function checkBlackHole() {
+function describeSystemAudioCapture(probe, state) {
   if (process.platform !== 'darwin') {
-    return Promise.resolve({ ok: true, applicable: false, detail: 'Not required on this platform' });
+    return { ok: null, applicable: false, detail: 'Native capture is macOS only' };
   }
-
-  return new Promise((resolve) => {
-    exec('system_profiler SPAudioDataType -json', { timeout: 4000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout) => {
-      if (error) {
-        resolve({ ok: false, applicable: true, detail: 'Could not enumerate audio devices' });
-        return;
-      }
-
-      const found = /blackhole/i.test(stdout || '');
-      resolve({
-        ok: found,
-        applicable: true,
-        detail: found ? 'BlackHole detected' : 'BlackHole 2ch not installed'
-      });
-    });
-  });
-}
-
-/**
- * BlackHole existing says nothing about whether it's actually receiving
- * anything — that requires macOS's audio OUTPUT to be routed to it (directly,
- * or via a Multi-Output/Aggregate device that includes it), which is a manual
- * System Settings step this app cannot perform on the user's behalf. This
- * reports the one fact `checkBlackHole()` deliberately doesn't: which output
- * device macOS is actually using right now, and whether BlackHole is it.
- * `system_profiler`'s JSON does not expose Multi-Output/Aggregate sub-device
- * membership (verified directly — no key for it), so a device whose name
- * merely suggests it fans out to BlackHole is reported as "unverified", never
- * assumed correct. The silence watchdog (transcription-manager.js) remains
- * the authoritative "is audio actually arriving" signal; this only makes the
- * routing state visible without waiting 12s to find out.
- */
-function checkAudioOutputRouting() {
-  if (process.platform !== 'darwin') {
-    return Promise.resolve({ applicable: false });
+  if (!probe || !probe.available) {
+    return { ok: false, applicable: true, detail: `Native capture unavailable (${probe?.reason || 'unknown'})` };
   }
-
-  return new Promise((resolve) => {
-    exec('system_profiler SPAudioDataType -json', { timeout: 4000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout) => {
-      if (error) {
-        resolve({ applicable: true, ok: false, detail: 'Could not enumerate audio devices' });
-        return;
-      }
-
-      try {
-        const items = JSON.parse(stdout || '{}')?.SPAudioDataType?.[0]?._items || [];
-        const defaultOut = items.find((d) => d.coreaudio_default_audio_output_device === 'spaudio_yes');
-        const name = defaultOut?._name || 'unknown';
-        const isBlackHoleDirectly = /blackhole/i.test(name);
-        // A real Aggregate/Multi-Output device reports this transport type;
-        // its actual sub-device list isn't in this JSON, so membership is a
-        // hint from the device existing at all, not a verified fact.
-        const looksLikeRoutingDevice = /aggregate|multi-?output/i.test(name)
-          || defaultOut?.coreaudio_device_transport === 'coreaudio_device_type_unknown';
-
-        resolve({
-          applicable: true,
-          ok: isBlackHoleDirectly || looksLikeRoutingDevice,
-          defaultOutputName: name,
-          isBlackHoleDirectly,
-          looksLikeRoutingDevice,
-          detail: isBlackHoleDirectly
-            ? 'BlackHole is the direct system output'
-            : looksLikeRoutingDevice
-              ? `"${name}" looks like a routing device — membership unverified`
-              : `System output is "${name}", which does not appear to route to BlackHole`
-        });
-      } catch (parseError) {
-        resolve({ applicable: true, ok: false, detail: `Could not parse audio device list: ${parseError.message}` });
-      }
-    });
-  });
-}
-
-/**
- * Phase 13: the "Synapse Output" aggregate/multi-output device some users
- * create in Audio MIDI Setup (so they can hear the call AND have it reach
- * BlackHole) has never been checkable by the app itself -- the diagnostic
- * snapshot needs to show whether it exists and whether it's the device
- * actually active right now, same as checkAudioOutputRouting does for
- * BlackHole. Same exec pattern as the two checks above, not a shared call --
- * consistent with how they're already written, not a new optimization.
- */
-function checkSynapseOutputDevice() {
-  if (process.platform !== 'darwin') {
-    return Promise.resolve({ applicable: false });
+  if (state?.running && state.backend) {
+    const dropped = state.lastStats?.droppedSamples || 0;
+    return {
+      ok: true,
+      applicable: true,
+      backend: state.backend,
+      detail: dropped > 0 ? `Capturing via ${state.backend}, ${dropped} samples dropped` : `Capturing via ${state.backend}`
+    };
   }
-
-  return new Promise((resolve) => {
-    exec('system_profiler SPAudioDataType -json', { timeout: 4000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout) => {
-      if (error) {
-        resolve({ applicable: true, exists: false, active: false, detail: 'Could not enumerate audio devices' });
-        return;
-      }
-
-      try {
-        const items = JSON.parse(stdout || '{}')?.SPAudioDataType?.[0]?._items || [];
-        const device = items.find((d) => /synapse output/i.test(d._name || ''));
-        const defaultOut = items.find((d) => d.coreaudio_default_audio_output_device === 'spaudio_yes');
-        const active = !!device && defaultOut?._name === device._name;
-
-        resolve({
-          applicable: true,
-          exists: !!device,
-          active,
-          detail: !device
-            ? '"Synapse Output" device not found'
-            : active
-              ? '"Synapse Output" is the current default output'
-              : '"Synapse Output" exists but is not the current default output'
-        });
-      } catch (parseError) {
-        resolve({ applicable: true, exists: false, active: false, detail: `Could not parse audio device list: ${parseError.message}` });
-      }
-    });
-  });
+  if (state?.lastError) {
+    return { ok: false, applicable: true, detail: `${state.lastError.code}: ${state.lastError.message}` };
+  }
+  return { ok: null, applicable: true, detail: `Ready (${probe.recommendedBackend}), not capturing` };
 }
 
 /**
  * Probes everything the dashboard shows, in parallel.
- * @param {{ollamaBaseUrl?: string, firstTokenMs?: number|null}} [options]
+ * @param {{ollamaBaseUrl?: string, firstTokenMs?: number|null, getSystemAudioCapture?: () => Promise<{probe: object, state: object}|null>}} [options]
  */
 async function probeAll(options = {}) {
-  const [whisperOk, whisperMicOk, ollamaOk, blackHole, audioOutputRouting] = await Promise.all([
+  const [whisperOk, whisperMicOk, ollamaOk, capture] = await Promise.all([
     checkWhisper(),
     checkWhisperMic(),
     checkOllama(options.ollamaBaseUrl),
-    checkBlackHole(),
-    checkAudioOutputRouting()
+    Promise.resolve(options.getSystemAudioCapture ? options.getSystemAudioCapture() : null).catch(() => null)
   ]);
 
   return {
     whisperOk,
     whisperMicOk,
     ollamaOk,
-    blackHoleOk: blackHole.ok,
-    blackHole,
-    audioOutputRouting,
+    systemAudioCapture: describeSystemAudioCapture(capture?.probe, capture?.state),
     firstTokenMs: options.firstTokenMs ?? null,
     checkedAt: new Date().toISOString()
   };
@@ -227,11 +123,9 @@ async function probeAll(options = {}) {
 module.exports = {
   MIC_WHISPER_PORT,
   OLLAMA_PORT,
-  checkAudioOutputRouting,
-  checkBlackHole,
   checkOllama,
-  checkSynapseOutputDevice,
   checkWhisper,
   checkWhisperMic,
+  describeSystemAudioCapture,
   probeAll
 };

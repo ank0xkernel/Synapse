@@ -16,6 +16,7 @@
 
 import { createQuestionDetector } from './question-detector.js';
 import { createConversationTracker, isBareFollowUp, formatActiveContextBlock } from './conversation-tracker.js';
+import { shouldSupersede } from './supersede-policy.js';
 
 const STORAGE_KEY = 'synapse_auto_answer';
 
@@ -132,11 +133,48 @@ function initAutoAnswer() {
         return `q_${Date.now()}_${questionSeq}`;
     }
 
+    // The question currently being answered (askBtn disabled because of it),
+    // or null when idle. Used only by the supersede check above — this is
+    // what "dispatchedAt" measures elapsed time against, and what gets
+    // cancelled when a later question turns out to be extending this one.
+    let dispatchedQuestion = null;
+
     function publishQueue() {
         window.electronAPI?.reportQuestionQueue?.({
             pending: questionQueue.length,
             questions: questionQueue.map((entry) => entry.text)
         });
+    }
+
+    /**
+     * Shared by both the early-fire (partial) and final-transcript detection
+     * paths: pushes `item` onto the queue, then either dispatches it right
+     * away, supersedes whatever is currently in flight, or leaves it queued
+     * FIFO-style behind that in-flight answer — see shouldSupersede above.
+     */
+    function enqueueQuestion(item, relation) {
+        questionQueue.push(item);
+        publishQueue();
+
+        if (!askBtn.disabled) {
+            processNextQuestion();
+            return;
+        }
+
+        if (dispatchedQuestion && shouldSupersede(relation, dispatchedQuestion.dispatchedAt)) {
+            console.log(`[AutoAnswer] Superseding in-flight answer to "${dispatchedQuestion.text.slice(0, 60)}" — new question (${relation}) "${item.text.slice(0, 80)}"`);
+            // Collapse the queue to just this question: anything else queued
+            // ahead of it was itself only waiting on the answer that's about
+            // to be interrupted, and is now equally stale.
+            questionQueue.length = 0;
+            questionQueue.push(item);
+            publishQueue();
+            window.electronAPI?.cancelAskAi?.();
+        } else {
+            console.log(`[AutoAnswer] Busy — queued question (${questionQueue.length} pending): "${item.text.slice(0, 60)}"`);
+        }
+
+        waitForIdleThenDrain();
     }
 
     /*
@@ -218,14 +256,18 @@ function initAutoAnswer() {
 
         console.log(`[QUESTION] dispatch id=${question.id} t=${Date.now()} queue=${questionQueue.length} text="${question.text.slice(0, 80)}"`);
         console.log(`[AutoAnswer] Answering via Gemini (Ask AI): "${question.text.slice(0, 80)}"`);
+        // Recorded before the click so the supersede check above always sees
+        // an accurate "what's in flight right now" even though the click
+        // itself is fire-and-forget.
+        dispatchedQuestion = { id: question.id, text: question.text, dispatchedAt: Date.now() };
         askBtn.click();
 
         if (askBtn.disabled) {
             waitForIdleThenDrain();
         } else {
-            // Nothing actually started (e.g. no transcript yet) — try the rest
-            // of the queue without waiting on a disabled-state change that
-            // will never come.
+            // Nothing actually started (e.g. no transcript yet) — nothing is
+            // actually in flight to supersede or wait on.
+            dispatchedQuestion = null;
             processNextQuestion();
         }
     }
@@ -363,21 +405,14 @@ function initAutoAnswer() {
                 // (see processNextQuestion) so latencyTracker gets a real
                 // renderer-measured T0 instead of defaulting to whenever the
                 // main process happens to receive the click.
-                questionQueue.push({
+                console.log(`[AutoAnswer] Early-fired from partial (score ${score.toFixed(2)}): "${text.slice(0, 80)}"`);
+                enqueueQuestion({
                     id: questionId,
                     text,
                     resolvedAnnotation: wasResolved ? resolved : null,
                     activeContext: formatActiveContextBlock(questionResult),
                     t0
-                });
-                publishQueue();
-                console.log(`[AutoAnswer] Early-fired from partial (score ${score.toFixed(2)}): "${text.slice(0, 80)}"`);
-
-                if (askBtn.disabled) {
-                    waitForIdleThenDrain();
-                } else {
-                    processNextQuestion();
-                }
+                }, relation);
             }, SETTLE_FINISHED_MS);
         });
     }
@@ -452,12 +487,17 @@ function initAutoAnswer() {
             }
 
             /*
-             * Strict FIFO Queue
-             * Ensure no questions are discarded and they are processed in order.
+             * FIFO by default — no question is ever silently discarded — but
+             * enqueueQuestion() (see shouldSupersede above) jumps a question
+             * that reads as continuing/refining the one currently in flight
+             * straight to the front, cancelling the stale in-flight answer
+             * instead of leaving it queued behind a full answer nobody's
+             * waiting on any more.
              */
             const questionId = nextQuestionId();
             const t0 = Date.now();
             console.log(`[QUESTION] detected id=${questionId} t=${t0} queue=${questionQueue.length} source=final settleMs=${settleMs} text="${resolved.slice(0, 80)}"`);
+            console.log(`[AutoAnswer] Host asked: "${resolved.slice(0, 80)}" — settled after ${settleMs}ms.`);
             // Carried on the queue item rather than annotated immediately:
             // the raw utterance isn't actually committed to chat until
             // processNextQuestion() flushes it at dispatch time (below), which
@@ -467,22 +507,13 @@ function initAutoAnswer() {
             // recent "Host:" line, so getLatestHostQuery() would pick the
             // raw fragment right back up. Deferring this to fire right after
             // the flush is what actually fixes the ordering.
-            questionQueue.push({
+            enqueueQuestion({
                 id: questionId,
                 text: resolved,
                 resolvedAnnotation: wasResolved ? resolved : null,
                 activeContext: formatActiveContextBlock(questionResult),
                 t0
-            });
-            publishQueue();
-
-            if (askBtn.disabled) {
-                console.log(`[AutoAnswer] Busy — queued question (${questionQueue.length} pending): "${resolved.slice(0, 60)}"`);
-                waitForIdleThenDrain();
-            } else {
-                console.log(`[AutoAnswer] Host asked: "${resolved.slice(0, 80)}" — answering (waited ${settleMs}ms).`);
-                processNextQuestion();
-            }
+            }, relation);
         }, settleMs);
     });
 
@@ -509,6 +540,12 @@ function initAutoAnswer() {
             conversationTracker.recordAnswer(pendingAnswerText.trim());
         }
         pendingAnswerText = '';
+        // Nothing is in flight the instant this fires, whether it ended in
+        // success, a real error, or a supersede-triggered cancellation — the
+        // next processNextQuestion() call (already scheduled via
+        // waitForIdleThenDrain's MutationObserver once askBtn re-enables)
+        // will set a fresh one if the queue has more work.
+        dispatchedQuestion = null;
     });
 
     console.log('[AutoAnswer] Listening to the host channel.');

@@ -51,11 +51,9 @@ function createAssistantWindow({
     frame: false,
     // The window itself is now genuinely see-through; the visible "glass"
     // shape (blur, tint, border, shadow) is painted entirely by
-    // #app.glass-container in styles.css/ui-shell.css, which already existed
-    // and was already CSS-variable-driven (--shell-veil/--shell-brightness,
-    // wired live in command-bar.js's initAppearanceControls()) — it was just
-    // rendering against this window's own opaque backgroundColor instead of
-    // the desktop. hasShadow stays false: a native window shadow would draw
+    // .app in ui/app.css, driven by CSS variables (--shell-veil,
+    // --shell-blur, --shell-brightness) that command-bar.js's
+    // initAppearanceControls() sets live from the Settings sliders. hasShadow stays false: a native window shadow would draw
     // a rectangle around the full (now invisible) window bounds, not around
     // the rounded glass shape — the shadow the user actually sees comes from
     // .glass-container's own box-shadow.

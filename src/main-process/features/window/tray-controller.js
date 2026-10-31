@@ -61,7 +61,7 @@ class TrayController {
     if (this.watchdog) {
       await this.watchdog.performHealthCheck();
       const statusMsg = this.watchdog.isHealthy 
-        ? '🟢 All Synapse local services (Whisper Core ML, Ollama Metal, BlackHole) are operational!'
+        ? '🟢 All monitored Synapse local services are operational.'
         : '🔴 System check notice: One or more local services experienced a fault. Recovery triggered.';
       
       dialog.showMessageBox({
@@ -84,6 +84,7 @@ class TrayController {
     const totpToken = this.totp.generateToken();
     const serverStatus = this.mobileServer ? this.mobileServer.getStatus() : null;
     const clientCount = serverStatus ? serverStatus.clientCount : 0;
+    const companionOn = !!(serverStatus && serverStatus.listening);
 
     let statusEmoji = '🟢';
     if (this.status === 'warning') statusEmoji = '🟡';
@@ -95,13 +96,28 @@ class TrayController {
         enabled: false
       },
       {
-        label: `Show Passcode: ${totpToken}`,
+        label: 'Phone Companion (HTTP on local Wi-Fi)',
+        type: 'checkbox',
+        checked: !!(serverStatus && serverStatus.enabled),
+        enabled: !!this.mobileServer,
+        click: async (item) => {
+          // Off until the user turns it on here; turning it off drops every phone.
+          await this.mobileServer.setEnabled(item.checked);
+          this.updateContextMenu();
+        }
+      },
+      {
+        label: companionOn ? `Show Passcode: ${totpToken}` : 'Show Passcode (companion is off)',
+        enabled: companionOn,
         click: () => {
           // Re-read at click time: the menu label may have been built a while
           // ago and the code rotates every 30 seconds.
           const currentToken = this.totp.generateToken();
           const secondsLeft = this.totp.secondsUntilRotation();
-          const url = serverStatus && serverStatus.networkUrl ? serverStatus.networkUrl : null;
+          const live = this.mobileServer.getStatus();
+          // `urls` is ordered real-adapters-first, so the first entry is the
+          // best guess at an address a phone can reach. URLs carry no secret.
+          const url = Array.isArray(live.urls) && live.urls.length > 0 ? live.urls[0].url : null;
 
           clipboard.writeText(currentToken);
           dialog.showMessageBox({
@@ -109,8 +125,9 @@ class TrayController {
             title: 'Synapse Passcode',
             message: `Passcode: ${currentToken}`,
             detail: [
-              `Rotates in ${secondsLeft}s. Copied to clipboard.`,
-              url ? `\nOn your phone, open:\n${url}` : ''
+              `Rotates in ${secondsLeft}s and works once. Copied to clipboard.`,
+              url ? `\nOn your phone (same Wi-Fi), open:\n${url}` : '',
+              '\n\nThis link is plain HTTP on your local network, not end-to-end encrypted.'
             ].join('')
           });
         }

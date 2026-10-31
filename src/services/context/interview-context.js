@@ -24,8 +24,11 @@ const FIELDS = Object.freeze({
   company: { label: 'Company', max: 200 },
   interviewType: { label: 'Interview type', max: 60 },
   seniority: { label: 'Seniority', max: 60 },
-  jobDescription: { label: 'Job description', max: 8000 },
-  background: { label: 'Your background', max: 8000 },
+  jobDescription: { label: 'Job description', max: 50000 },
+  // Full resume text is stored; live prompts only receive the sections
+  // relevant to each question (prompts.js retrieval), never the whole text.
+  // Matches the website's limit (web/lib/resume-extract.ts).
+  background: { label: 'Your background', max: 200000 },
   focusAreas: { label: 'Topics to emphasise', max: 2000 },
   avoidTopics: { label: 'Topics to avoid', max: 2000 },
   answerStyle: { label: 'Answer style', max: 60 },
@@ -36,7 +39,12 @@ const FIELDS = Object.freeze({
   round: { label: 'Interview round', max: 60 },
   duration: { label: 'Duration', max: 60 },
   interviewerContext: { label: 'Interviewer context', max: 500 },
-  difficulty: { label: 'Difficulty', max: 60 }
+  difficulty: { label: 'Difficulty', max: 60 },
+  // Where the resume text came from, shown in the Context panel. Not part
+  // of the prompt (toPromptBlock lists its fields explicitly).
+  resumeFileName: { label: 'Resume file', max: 260 },
+  resumeImportedAt: { label: 'Resume imported', max: 40 },
+  resumeSource: { label: 'Resume source', max: 20 }
 });
 
 const ANSWER_STYLES = ['concise', 'balanced', 'detailed'];
@@ -130,9 +138,17 @@ function sanitize(input = {}) {
   if (!INTERVIEW_TYPES.includes(clean.interviewType)) clean.interviewType = 'auto';
 
   clean.structuredProfile = buildStructuredProfile(clean);
+  clean.profileVersion = PROFILE_VERSION;
   clean.updatedAt = new Date().toISOString();
   return clean;
 }
+
+// Bump when resume/JD extraction changes, so profiles saved by an older
+// parser are rebuilt once from their own saved text on the next load.
+// 2: section headings matched as written ("PROFESSIONAL SUMMARY", "Skills:
+//    a, b"); name/contact lines no longer counted as experience.
+// 3: headings with extra words ("INTERNSHIP EXPERIENCE", "ACADEMIC PROJECTS").
+const PROFILE_VERSION = 3;
 
 function load() {
   const file = getStorePath();
@@ -144,6 +160,17 @@ function load() {
     }
 
     const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    // Only a profile that already exists and was built by an older parser is
+    // rebuilt. A file with no structuredProfile at all (saved before profiles
+    // existed) stays untouched: consumers fall back to plain text for it.
+    if (parsed.structuredProfile && parsed.profileVersion !== PROFILE_VERSION) {
+      // Rebuild from the saved text only; keep the user's original updatedAt.
+      const rebuilt = { ...sanitize({ ...defaults(), ...parsed }), updatedAt: parsed.updatedAt || null };
+      fs.writeFileSync(file, JSON.stringify(rebuilt, null, 2), 'utf8');
+      cached = rebuilt;
+      cachedMtimeMs = fs.statSync(file).mtimeMs;
+      return cached;
+    }
     cached = { ...defaults(), ...parsed };
     cachedMtimeMs = stat.mtimeMs;
     return cached;

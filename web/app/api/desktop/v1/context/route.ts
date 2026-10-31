@@ -1,0 +1,26 @@
+import { NextResponse } from 'next/server';
+import { api, ApiError, uuid } from '@/lib/http';
+import { requireDevice } from '@/lib/device';
+import { buildContextBundle } from '@/lib/data';
+
+export const dynamic = 'force-dynamic';
+
+/** Desktop pulls this once before a live session. Bearer device token only; cookies are ignored. */
+export const GET = api(async (req) => {
+  const dev = await requireDevice(req);
+  const sessionParam = new URL(req.url).searchParams.get('session');
+  let sessionId: string | null = null;
+  if (sessionParam !== null) {
+    const r = uuid.safeParse(sessionParam);
+    if (!r.success) throw new ApiError(404, 'Session not found');
+    sessionId = r.data;
+  }
+  const out = await buildContextBundle(dev.userId, sessionId);
+  if (out === 'session_not_found') throw new ApiError(404, 'Session not found');
+  if (out === 'no_context') throw new ApiError(404, 'No active context. Create a session or activate a resume on the website.');
+
+  const headers = { ETag: out.etag, 'Cache-Control': 'private, no-cache' };
+  const inm = req.headers.get('if-none-match');
+  if (inm && inm.split(',').map((s) => s.trim().replace(/^W\//, '')).includes(out.etag)) return new NextResponse(null, { status: 304, headers });
+  return NextResponse.json({ ok: true, etag: out.etag, ...out.body }, { headers });
+}, { bearer: true });

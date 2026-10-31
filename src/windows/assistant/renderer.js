@@ -10,6 +10,14 @@ import { setupIpcListeners as setupIpcListenersModule } from './renderer/feature
 import { createShortcutManager } from './renderer/features/settings/shortcut-manager.js';
 import { createSettingsPanelManager } from './renderer/features/settings/settings-panel-manager.js';
 import { createTranscriptionManager } from './renderer/features/transcription/transcription-manager.js';
+import { deriveSessionState, applySessionState } from './renderer/features/session/session-state.js';
+import { initPanels } from './renderer/features/panels/panels.js';
+
+const sessionStateEl = document.getElementById('session-state');
+const sessionStateLabelEl = document.getElementById('session-state-label');
+const sessionAnswerState = { pending: false, streaming: false, error: null };
+let sessionWasListening = false;
+let transcriptionManagerReady = false;
 
 import {
     createTranscriptionSourceState,
@@ -246,6 +254,7 @@ const analyzeBtn = document.getElementById('analyze-btn');
 const screenAiBtn = document.getElementById('screen-ai-btn');
 const clearBtn = document.getElementById('clear-btn');
 const hideBtn = document.getElementById('hide-btn');
+const compactModeBtn = document.getElementById('compact-mode-btn');
 const closeResultsBtn = document.getElementById('close-results');
 const closeAppBtn = document.getElementById('close-app-btn');
 const closeConfirmationDialog = document.getElementById('close-confirmation-dialog');
@@ -293,6 +302,12 @@ const MAX_CHAT_INPUT_HEIGHT = 88;
 let isCloseConfirmationOpen = false;
 let hasGeminiApiKeysConfigured = false;
 let hasAssemblyAiApiKeyConfigured = false;
+// Whether resume/JD context (entered through the web companion) was found
+// on disk the last time it was checked — see loadInterviewContextStatus().
+// Starts true (i.e. "don't warn yet") so a slow/failed status fetch never
+// flashes a false "no resume loaded" warning before the real check lands.
+let hasResumeContext = true;
+let hasJdContext = true;
 const aiActionInFlightState = {
     askAi: false,
     screenAi: false,
@@ -325,7 +340,17 @@ const chatUiManager = createChatUiManager({
     },
     showFeedback: (message, type) => showFeedback(message, type),
     addMonitorLog: (...args) => addMonitorLog(...args),
-    isAutoScrollEnabled
+    isAutoScrollEnabled,
+    onStopAnswer: () => {
+        window.electronAPI?.cancelAskAi?.();
+    },
+    onRegenerateAnswer: () => {
+        if (analyzeBtn && !analyzeBtn.disabled) {
+            analyzeBtn.click();
+        } else {
+            showFeedback('Nothing to regenerate yet', 'info');
+        }
+    }
 });
 const settingsPanelManager = createSettingsPanelManager({
     settingsPanel,
@@ -371,8 +396,28 @@ const transcriptionManager = createTranscriptionManager({
     addChatMessage: (type, content, options) => addChatMessage(type, content, options),
     showFeedback: (message, type) => showFeedback(message, type),
     isAutoScrollEnabled,
-    isChatNearBottom: () => chatUiManager.isChatNearBottom()
+    isChatNearBottom: () => chatUiManager.isChatNearBottom(),
+    onStateChange: () => updateSessionStatus()
 });
+transcriptionManagerReady = true;
+
+initPanels({
+    getSourceStatuses: () => transcriptionManager.sourceStatuses,
+    getTranscriptionFailure: () => transcriptionManager.getLastPermanentFailure(),
+    openSettings: () => document.getElementById('settings-btn')?.click(),
+    showFeedback: (message, type) => showFeedback(message, type)
+});
+
+// Development screenshot harness only (src/main-process/dev/ui-capture.js):
+// renders an answer through the real stream handler, with chunks the harness
+// sends over the same ai-stream-chunk channel Gemini uses.
+window.__synapseBeginDemoStream = () => {
+    const stream = createStreamHandler('askAi');
+    stream.start('');
+    window.__synapseEndDemoStream = (finished = true) => {
+        if (finished) stream.cleanup();
+    };
+};
 
 /*
  * Phase 13: "Copy Diagnostics" — the one new user-facing action this phase
@@ -410,6 +455,12 @@ async function init() {
     }
 
     const settings = await loadShortcutConfig();
+    // Fire-and-forget: must not block the rest of startup on an extra IPC
+    // round trip, and updateSetupHint() (called at the end of this function
+    // via applyApiKeyAvailabilityFromSettings) already runs once before this
+    // resolves — loadInterviewContextStatus calls it again itself once the
+    // real status is known, which is what actually shows the warning.
+    loadInterviewContextStatus();
     setupEventListeners();
     setupIpcListeners();
     setupWindowAdjustments();
@@ -621,7 +672,14 @@ function createStreamHandler(actionId) {
 
     function start(headingPrefix) {
         accumulatedText = headingPrefix || '';
-        messageRecord = addChatMessage('ai-response', accumulatedText || '...');
+        messageRecord = addChatMessage('ai-response', accumulatedText || '');
+        if (messageRecord) chatUiManager.setMessageStreaming(messageRecord.id, true);
+        if (actionId === 'askAi') {
+            sessionAnswerState.pending = true;
+            sessionAnswerState.streaming = false;
+            sessionAnswerState.error = null;
+            updateSessionStatus();
+        }
 
         if (actionId === 'askAi') {
             // Read-and-clear: this is set once, synchronously, immediately
@@ -640,6 +698,8 @@ function createStreamHandler(actionId) {
             if (actionId === 'askAi' && !firstTokenLogged) {
                 firstTokenLogged = true;
                 console.log(`[AI] first-token id=${questionId || 'manual'} +${Date.now() - requestStartAt}ms`);
+                sessionAnswerState.streaming = true;
+                updateSessionStatus();
             }
 
             accumulatedText += data.text;
@@ -664,14 +724,45 @@ function createStreamHandler(actionId) {
         }
     }
 
+    // The interviewer updated/extended the question while this was still
+    // streaming (see cancel-ask-ai / auto-answer.js's supersede check) —
+    // whatever text had rendered so far is genuinely stale, not broken, so
+    // it's marked rather than left looking like a silently truncated answer.
+    function markInterrupted() {
+        if (actionId === 'askAi' && requestStartAt) {
+            console.log(`[AI] interrupted id=${questionId || 'manual'} +${Date.now() - requestStartAt}ms — question updated`);
+        }
+        if (!messageRecord) return;
+        const note = accumulatedText.trim()
+            ? `${accumulatedText}\n\n_(interrupted — answering the updated question instead)_`
+            : '_(skipped — the question was updated before an answer arrived)_';
+        chatUiManager.updateChatMessageContent(messageRecord.id, note);
+    }
+
     function cleanup() {
         if (removeChunkListener) {
             removeChunkListener();
             removeChunkListener = null;
         }
+        if (messageRecord) {
+            chatUiManager.setMessageStreaming(messageRecord.id, false, { regenerable: actionId === 'askAi' });
+        }
+        if (actionId === 'askAi') {
+            sessionAnswerState.pending = false;
+            sessionAnswerState.streaming = false;
+            updateSessionStatus();
+        }
     }
 
-    return { start, finalize, cleanup };
+    /** A failed request: show it in the title-bar status until the next attempt. */
+    function fail(message) {
+        if (actionId === 'askAi') {
+            sessionAnswerState.error = message || 'The answer request failed';
+            updateSessionStatus();
+        }
+    }
+
+    return { start, finalize, markInterrupted, cleanup, fail };
 }
 
 function hasConfiguredGeminiApiKeys(value) {
@@ -724,13 +815,46 @@ function updateSetupHint() {
     if (!hasGeminiApiKeysConfigured) missing.push('an AI provider key (Gemini)');
     if (!hasAssemblyAiApiKeyConfigured) missing.push('a transcription key (AssemblyAI)');
 
-    if (missing.length === 0) {
-        hint.hidden = true;
+    if (missing.length > 0) {
+        hint.textContent = `Setup needed: add ${missing.join(' and ')} in Settings (gear icon) before answers or transcription can work.`;
+        hint.hidden = false;
         return;
     }
 
-    hint.textContent = `Setup needed: add ${missing.join(' and ')} in Settings (gear icon) before answers or transcription can work.`;
-    hint.hidden = false;
+    // Real interview-session bug report: the app gave no warning at all when
+    // the interviewer's first question arrived and there was no resume/JD
+    // on file to ground the answer in — the first sign was an ungrounded
+    // answer, mid-interview. This is checked once at startup (see
+    // loadInterviewContextStatus) specifically so it's visible BEFORE the
+    // session starts, not discovered reactively.
+    const missingContext = [];
+    if (!hasResumeContext) missingContext.push('a resume');
+    if (!hasJdContext) missingContext.push('a job description');
+
+    if (missingContext.length > 0) {
+        hint.textContent = `No ${missingContext.join(' or ')} on file yet — add it on the mobile companion page `
+            + '(Context tab) before the interview starts so answers can be grounded in it.';
+        hint.hidden = false;
+        return;
+    }
+
+    hint.hidden = true;
+}
+
+async function loadInterviewContextStatus() {
+    if (!window.electronAPI?.getInterviewContextStatus) return;
+
+    try {
+        const status = await window.electronAPI.getInterviewContextStatus();
+        hasResumeContext = Boolean(status?.hasResume);
+        hasJdContext = Boolean(status?.hasJd);
+    } catch (error) {
+        console.error('Failed to load interview context status:', error);
+        // Leave the optimistic defaults in place — a failed check should
+        // never itself become a false "nothing is loaded" warning.
+    }
+
+    updateSetupHint();
 }
 
 async function loadShortcutConfig() {
@@ -847,6 +971,30 @@ async function takeStealthScreenshot() {
     }
 }
 
+// Answer style. A per-device preference, so it lives in localStorage; reads
+// and writes are guarded because storage can be unavailable.
+const RESPONSE_MODE_STORAGE_KEY = 'synapse.responseMode';
+const RESPONSE_MODE_IDS = ['quick', 'professional', 'technical', 'star', 'detailed'];
+const responseModeSelect = document.getElementById('response-mode-select');
+
+function getResponseMode() {
+    const value = responseModeSelect?.value;
+    return RESPONSE_MODE_IDS.includes(value) ? value : 'professional';
+}
+
+if (responseModeSelect) {
+    try {
+        const saved = localStorage.getItem(RESPONSE_MODE_STORAGE_KEY);
+        if (RESPONSE_MODE_IDS.includes(saved)) responseModeSelect.value = saved;
+    } catch (_) { /* storage unavailable: keep the default */ }
+
+    responseModeSelect.addEventListener('change', () => {
+        try {
+            localStorage.setItem(RESPONSE_MODE_STORAGE_KEY, getResponseMode());
+        } catch (_) { /* not persisted this session */ }
+    });
+}
+
 function buildAskAiContextPayload() {
     const bundle = buildFilteredAiContextBundle({ charBudget: AI_CONTEXT_CHAR_BUDGET, emitTruncationLog: true });
 
@@ -860,6 +1008,7 @@ function buildAskAiContextPayload() {
 
     return {
         mode: 'best-next-answer',
+        responseMode: getResponseMode(),
         contextString: bundle.contextString,
         transcriptContext: bundle.transcriptContext,
         sessionSummary: bundle.sessionSummary,
@@ -915,24 +1064,26 @@ async function askAiWithSessionContext() {
         const stream = createStreamHandler('askAi');
         try {
             setAnalyzing(true);
-            showLoadingOverlay('Analyzing full session context...');
-            stream.start('**Best Next Answer:**\n\n');
+            // The answer card shows its own "Thinking" state; no full-window
+            // overlay, so earlier answers stay readable while the next arrives.
+            stream.start('');
 
             const result = await window.electronAPI.askAiWithSessionContext(payload);
 
             if (result?.success && result?.text) {
-                const heading = result.usedScreenshots
-                    ? '**Best Next Answer (Transcript + Screen):**'
-                    : '**Best Next Answer (Transcript):**';
-                stream.finalize(`${heading}\n\n${result.text}`);
-                showFeedback('Ask AI ready', 'success');
+                stream.finalize(result.text);
+            } else if (result?.cancelled) {
+                // Not a failure — auto-answer.js interrupted this on purpose
+                // because the host updated the question. No error toast.
+                stream.markInterrupted();
             } else {
                 throw new Error(result?.error || 'Ask AI failed');
             }
         } catch (error) {
             console.error('Ask AI error:', error);
-            showFeedback('Ask AI failed', 'error');
-            addChatMessage('system', `Error: ${error.message}`);
+            showFeedback('Answer failed', 'error');
+            addChatMessage('system', `Answer failed: ${error.message}`);
+            stream.fail(error.message);
         } finally {
             stream.cleanup();
             setAnalyzing(false);
@@ -940,6 +1091,67 @@ async function askAiWithSessionContext() {
         }
     });
 }
+
+// ─── Title-bar session state ────────────────────────────────────────────────
+// Derived from real state only: source statuses and the Ask AI lifecycle.
+// (State variables are declared at the top of the module: updateUI() can run
+// during start-up, before this point.)
+function updateSessionStatus() {
+    if (!transcriptionManagerReady) return;
+    const sources = transcriptionManager?.sourceStatuses || {};
+    if (sources.system === 'listening' || sources.mic === 'listening') sessionWasListening = true;
+    if (sources.system === 'off' && sources.mic === 'off') sessionWasListening = false;
+    const errorDetail = sessionAnswerState.error
+        || (sources.system === 'error' ? 'Host audio stopped' : null)
+        || (sources.mic === 'error' ? 'Microphone stopped' : null);
+    applySessionState(sessionStateEl, sessionStateLabelEl, deriveSessionState({
+        sources,
+        aiPending: sessionAnswerState.pending,
+        aiStreaming: sessionAnswerState.streaming,
+        error: sessionAnswerState.error,
+        wasListening: sessionWasListening
+    }), errorDetail || '');
+}
+
+// ─── Answer text size (⌘= / ⌘- / ⌘0), per device ─────────────────────────
+const ANSWER_SIZE_KEY = 'synapse.answerSize';
+const ANSWER_SIZE_MIN = 12;
+const ANSWER_SIZE_MAX = 22;
+
+function setAnswerSize(size, { announce = false } = {}) {
+    const next = Math.min(ANSWER_SIZE_MAX, Math.max(ANSWER_SIZE_MIN, Math.round(size)));
+    document.documentElement.style.setProperty('--answer-size', `${next}px`);
+    const readout = document.getElementById('setting-answer-size-value');
+    if (readout) readout.textContent = `${next}px`;
+    try { localStorage.setItem(ANSWER_SIZE_KEY, String(next)); } catch (_) { /* not persisted */ }
+    if (announce) showFeedback(`Answer text ${next}px`, 'info');
+    return next;
+}
+
+function getAnswerSize() {
+    return parseInt(getComputedStyle(document.documentElement).getPropertyValue('--answer-size'), 10) || 14;
+}
+
+(function initAnswerSize() {
+    let saved = null;
+    try { saved = Number(localStorage.getItem(ANSWER_SIZE_KEY)); } catch (_) { /* default */ }
+    if (saved) setAnswerSize(saved);
+    document.getElementById('answer-size-down')?.addEventListener('click', () => setAnswerSize(getAnswerSize() - 1));
+    document.getElementById('answer-size-up')?.addEventListener('click', () => setAnswerSize(getAnswerSize() + 1));
+    document.addEventListener('keydown', (event) => {
+        if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+        if (event.key === '=' || event.key === '+') {
+            event.preventDefault();
+            setAnswerSize(getAnswerSize() + 1, { announce: true });
+        } else if (event.key === '-') {
+            event.preventDefault();
+            setAnswerSize(getAnswerSize() - 1, { announce: true });
+        } else if (event.key === '0') {
+            event.preventDefault();
+            setAnswerSize(14, { announce: true });
+        }
+    });
+})();
 
 async function analyzeScreenshotsOnly() {
     if (!hasGeminiApiKeysConfigured) {
@@ -1004,6 +1216,39 @@ async function emergencyHide() {
     } catch (error) {
         console.error('Emergency hide error:', error);
     }
+}
+
+let isCompactModeActive = false;
+
+/**
+ * Shrinks the window to a thin status strip (window-controller.js's
+ * setCompactMode) and hides the chat/monitor panels (#app.compact-mode in
+ * ui/app.css) so whatever is underneath — the call, a shared editor — is no
+ * longer covered. Distinct from emergencyHide/toggleStealth: this stays
+ * fully visible, just small.
+ */
+async function toggleCompactMode() {
+    const next = !isCompactModeActive;
+
+    try {
+        const result = await window.electronAPI.setCompactMode(next);
+        if (result?.error) throw new Error(result.error);
+        isCompactModeActive = Boolean(result?.compact);
+    } catch (error) {
+        console.error('Failed to toggle compact mode:', error);
+        showFeedback('Could not toggle compact mode', 'error');
+        return;
+    }
+
+    document.getElementById('app')?.classList.toggle('compact-mode', isCompactModeActive);
+
+    if (compactModeBtn) {
+        compactModeBtn.setAttribute('aria-label', isCompactModeActive ? 'Expand from compact mode' : 'Shrink to compact mode');
+        compactModeBtn.setAttribute('data-tip', isCompactModeActive ? 'Expand' : 'Compact mode');
+        compactModeBtn.classList.toggle('active', isCompactModeActive);
+    }
+
+    addMonitorLog('info', 'compact-mode', isCompactModeActive ? 'Entered compact mode' : 'Exited compact mode');
 }
 
 function openCloseConfirmation() {
@@ -1201,7 +1446,9 @@ function setAnalyzing(analyzing) {
 function updateUI() {
     if (screenshotCount) {
         screenshotCount.textContent = screenshotsCount;
+        screenshotCount.hidden = !screenshotsCount;
     }
+    updateSessionStatus();
 
     const aiBundle = buildFilteredAiContextBundle({
         charBudget: AI_CONTEXT_CHAR_BUDGET,
@@ -1498,6 +1745,7 @@ function setupEventListeners() {
         screenAiBtn,
         clearBtn,
         hideBtn,
+        compactModeBtn,
         chatManualSend,
         chatManualInput,
         closeResultsBtn,
@@ -1526,6 +1774,7 @@ function setupEventListeners() {
         analyzeScreenshotsOnly,
         clearStealthData,
         emergencyHide,
+        toggleCompactMode,
         copyChatMessageById,
         submitManualContextMessage,
         autoResizeManualInput,

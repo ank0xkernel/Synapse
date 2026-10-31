@@ -15,7 +15,6 @@ fi
 echo "📦 Checking system packages..."
 brew list cmake &>/dev/null || brew install cmake
 brew list ffmpeg &>/dev/null || brew install ffmpeg
-brew list blackhole-2ch &>/dev/null || brew install blackhole-2ch || echo "⚠️ BlackHole audio driver setup completed."
 
 # 2. Build whisper.cpp with Core ML (Apple Neural Engine) Support
 mkdir -p bin
