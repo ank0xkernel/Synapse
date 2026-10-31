@@ -1,0 +1,112 @@
+/* Copied verbatim from src/windows/assistant/ui/tokens.css (desktop design system). Re-copy when the source changes; do not edit here. */
+/*
+ * Synapse design tokens.
+ *
+ * One dark theme: graphite surfaces, a restrained violet accent, system type.
+ * Every color, size and timing in app.css comes from here. Documented in
+ * docs/design-system.md; the phone companion page mirrors these values.
+ *
+ * Contrast (WCAG, measured against --surface-1 #141418):
+ *   --text-1 #EDEDF1  16.3:1   body and answers
+ *   --text-2 #A6A6B0   8.0:1   secondary labels
+ *   --text-3 #868691   5.2:1   meta, timestamps (still AA for small text)
+ *   --accent-text #B4A9FF 8.6:1  accent text on dark
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces, darkest to lightest. --shell-veil (0.2–1, Appearance slider)
+     scales how opaque the window base is; text never fades with it. */
+  --surface-0: rgba(11, 11, 14, calc(0.94 * var(--shell-veil, 1)));
+  --surface-1: #141418;
+  --surface-2: #1a1a1f;
+  --surface-3: #222228;
+  --surface-hover: rgba(255, 255, 255, 0.045);
+  --surface-active: rgba(255, 255, 255, 0.08);
+
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.15);
+
+  --text-1: #ededf1;
+  --text-2: #a6a6b0;
+  --text-3: #868691;
+  --text-on-accent: #ffffff;
+
+  /* Violet, used sparingly: primary action, focus, the active answer. */
+  /* White on --accent is 5.1:1 (AA). Hover goes darker, never lighter, so
+     button text never drops below AA. */
+  --accent: #6a5ae0;
+  --accent-hover: #5c4cd4;
+  --accent-text: #b4a9ff;
+  --accent-soft: rgba(124, 108, 242, 0.14);
+  --accent-border: rgba(124, 108, 242, 0.38);
+
+  /* Status. Each pairs a dot/border color with a readable text tint. */
+  --positive: #3ecf8e;
+  --positive-soft: rgba(62, 207, 142, 0.12);
+  --warning: #e5a93b;
+  --warning-soft: rgba(229, 169, 59, 0.12);
+  --danger: #f0716a;
+  --danger-soft: rgba(240, 113, 106, 0.12);
+  --info: #6ea8fe;
+  --info-soft: rgba(110, 168, 254, 0.12);
+
+  /* Type. System stack: native SF Pro on macOS, no web font download
+     (the window CSP only allows same-origin fonts). */
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+
+  --text-xs: 11px;   /* meta, kbd hints; the floor for any functional text */
+  --text-sm: 12px;   /* labels, chips, secondary UI */
+  --text-md: 13px;   /* controls and body UI */
+  --text-lg: 15px;   /* panel titles */
+  --text-xl: 20px;   /* onboarding headings */
+  /* Answer text, adjustable with ⌘= / ⌘- (12–22px). */
+  --answer-size: 14px;
+
+  --weight-regular: 400;
+  --weight-medium: 510;
+  --weight-semibold: 600;
+  --leading-tight: 1.25;
+  --leading-body: 1.55;
+
+  /* Spacing, 4px grid. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 14px;
+  --radius-full: 999px;
+
+  --control-h: 28px;
+  --control-h-lg: 34px;
+
+  --shadow-pop: 0 0 0 1px var(--border), 0 12px 32px rgba(0, 0, 0, 0.5);
+  --shadow-panel: 0 0 0 1px var(--border-subtle), 0 24px 48px rgba(0, 0, 0, 0.45);
+  --focus-ring: 0 0 0 2px rgba(11, 11, 14, 1), 0 0 0 4px var(--accent);
+
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dur-fast: 120ms;
+  --dur-med: 180ms;
+
+  --z-panel: 20;
+  --z-popover: 30;
+  --z-modal: 40;
+  --z-toast: 50;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur-med: 0ms;
+  }
+}
