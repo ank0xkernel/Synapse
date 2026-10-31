@@ -213,6 +213,12 @@ if (process.platform === 'darwin') {
   section('integration: real helper, current output device untouched');
 
   const { buildNativeAudio, NATIVE_AUDIO_BINARY } = require(path.join(__dirname, '../scripts/build-native-audio.js'));
+  // Capturing system audio needs the macOS Audio Capture permission, which
+  // only a person can grant. Hosted CI runners never have it, so there these
+  // tests are reported as skipped (not passed); they run on a real Mac.
+  const captureTest = process.env.GITHUB_ACTIONS
+    ? async (name) => console.log(`  - ${name} (SKIPPED: CI runner has no Audio Capture permission)`)
+    : test;
 
   await test('Helper builds as a universal (arm64 + x86_64) binary', async () => {
     buildNativeAudio({ log: () => {} });
@@ -220,7 +226,7 @@ if (process.platform === 'darwin') {
     assert(archs.includes('arm64') && archs.includes('x86_64'), `got: ${archs}`);
   });
 
-  await test('Captures real audio of a played sound, and the output device is the same afterwards', async () => {
+  await captureTest('Captures real audio of a played sound, and the output device is the same afterwards', async () => {
     const before = JSON.parse(execFileSync(NATIVE_AUDIO_BINARY, ['probe']).toString());
     let peak = 0;
     let samples = 0;
@@ -259,7 +265,7 @@ if (process.platform === 'darwin') {
     });
   };
 
-  await test('Helper exits on its own when the parent goes away (stdin EOF), releasing the tap', async () => {
+  await captureTest('Helper exits on its own when the parent goes away (stdin EOF), releasing the tap', async () => {
     const proc = spawn(NATIVE_AUDIO_BINARY, ['capture'], { stdio: ['pipe', 'pipe', 'pipe'] });
     const events = [];
     helperEvents(proc, events);
@@ -272,7 +278,7 @@ if (process.platform === 'darwin') {
     assert(events.some((e) => e.type === 'stopped' && e.reason === 'parent-exited'));
   });
 
-  await test('Consumer stops reading -> helper drops (and counts) audio instead of buffering without bound', async () => {
+  await captureTest('Consumer stops reading -> helper drops (and counts) audio instead of buffering without bound', async () => {
     const proc = spawn(NATIVE_AUDIO_BINARY, ['capture'], { stdio: ['pipe', 'pipe', 'pipe'] });
     const events = [];
     helperEvents(proc, events);
