@@ -1,6 +1,7 @@
 import 'server-only';
 import { NextResponse } from 'next/server';
 import { z, ZodError, type ZodType } from 'zod';
+import { StorageError } from './storage-core';
 
 export class ApiError extends Error {
   constructor(
@@ -41,6 +42,27 @@ function assertSameOrigin(req: Request) {
   if (!ok) throw new ApiError(403, 'Cross-origin request blocked');
 }
 
+/** One JSON line per server error: route, method, error text and stack. Never headers, bodies or tokens. */
+function logError(req: Request, err: unknown) {
+  let route = '';
+  try {
+    route = new URL(req.url).pathname;
+  } catch {}
+  const e = err instanceof Error ? err : new Error(String(err));
+  console.error(
+    JSON.stringify({
+      level: 'error',
+      msg: 'unhandled api error',
+      route,
+      method: req.method,
+      requestId: req.headers.get('x-vercel-id') ?? undefined,
+      err: e.message,
+      code: (e as { code?: string }).code,
+      stack: e.stack?.split('\n').slice(1, 6).map((l) => l.trim())
+    })
+  );
+}
+
 type Ctx<P> = { params: Promise<P> };
 
 /** Wraps a route handler: same-origin check on mutations, uniform JSON errors, no stack leaks. */
@@ -53,14 +75,16 @@ export function api<P = Record<string, never>>(fn: (req: Request, ctx: Ctx<P>) =
       return out instanceof Response ? out : NextResponse.json({ ok: true, ...out });
     } catch (err) {
       if (err instanceof ApiError) {
+        if (err.status >= 500) logError(req, err);
         return NextResponse.json({ ok: false, error: err.message }, { status: err.status, headers: err.headers });
       }
+      if (err instanceof StorageError) return NextResponse.json({ ok: false, error: err.message }, { status: err.status });
       if (err instanceof ZodError) {
         const issue = err.issues[0];
         const where = issue?.path.join('.') || 'body';
         return NextResponse.json({ ok: false, error: `Invalid ${where}: ${issue?.message ?? 'bad value'}` }, { status: 400 });
       }
-      console.error('[api] unhandled', err instanceof Error ? err.message : err);
+      logError(req, err);
       return NextResponse.json({ ok: false, error: 'Something went wrong on the server' }, { status: 500 });
     }
   };

@@ -1,14 +1,18 @@
 const isDev = process.env.NODE_ENV !== 'production';
 
+// Private Blob objects are reached only through short-lived signed URLs on this host family; uploads go to the Blob API.
+const BLOB_FILES = 'https://*.private.blob.vercel-storage.com';
+const BLOB_API = 'https://vercel.com/api/blob';
+
 const csp = [
   "default-src 'self'",
   // Next injects inline bootstrap scripts; no eval in production.
   `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ''}`,
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob:",
+  `img-src 'self' data: blob: ${BLOB_FILES}`,
   "font-src 'self'",
-  `connect-src 'self'${isDev ? ' ws: wss:' : ''}`,
-  "frame-src 'self'",
+  `connect-src 'self' ${BLOB_API}${isDev ? ' ws: wss:' : ''}`,
+  `frame-src 'self' ${BLOB_FILES}`,
   "object-src 'self'",
   "base-uri 'self'",
   "form-action 'self'",
@@ -16,6 +20,7 @@ const csp = [
 ].join('; ');
 
 const common = [
+  ...(isDev ? [] : [{ key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains' }]),
   { key: 'X-Content-Type-Options', value: 'nosniff' },
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
   { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' }

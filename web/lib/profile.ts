@@ -8,23 +8,24 @@ export type Source = 'extracted' | 'user';
 const src = z.enum(['extracted', 'user']).default('user');
 const text = (max: number) => z.string().trim().max(max);
 
-const textItem = z.object({ text: text(2000).min(1), source: src });
-const eduItem = z.object({ text: text(2000).min(1), grade: text(60).default(''), source: src });
+// Limits are generous on purpose: extracted resume content must never be cut to fit.
+const textItem = z.object({ text: text(20000).min(1), source: src });
+const eduItem = z.object({ text: text(20000).min(1), grade: text(60).default(''), source: src });
 const entry = z.object({
   name: text(300).default(''),
   dates: text(100).default(''),
-  bullets: z.array(text(2000).min(1)).max(40).default([]),
-  technologies: z.array(text(60).min(1)).max(60).default([]),
+  bullets: z.array(text(20000).min(1)).max(1000).default([]),
+  technologies: z.array(text(60).min(1)).max(200).default([]),
   source: src
 });
 
 export const profileSchema = z.object({
-  education: z.array(eduItem).max(30),
-  experience: z.array(entry).max(40),
-  projects: z.array(entry).max(40),
-  skills: z.array(textItem).max(100),
-  achievements: z.array(textItem).max(60),
-  certifications: z.array(textItem).max(60),
+  education: z.array(eduItem).max(300),
+  experience: z.array(entry).max(300),
+  projects: z.array(entry).max(300),
+  skills: z.array(textItem).max(1000),
+  achievements: z.array(textItem).max(500),
+  certifications: z.array(textItem).max(500),
   custom_context: z.object({ text: text(8000).default(''), source: src })
 });
 export type Profile = z.infer<typeof profileSchema>;
@@ -60,23 +61,45 @@ export function extractProfile(resumeText: string): Profile {
     achievements: RawItem[];
     certifications: RawItem[];
   };
-  const items = (list: RawItem[]) => list.map((i) => ({ text: i.text.slice(0, 2000), source: 'extracted' as const }));
+  const items = (list: RawItem[]) => list.map((i) => ({ text: i.text, source: 'extracted' as const }));
   const entries = (list: RawEntry[]) =>
     list.map((e) => ({
       name: e.name ?? '',
       dates: e.dates ?? '',
-      bullets: e.bullets.map((b) => b.slice(0, 2000)),
+      bullets: e.bullets.map((b) => b),
       technologies: e.technologies,
       source: 'extracted' as const
     }));
   return {
-    education: raw.education.map((e) => ({ text: e.text.slice(0, 2000), grade: e.grade ?? '', source: 'extracted' as const })),
+    education: raw.education.map((e) => ({ text: e.text, grade: e.grade ?? '', source: 'extracted' as const })),
     experience: entries(raw.experience),
     projects: entries(raw.projects),
     skills: items(raw.skills),
     achievements: items(raw.achievements),
     certifications: items(raw.certifications),
     custom_context: { text: '', source: 'user' }
+  };
+}
+
+/**
+ * Rebuilds a profile from freshly extracted data while keeping everything the user wrote.
+ * Old items marked source 'user' stay (first, in their order); old 'extracted' items are replaced
+ * by the new extraction; a new item identical to a kept user item is not added twice.
+ */
+export function mergeReprocessed(old: Profile, fresh: Profile): Profile {
+  const merge = <T extends { source: Source }>(before: T[], after: T[]): T[] => {
+    const mine = before.filter((i) => i.source === 'user');
+    const seen = new Set(mine.map((i) => strip(i)));
+    return [...mine, ...after.filter((i) => !seen.has(strip(i)))];
+  };
+  return {
+    education: merge(old.education, fresh.education),
+    experience: merge(old.experience, fresh.experience),
+    projects: merge(old.projects, fresh.projects),
+    skills: merge(old.skills, fresh.skills),
+    achievements: merge(old.achievements, fresh.achievements),
+    certifications: merge(old.certifications, fresh.certifications),
+    custom_context: old.custom_context
   };
 }
 

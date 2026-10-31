@@ -75,8 +75,10 @@ class ResumeParser {
     const hasHeadings = lines.some((line) => matchHeading(line));
     let currentSection = hasHeadings ? 'Header' : 'Experience';
 
+    // Short lines are real content inside a section ("Python", "Go, Rust"); only the
+    // name/contact block above the first heading is filtered by length.
     const push = (text) => {
-      if (text.length > 15) {
+      if (text.length > (currentSection === 'Header' ? 15 : 1)) {
         sections.push({ id: `res_bullet_${sections.length + 1}`, section: currentSection, text });
       }
     };
@@ -93,7 +95,6 @@ class ResumeParser {
       push(line);
     }
 
-    console.log(`[ResumeParser] Parsed ${sections.length} structured resume bullets.`);
     return sections;
   }
 }
@@ -105,10 +106,10 @@ class ResumeParser {
 // or "Work" are not mistaken for headings.
 const SECTION_WORDS = [
   [/^(summary|profile|objective|about me)$/, 'Summary'],
-  [/^(experience|work experience|employment|employment history|work history|internships?|experience and internships?)$/, 'Experience'],
+  [/^(experience|work experience|employment|employment history|work history|internships?|experience and internships?|journey|career|career history|career summary)$/, 'Experience'],
   [/^(education|academics?|qualifications?)$/, 'Education'],
-  [/^(projects?|personal projects|academic projects)$/, 'Projects'],
-  [/^(skills|technical skills|core skills|key skills|technologies|tech stack|tools)$/, 'Skills'],
+  [/^(projects?|personal projects|academic projects|selected work|portfolio|open source|side projects?)$/, 'Projects'],
+  [/^(skills|technical skills|core skills|key skills|technologies|tech stack|tools|toolkit|toolbox|competencies|core competencies|skills and tools|tools and technologies)$/, 'Skills'],
   [/^(certifications?|licenses? and certifications?|courses)$/, 'Certifications'],
   [/^(achievements?|awards?|honou?rs|accomplishments)$/, 'Achievements']
 ];

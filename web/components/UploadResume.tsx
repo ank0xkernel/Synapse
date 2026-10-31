@@ -1,6 +1,7 @@
 'use client';
 import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { uploadDriver, uploadPdfDirect } from '@/lib/client';
 
 const MAX = 8 * 1024 * 1024;
 const OK_EXT = /\.(pdf|txt|md)$/i;
@@ -44,11 +45,26 @@ export default function UploadResume() {
     xhr.send(form);
   }
 
-  function pick(file: File | undefined) {
+  async function sendDirect(file: File) {
+    setError('');
+    setPct(0);
+    setStage('Uploading');
+    const r = await uploadPdfDirect(file, { onProgress: setPct, onStage: setStage });
+    if (r.ok) {
+      router.push(`/resumes/${r.id}`);
+      router.refresh();
+    } else {
+      setPct(null);
+      setError(r.error);
+    }
+  }
+
+  async function pick(file: File | undefined) {
     if (!file) return;
     if (!OK_EXT.test(file.name)) return setError('Only PDF, TXT and MD files are accepted.');
     if (file.size > MAX) return setError('That file is larger than 8 MB.');
     if (file.size === 0) return setError('That file is empty.');
+    if (/\.pdf$/i.test(file.name) && (await uploadDriver()) === 'blob') return sendDirect(file);
     const f = new FormData();
     f.set('file', file);
     send(f);

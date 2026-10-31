@@ -13,7 +13,7 @@ export const PUT = api<P>(async (req, { params }) => {
   const id = idParam((await params).id);
   const stored = await getProfile(user.id, id);
   if (!stored) throw notFound();
-  const incoming = await readJson(req, profileSchema, 256 * 1024);
+  const incoming = await readJson(req, profileSchema, 1024 * 1024);
   const next = applyProvenance(incoming, stored.profile);
   await query('UPDATE candidate_profiles SET data = $3, updated_at = now() WHERE user_id = $1 AND resume_id = $2', [
     user.id,

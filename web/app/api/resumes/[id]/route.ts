@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { api, idParam, notFound, readJson } from '@/lib/http';
 import { requireUser } from '@/lib/auth';
 import { one, query } from '@/lib/db';
+import { blob } from '@/lib/storage';
 
 type P = { id: string };
 
@@ -26,11 +27,15 @@ export const PATCH = api<P>(async (req, { params }) => {
 export const DELETE = api<P>(async (_req, { params }) => {
   const user = await requireUser();
   const id = idParam((await params).id);
-  const row = await one<{ was_active: boolean }>('DELETE FROM resumes WHERE user_id = $1 AND id = $2 RETURNING is_active AS was_active', [
-    user.id,
-    id
-  ]);
+  const row = await one<{ was_active: boolean; storage_key: string | null }>(
+    'DELETE FROM resumes WHERE user_id = $1 AND id = $2 RETURNING is_active AS was_active, storage_key',
+    [user.id, id]
+  );
   if (!row) throw notFound();
+  // The row is gone first, so a failed blob delete leaves an unreachable object, never a dangling record.
+  if (row.storage_key) {
+    await blob().remove(row.storage_key).catch((e) => console.error(JSON.stringify({ level: 'warn', msg: 'blob delete failed', err: String(e?.message ?? e) })));
+  }
   if (row.was_active) {
     // Promote the newest remaining resume so "active" never silently points nowhere.
     await query(

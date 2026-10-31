@@ -15,3 +15,36 @@ export async function call<T = Record<string, unknown>>(method: string, url: str
     return { ok: false, error: 'Network error. Check your connection and try again.' };
   }
 }
+
+/** Which upload flow the server wants. `blob`: PDFs go straight to private storage. `db`: multipart through the server. */
+export async function uploadDriver(): Promise<'blob' | 'db'> {
+  const r = await call<{ driver: 'blob' | 'db' }>('GET', '/api/resumes/upload');
+  return r.ok ? r.driver : 'db';
+}
+
+/**
+ * Direct browser-to-storage PDF upload, then finalize on the server (which validates and parses it).
+ * Pass `replaceId` to swap the file of an existing resume.
+ */
+export async function uploadPdfDirect(
+  file: File,
+  opts: { replaceId?: string; onProgress?: (pct: number) => void; onStage?: (s: string) => void } = {}
+): Promise<ApiResult<{ id: string }>> {
+  const cfg = await call<{ pathname: string | null }>('GET', '/api/resumes/upload');
+  if (!cfg.ok || !cfg.pathname) return { ok: false, error: cfg.ok ? 'Direct upload is not available' : cfg.error };
+  let pathname: string;
+  try {
+    const { upload } = await import('@vercel/blob/client');
+    const res = await upload(cfg.pathname, file, {
+      access: 'private',
+      contentType: 'application/pdf',
+      handleUploadUrl: '/api/resumes/upload',
+      onUploadProgress: (e) => opts.onProgress?.(Math.round(e.percentage))
+    });
+    pathname = res.pathname;
+  } catch (e) {
+    return { ok: false, error: e instanceof Error && e.message ? `Upload failed: ${e.message}` : 'Upload failed. Try again.' };
+  }
+  opts.onStage?.('Extracting text');
+  return call<{ id: string }>('POST', '/api/resumes/finalize', { pathname, fileName: file.name, replaceId: opts.replaceId });
+}

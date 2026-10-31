@@ -8,6 +8,7 @@
     "build": "next build",
     "start": "next start",
     "migrate": "node scripts/migrate.mjs",
+    "build:vercel": "node scripts/build-vercel.mjs",
     "test": "node --test --test-concurrency=1 tests/*.test.mjs",
     "shots": "node scripts/screenshot.mjs"
   },
@@ -16,6 +17,7 @@
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
+    "@vercel/blob": "2.8.2",
     "next": "^16.4.3",
     "pdf-parse": "^1.1.1",
     "pg": "^8.23.1",
