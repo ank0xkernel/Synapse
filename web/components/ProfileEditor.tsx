@@ -6,7 +6,7 @@ import type { Profile, Source } from '@/lib/profile-types';
 
 type Entry = Profile['experience'][number];
 type TextItem = Profile['skills'][number];
-type ListKey = 'skills' | 'achievements' | 'certifications';
+type ListKey = 'summary' | 'contact' | 'skills' | 'achievements' | 'certifications';
 type EntryKey = 'experience' | 'projects';
 
 const Prov = ({ source }: { source: Source }) =>
@@ -96,6 +96,7 @@ export default function ProfileEditor({ resumeId, initial }: { resumeId: string;
 
   return (
     <div className="stack-lg">
+      {list('summary', 'Summary', 'Add a short summary of who you are professionally.')}
       <section className="card stack" aria-labelledby="h-edu">
         <div className="section-head">
           <h2 id="h-edu">Education</h2>
@@ -124,6 +125,32 @@ export default function ProfileEditor({ resumeId, initial }: { resumeId: string;
       {list('skills', 'Technical skills', 'Add the skills you want practised.')}
       {list('achievements', 'Achievements', 'Add achievements you can back up.')}
       {list('certifications', 'Certifications', 'Add certifications you hold.')}
+      <section className="card stack" aria-labelledby="h-add">
+        <div className="section-head">
+          <h2 id="h-add">Other sections</h2>
+          <button type="button" className="btn btn-sm" onClick={() => edit((d) => d.additional.push({ heading: '', text: '', source: 'user' }))}>Add</button>
+        </div>
+        {p.additional.length === 0 && <p className="muted">No other sections found, such as publications, languages or volunteering.</p>}
+        {p.additional.map((it, i) => (
+          <div className="entry" key={i}>
+            <div className="grid-2">
+              <div className="field">
+                <label htmlFor={`add-h-${i}`}>Section</label>
+                <input id={`add-h-${i}`} className="input" value={it.heading} maxLength={120} onChange={(e) => edit((d) => { d.additional[i].heading = e.target.value; })} />
+              </div>
+            </div>
+            <div className="field">
+              <label htmlFor={`add-t-${i}`}>Detail</label>
+              <textarea id={`add-t-${i}`} className="textarea" style={{ minHeight: 44 }} rows={2} value={it.text} maxLength={2000} onChange={(e) => edit((d) => { d.additional[i].text = e.target.value; })} />
+            </div>
+            <div className="row-between">
+              <Prov source={it.source} />
+              <button type="button" className="btn btn-sm btn-ghost" aria-label={`Remove other section item ${i + 1}`} onClick={() => edit((d) => { d.additional.splice(i, 1); })}>Remove</button>
+            </div>
+          </div>
+        ))}
+      </section>
+      {list('contact', 'Name and contact', 'These lines come from the top of your resume.')}
       <section className="card stack" aria-labelledby="h-cc">
         <h2 id="h-cc">Custom context</h2>
         <div className="field">

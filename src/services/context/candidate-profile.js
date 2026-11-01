@@ -17,21 +17,43 @@
  * stays unstructured evidence rather than a guessed employer/date.
  */
 
+// Desktop copy: identical to web/lib/intelligence/candidate-profile.js apart from this
+// require path (tests/test-parser-parity.mjs checks that).
 const ResumeParser = require('../ai/resume-parser');
 
-// Mirrored from conversation-tracker.js's KNOWN_TECHNOLOGIES (Phase 3), not
-// imported: Phase 9 is explicitly barred from modifying conversation-
-// tracker.js, question-relation.js, or semantic-reference.js (see the Phase 9
-// spec's PART 14) unless a genuine compatibility defect is found, and none
-// was. Kept identical on purpose -- if this list ever needs to grow, extend
-// both copies with the same reasoning, don't let them drift into two
-// different vocabularies for what is conceptually one list.
-const KNOWN_TECHNOLOGIES = new Set([
-  'PostgreSQL', 'MongoDB', 'Redis', 'GraphQL', 'REST', 'gRPC', 'Kubernetes', 'Docker',
-  'AWS', 'GCP', 'Azure', 'React', 'Vue', 'Angular', 'Node', 'Python', 'TypeScript',
-  'JavaScript', 'FastAPI', 'Django', 'Flask', 'JWT', 'OAuth', 'MySQL', 'SQLite',
-  'Kafka', 'RabbitMQ', 'Nginx', 'Terraform', 'Next', 'Express', 'Spring', 'LangGraph'
-]);
+// Canonical name -> how resumes write it. Matched on word boundaries, case-insensitive,
+// except where a name is also an English word ("Go", "Express", "Spring", "Next"): those
+// match only in their capitalised or unambiguous forms. conversation-tracker.js keeps a
+// smaller list for spoken questions; this one is for written resumes and job descriptions.
+const TECHNOLOGY_PATTERNS = [
+  ['PostgreSQL', /\b(postgre(?:sql)?|postgres)\b/i], ['MongoDB', /\bmongo(?:db)?\b/i], ['Redis', /\bredis\b/i],
+  ['GraphQL', /\bgraphql\b/i], ['REST', /\bREST(?:ful)?\b/], ['gRPC', /\bgrpc\b/i], ['Kubernetes', /\b(kubernetes|k8s)\b/i],
+  ['Docker', /\bdocker\b/i], ['AWS', /\bAWS\b|\bamazon web services\b/i], ['GCP', /\bGCP\b|\bgoogle cloud\b/i], ['Azure', /\bazure\b/i],
+  ['React', /\bReact(?:\.?js|JS)?\b(?!\s*Native)|\breact\.?js\b/], ['React Native', /\breact\s*native\b/i], ['Vue', /\bvue(?:\.?js)?\b/i],
+  ['Angular', /\bangular(?:js)?\b/i], ['Svelte', /\bsvelte(?:kit)?\b/i], ['Node', /\b[Nn]ode\.?[Jj][Ss]\b|\bNode\b(?!\s+(?:of|in)\b)/],
+  ['Python', /\bpython\b/i], ['TypeScript', /\btypescript\b/i], ['JavaScript', /\bjavascript\b|\bES6\b/i],
+  ['Java', /\bjava\b(?!\s*script)/i], ['Kotlin', /\bkotlin\b/i], ['Swift', /\bSwift(?:UI)?\b/], ['Go', /(?<!\p{Lu}\p{Ll}+\s)\bGo\b(?!\s+(?:to|through|live|back|beyond)\b|-)|\b[Gg]olang\b/u],
+  ['Rust', /\brust\b/i], ['C++', /\bC\+\+(?!\w)|\bcpp\b/i], ['C#', /\bC#(?!\w)|\bcsharp\b/i], ['.NET', /(?:^|[^\w])\.NET\b|\bdotnet\b|\basp\.net\b/i],
+  ['Ruby', /\bruby\b/i], ['Rails', /\bRails\b/], ['PHP', /\bPHP\b/i], ['Laravel', /\blaravel\b/i], ['Scala', /\bscala\b/i],
+  ['Elixir', /\belixir\b/i], ['Dart', /\bdart\b/i], ['Flutter', /\bflutter\b/i],
+  ['FastAPI', /\bfastapi\b/i], ['Django', /\bdjango\b/i], ['Flask', /\bflask\b/i], ['Next', /\bnext\.?js\b|\bNextJS\b/i],
+  ['Express', /\bexpress(?:\.?js)\b|\bExpress\b/], ['Spring', /\bspring\s*(?:boot|framework|mvc)\b|\bSpring\b(?!\s+\d{2,4})/],
+  ['NestJS', /\bnest\.?js\b/i], ['Redux', /\bredux\b/i], ['Tailwind', /\btailwind(?:\s*css)?\b/i], ['HTML', /\bhtml5?\b/i], ['CSS', /\bcss3?\b/i],
+  ['SQL', /\bSQL\b/], ['NoSQL', /\bnosql\b/i], ['MySQL', /\bmysql\b/i], ['SQLite', /\bsqlite\b/i], ['DynamoDB', /\bdynamo(?:db)?\b/i],
+  ['Cassandra', /\bcassandra\b/i], ['Elasticsearch', /\belastic\s*search\b/i], ['Firebase', /\bfirebase\b/i], ['Supabase', /\bsupabase\b/i],
+  ['Prisma', /\bprisma\b/i], ['Snowflake', /\bsnowflake\b/i], ['BigQuery', /\bbig\s*query\b/i],
+  ['Kafka', /\bkafka\b/i], ['RabbitMQ', /\brabbit\s*mq\b/i], ['Spark', /\bSpark\b|\b[Pp]y[Ss]park\b/], ['Airflow', /\bairflow\b/i],
+  ['Nginx', /\bnginx\b/i], ['Terraform', /\bterraform\b/i], ['Ansible', /\bansible\b/i], ['Helm', /\bHelm\b/],
+  ['Jenkins', /\bjenkins\b/i], ['GitHub Actions', /\bgithub\s+actions\b/i], ['CI/CD', /\bCI\s*\/\s*CD\b/i], ['Git', /\bgit\b(?!hub|lab)/i],
+  ['Linux', /\blinux\b/i], ['Prometheus', /\bprometheus\b/i], ['Grafana', /\bgrafana\b/i], ['Lambda', /\bAWS\s+lambda\b|\blambda functions?\b/i],
+  ['JWT', /\bJWT\b/i], ['OAuth', /\boauth\s*2?(?:\.0)?\b/i], ['WebSocket', /\bweb\s*sockets?\b/i], ['Electron', /\belectron(?:\.?js)?\b/i],
+  ['TensorFlow', /\btensorflow\b/i], ['PyTorch', /\bpytorch\b/i], ['scikit-learn', /\bscikit[-\s]?learn\b|\bsklearn\b/i],
+  ['Pandas', /\bpandas\b/i], ['NumPy', /\bnumpy\b/i], ['LangChain', /\blangchain\b/i], ['LangGraph', /\blanggraph\b/i],
+  ['OpenAI', /\bopenai\b/i], ['Hugging Face', /\bhugging\s*face\b/i], ['LLM', /\bLLMs?\b/], ['RAG', /\bRAG\b/],
+  ['Jest', /\bjest\b/i], ['Playwright', /\bplaywright\b/i], ['Cypress', /\bcypress\b/i], ['Selenium', /\bselenium\b/i],
+  ['Figma', /\bfigma\b/i], ['Three.js', /\bthree\.?js\b/i], ['WebGL', /\bwebgl\b/i], ['Vercel', /\bvercel\b/i]
+];
+const KNOWN_TECHNOLOGIES = new Set(TECHNOLOGY_PATTERNS.map(([name]) => name));
 
 const SECTION_ALIASES = {
   skills: 'skills',
@@ -40,6 +62,8 @@ const SECTION_ALIASES = {
   education: 'education',
   projects: 'projects',
   summary: 'summary',
+  header: 'header',
+  additional: 'additional',
   certifications: 'certifications',
   certificates: 'certifications',
   certification: 'certifications',
@@ -83,8 +107,9 @@ function extractName(line) {
 }
 
 function extractTechnologies(text) {
-  const words = String(text || '').split(/\s+/).map((w) => w.replace(/[^a-zA-Z0-9.]/g, ''));
-  return [...new Set(words.filter((w) => KNOWN_TECHNOLOGIES.has(w)))];
+  const s = String(text || '');
+  if (!s) return [];
+  return TECHNOLOGY_PATTERNS.filter(([, pattern]) => pattern.test(s)).map(([name]) => name);
 }
 
 function toEvidence(item) {
@@ -170,6 +195,9 @@ function extractGrade(text) {
 function buildCandidateProfile(backgroundText) {
   const empty = {
     identity: {},
+    summary: [],
+    contact: [],
+    additional: [],
     education: [],
     experience: [],
     projects: [],
@@ -196,6 +224,9 @@ function buildCandidateProfile(backgroundText) {
   const experience = groupIntoEntries(bySection.experience || []);
   const projects = groupIntoEntries(bySection.projects || []);
 
+  const summary = (bySection.summary || []).map(toEvidence);
+  const contact = (bySection.header || []).map(toEvidence);
+  const additional = (bySection.additional || []).map((item) => ({ ...toEvidence(item), heading: item.heading || '' }));
   const skills = (bySection.skills || []).map(toEvidence);
   const achievements = (bySection.achievements || []).map(toEvidence);
   const certifications = (bySection.certifications || []).map(toEvidence);
@@ -212,6 +243,9 @@ function buildCandidateProfile(backgroundText) {
 
   return {
     identity: {},
+    summary,
+    contact,
+    additional,
     education,
     experience,
     projects,

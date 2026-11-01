@@ -11,8 +11,17 @@ const LABEL: Record<Status, { text: string; tone: 'positive' | 'danger' | 'warni
   needs_reprocess: { text: 'Parsed with an older parser', tone: 'warning' }
 };
 
+const READ_BY: Record<string, string> = { pdf: 'Text read from the PDF', ocr: 'Text read from scanned pages', docx: 'Text read from the Word file', text: 'Text as pasted or uploaded' };
+
 /** Parse status plus Replace file and Reprocess. Profile items you edited are kept by both. */
-export default function ResumeFileActions({ id, status, error }: { id: string; status: Status; error: string | null }) {
+export default function ResumeFileActions({ id, status, error, extraction, analysis, note }: {
+  id: string;
+  status: Status;
+  error: string | null;
+  extraction: string;
+  analysis: 'rules' | 'ai';
+  note: string | null;
+}) {
   const router = useRouter();
   const input = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState('');
@@ -57,6 +66,10 @@ export default function ResumeFileActions({ id, status, error }: { id: string; s
         <button type="button" className="btn btn-sm" disabled={!!busy} onClick={() => input.current?.click()}>Replace file</button>
         <input ref={input} type="file" accept=".pdf,application/pdf" className="sr-only" aria-label="Replacement PDF" onChange={(e) => { replace(e.target.files?.[0]); e.target.value = ''; }} />
       </div>
+      <p className="meta">
+        {READ_BY[extraction] ?? 'Text extracted'}. Profile built {analysis === 'ai' ? 'by AI, keeping only what your resume says' : 'by section rules'}.
+      </p>
+      {note && <p className="meta" role="status">{note} Reprocess to try again.</p>}
       {status === 'failed' && error && <p className="form-error" role="alert">{error}</p>}
       {status === 'needs_reprocess' && <p className="meta">Reprocess to re-read the original with the current parser. Items you edited stay as they are.</p>}
       {busy && <p className="meta" role="status">{busy}</p>}

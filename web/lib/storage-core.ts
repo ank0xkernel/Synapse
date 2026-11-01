@@ -42,9 +42,9 @@ export interface FinalizeDeps<R> {
   read(key: string): Promise<Buffer | null>;
   remove(key: string): Promise<void>;
   /** Extracts text; must throw an error carrying a `status` on failure. */
-  extract(buf: Buffer): Promise<string>;
+  extract(buf: Buffer): Promise<{ text: string; method: 'pdf' | 'ocr' }>;
   /** Saves in one transaction. The same key twice must resolve to the same row. */
-  save(p: { key: string; bytes: number; sha256: string; text: string }): Promise<R>;
+  save(p: { key: string; bytes: number; sha256: string; text: string; method: 'pdf' | 'ocr' }): Promise<R>;
 }
 
 /**
@@ -56,13 +56,13 @@ export async function finalizeUpload<R>(userId: string, key: unknown, deps: Fina
   if (!isOwnKey(userId, key)) throw new StorageError(403, 'Upload path is not allowed');
   const buf = await deps.read(key);
   if (!buf) throw new StorageError(404, 'Upload not found. Upload the file again.');
-  let text: string;
+  let ex: { text: string; method: 'pdf' | 'ocr' };
   try {
     assertPdfBytes(buf);
-    text = await deps.extract(buf);
+    ex = await deps.extract(buf);
   } catch (err) {
     await deps.remove(key).catch(() => {});
     throw err;
   }
-  return deps.save({ key, bytes: buf.length, sha256: sha256(buf), text });
+  return deps.save({ key, bytes: buf.length, sha256: sha256(buf), text: ex.text, method: ex.method });
 }

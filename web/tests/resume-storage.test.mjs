@@ -31,7 +31,7 @@ describe('blob driver rules (injected fake, not real Vercel Blob)', () => {
       extract: async (b) => {
         if (b.toString('latin1', 0, 5) !== '%PDF-') throw new StorageError(415, 'not pdf');
         if (b.includes('NOTEXT')) throw new StorageError(422, 'no text');
-        return 'Skills\nPython';
+        return { text: 'Skills\nPython', method: 'pdf' };
       },
       save: async (p) => ({ id: `row-${p.key}`, ...p })
     };
@@ -117,7 +117,7 @@ describe('db driver, real PDFs through the server', () => {
     assert.match(row.extracted_text, /Company8 Ltd/, 'last page content present');
     assert.match(row.extracted_text, /Example Cloud Practitioner/, 'last section present');
     assert.equal(row.parse_status, 'ok');
-    assert.equal(row.parser_version, 2);
+    assert.equal(row.parser_version, 3);
     assert.equal(row.file_sha256, crypto.createHash('sha256').update(fx('multipage.pdf')).digest('hex'));
     assert.equal(row.storage_driver, 'db');
     const p = await profileOf(up.data.id);
@@ -171,7 +171,7 @@ describe('db driver, real PDFs through the server', () => {
     assert.match(damaged.data.error, /could not be read/);
     const scan = await c.upload(fx('scanned.pdf'), 'scan.pdf');
     assert.equal(scan.status, 422);
-    assert.match(scan.data.error, /OCR .*not supported/);
+    assert.match(scan.data.error, /looks like a scan.*needs AI, which is not set up/);
     assert.equal((await S.db.query("SELECT count(*)::int n FROM resumes r JOIN users u ON u.id=r.user_id WHERE u.email='parse@example.com' AND r.file_name IN ('cv.pdf','cut.pdf','scan.pdf')")).rows[0].n, 0, 'rejected files leave no row');
   });
 
@@ -208,7 +208,7 @@ describe('reprocess, replace, delete', () => {
     const row = (await S.db.query('SELECT extracted_text, parse_status, parser_version, parse_error FROM resumes WHERE id=$1', [id])).rows[0];
     assert.match(row.extracted_text, /Acme Corp/);
     assert.equal(row.parse_status, 'ok');
-    assert.equal(row.parser_version, 2);
+    assert.equal(row.parser_version, 3);
     assert.equal(row.parse_error, null);
     const p = await profileOf(id);
     assert.ok(p.skills.some((s) => s.text === 'Rust (my own note)' && s.source === 'user'), 'user item kept');

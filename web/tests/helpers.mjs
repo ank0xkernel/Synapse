@@ -46,7 +46,7 @@ async function freePort() {
   });
 }
 
-export async function startServer() {
+export async function startServer(extraEnv = {}) {
   if (!fs.existsSync(path.join(root, '.next', 'BUILD_ID'))) throw new Error('No production build. Run `npm run build` before `npm test`.');
   const mig = spawnSync('node', ['scripts/migrate.mjs'], { cwd: root, env: { ...process.env, DATABASE_URL: DB_URL }, encoding: 'utf8' });
   if (mig.status !== 0) throw new Error(`migrate failed: ${mig.stderr}${mig.stdout}`);
@@ -55,6 +55,8 @@ export async function startServer() {
   const port = await freePort();
   const env = { ...process.env, DATABASE_URL: DB_URL, INSECURE_COOKIES: '1', PORT: String(port), NODE_ENV: 'production' };
   delete env.GEMINI_API_KEY;
+  delete env.GEMINI_BASE_URL;
+  Object.assign(env, extraEnv);
   const proc = spawn(path.join(root, 'node_modules/.bin/next'), ['start', '-p', String(port)], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
   let log = '';
   proc.stdout.on('data', (d) => (log += d));

@@ -45,6 +45,6 @@ export async function uploadPdfDirect(
   } catch (e) {
     return { ok: false, error: e instanceof Error && e.message ? `Upload failed: ${e.message}` : 'Upload failed. Try again.' };
   }
-  opts.onStage?.('Extracting text');
+  opts.onStage?.('Reading and analysing');
   return call<{ id: string }>('POST', '/api/resumes/finalize', { pathname, fileName: file.name, replaceId: opts.replaceId });
 }
