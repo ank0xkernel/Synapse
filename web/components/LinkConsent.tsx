@@ -25,8 +25,8 @@ export default function LinkConsent({ params }: { params: Record<string, string>
       {error && <p className="form-error" role="alert">{error}</p>}
       {done && <p className="muted" role="status">Returning to the desktop app. You can close this tab afterwards.</p>}
       <div className="row">
-        <button className="btn btn-primary" disabled={busy} onClick={() => decide(true)}>Approve</button>
-        <button className="btn" disabled={busy} onClick={() => decide(false)}>Cancel</button>
+        <button className="btn btn-primary btn-lg" disabled={busy} onClick={() => decide(true)}>Approve</button>
+        <button className="btn btn-lg" disabled={busy} onClick={() => decide(false)}>Cancel</button>
       </div>
     </div>
   );
