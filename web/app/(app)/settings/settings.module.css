@@ -1,0 +1,32 @@
+/* Settings: one calm column of groups, description on the left, controls on the right. The destructive area sits apart. */
+.page { display: flex; flex-direction: column; gap: var(--space-12); max-width: 980px; }
+.head { display: flex; flex-direction: column; gap: var(--space-2); }
+.head p { color: var(--text-2); }
+.email { color: var(--text-1); font-weight: var(--weight-medium); overflow-wrap: anywhere; }
+
+.groups { display: flex; flex-direction: column; border-top: 1px solid var(--border-subtle); }
+.group { display: grid; grid-template-columns: minmax(0, 18rem) minmax(0, 1fr); gap: var(--space-10); padding: var(--space-10) 0; border-bottom: 1px solid var(--border-subtle); }
+.about { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.about p { color: var(--text-2); font-size: var(--text-sm); max-width: 40ch; }
+.panel { padding: var(--space-6); border-radius: var(--radius-lg); background: var(--surface-1); border: 1px solid var(--border); box-shadow: var(--shadow-1); min-width: 0; }
+.panel :global(.input) { max-width: 26rem; }
+.list { min-width: 0; }
+
+.danger {
+  display: grid; grid-template-columns: minmax(0, 18rem) minmax(0, 1fr); gap: var(--space-10);
+  padding: var(--space-8); border-radius: var(--radius-lg);
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent); background: var(--danger-soft);
+}
+.danger h2 { color: var(--danger); }
+.danger .about p { color: var(--text-1); }
+.dangerBody { min-width: 0; }
+.dangerBody :global(.input) { max-width: 26rem; background: var(--surface-1); }
+
+@media (max-width: 900px) {
+  .group, .danger { grid-template-columns: minmax(0, 1fr); gap: var(--space-5); }
+  .group { padding: var(--space-8) 0; }
+}
+@media (max-width: 640px) {
+  .panel { padding: var(--space-5) var(--space-4); }
+  .danger { padding: var(--space-6) var(--space-4); }
+}
