@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { call } from '@/lib/client';
+import s from './dashboard/devices.module.css';
 
 export default function DeviceTokenCreate() {
   const router = useRouter();
@@ -13,8 +14,7 @@ export default function DeviceTokenCreate() {
   return (
     <div className="stack">
       <form
-        className="row"
-        style={{ alignItems: 'flex-end' }}
+        className={s.tokenForm}
         onSubmit={async (e) => {
           e.preventDefault();
           const form = e.currentTarget;
@@ -29,7 +29,7 @@ export default function DeviceTokenCreate() {
           router.refresh();
         }}
       >
-        <div className="field grow" style={{ minWidth: 200 }}>
+        <div className="field">
           <label htmlFor="tok-name">Token name</label>
           <input id="tok-name" name="name" className="input" required maxLength={60} placeholder="MacBook Pro" />
         </div>
