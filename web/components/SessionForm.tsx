@@ -101,7 +101,8 @@ export default function SessionForm(props: {
           <div className={f.wrapRow}>
             <div className="field">
               <label htmlFor="s-when">Scheduled for</label>
-              <input id="s-when" name="scheduledAt" type="datetime-local" className="input" defaultValue={toLocalInput(initial?.scheduled_at ?? null)} />
+              <input id="s-when" name="scheduledAt" type="datetime-local" className="input" aria-describedby="s-when-hint" defaultValue={toLocalInput(initial?.scheduled_at ?? null)} />
+              <span id="s-when-hint" className="hint">Your local time</span>
             </div>
             <fieldset className={f.options}>
               <legend>Status</legend>
@@ -123,7 +124,7 @@ export default function SessionForm(props: {
           <h3 id="s-g-material">Material</h3>
           <p>The resume answers are grounded in, and the job they are aimed at.</p>
         </div>
-        <div className={f.pair}>
+        <div className={f.fields}>
           <div className="field">
             <label htmlFor="s-resume">Resume</label>
             <select id="s-resume" name="resumeId" className="select" defaultValue={initial ? initial.resume_id ?? '' : props.defaultResumeId ?? ''}>
