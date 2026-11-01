@@ -98,8 +98,9 @@ test('technologies: Go, Rust, Node.js, React, C#, Kafka are recognised', () => {
 });
 
 test('technologies: everyday words are not read as technologies', () => {
-  const t = extractTechnologies('We react to incidents, go to the next node, and keep guard rails at the helm.');
+  const t = extractTechnologies('We react to incidents, go to the next node, and keep guard rails at the helm. Launched Jumpstart Go and a Go-to-market plan.');
   assert(t.length === 0, JSON.stringify(t));
+  assert(extractTechnologies('Wrote the scheduler in Go.').includes('Go'));
 });
 
 console.log(`\nParser parity tests: ${passed} passed, ${failed} failed (${passed + failed} total)`);

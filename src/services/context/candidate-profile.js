@@ -32,7 +32,7 @@ const TECHNOLOGY_PATTERNS = [
   ['React', /\bReact(?:\.?js|JS)?\b(?!\s*Native)|\breact\.?js\b/], ['React Native', /\breact\s*native\b/i], ['Vue', /\bvue(?:\.?js)?\b/i],
   ['Angular', /\bangular(?:js)?\b/i], ['Svelte', /\bsvelte(?:kit)?\b/i], ['Node', /\b[Nn]ode\.?[Jj][Ss]\b|\bNode\b(?!\s+(?:of|in)\b)/],
   ['Python', /\bpython\b/i], ['TypeScript', /\btypescript\b/i], ['JavaScript', /\bjavascript\b|\bES6\b/i],
-  ['Java', /\bjava\b(?!\s*script)/i], ['Kotlin', /\bkotlin\b/i], ['Swift', /\bSwift(?:UI)?\b/], ['Go', /\bGo\b(?!\s+(?:to|through|live|back|beyond)\b)|\b[Gg]olang\b/],
+  ['Java', /\bjava\b(?!\s*script)/i], ['Kotlin', /\bkotlin\b/i], ['Swift', /\bSwift(?:UI)?\b/], ['Go', /(?<!\p{Lu}\p{Ll}+\s)\bGo\b(?!\s+(?:to|through|live|back|beyond)\b|-)|\b[Gg]olang\b/u],
   ['Rust', /\brust\b/i], ['C++', /\bC\+\+(?!\w)|\bcpp\b/i], ['C#', /\bC#(?!\w)|\bcsharp\b/i], ['.NET', /(?:^|[^\w])\.NET\b|\bdotnet\b|\basp\.net\b/i],
   ['Ruby', /\bruby\b/i], ['Rails', /\bRails\b/], ['PHP', /\bPHP\b/i], ['Laravel', /\blaravel\b/i], ['Scala', /\bscala\b/i],
   ['Elixir', /\belixir\b/i], ['Dart', /\bdart\b/i], ['Flutter', /\bflutter\b/i],
