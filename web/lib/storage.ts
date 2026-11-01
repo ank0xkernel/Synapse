@@ -45,15 +45,15 @@ export const sha256 = (b: Buffer) => crypto.createHash('sha256').update(b).diges
 
 /**
  * Token route body. The caller must already be authenticated; the pathname is pinned to
- * resumes/<userId>/<uuid>.pdf, PDF only, 8 MB. Nothing here depends on onUploadCompleted, which
- * does not fire on localhost: finalize is the source of truth.
+ * resumes/<userId>/<uuid>.pdf, PDF only, 8 MB. finalize is the source of truth, so no
+ * onUploadCompleted is set: Vercel then sends no completion callback, which would carry no session
+ * cookie or Origin header and be rejected by this route anyway.
  */
 export function issueUploadToken(userId: string, body: HandleUploadBody, request: Request) {
   return handleUpload({
     body,
     request,
-    onBeforeGenerateToken: async (pathname) => ({ ...uploadConstraints(userId, pathname), tokenPayload: JSON.stringify({ userId }) }),
-    onUploadCompleted: async () => {}
+    onBeforeGenerateToken: async (pathname) => ({ ...uploadConstraints(userId, pathname), tokenPayload: JSON.stringify({ userId }) })
   });
 }
 
