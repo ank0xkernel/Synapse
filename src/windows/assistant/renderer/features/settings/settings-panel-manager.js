@@ -283,7 +283,11 @@ export function createSettingsPanelManager({
         setApiKeyFieldVisibility(settingGeminiKey, toggleGeminiKeyVisibilityBtn, 'Gemini', false);
         setApiKeyFieldVisibility(settingAssemblyKey, toggleAssemblyKeyVisibilityBtn, 'AssemblyAI', false);
 
+        document.querySelectorAll('.sheet:not(.hidden)').forEach((open) => {
+            if (open !== settingsPanel) open.classList.add('hidden');
+        });
         settingsPanel.classList.remove('hidden');
+        (settingsPanel.querySelector('[data-autofocus]') || settingsPanel.querySelector('#close-settings'))?.focus();
     }
 
     function closeSettings() {
