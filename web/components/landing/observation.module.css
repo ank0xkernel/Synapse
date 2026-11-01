@@ -1,0 +1,135 @@
+/* Hero observation band: question | forming edge | answer. Phases are driven by [data-phase] on .band. */
+.band {
+  margin: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(88px, 9vw, 140px) minmax(0, 1.3fr);
+  grid-template-areas: 'cap cap cap' 'q edge a';
+  column-gap: var(--space-4);
+  row-gap: var(--space-6);
+  padding: var(--space-6) 0 var(--space-8);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.cap { grid-area: cap; display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.cap :global(.tag) { align-self: center; }
+.capText { font-size: var(--text-sm); color: var(--text-3); }
+
+.who {
+  display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-3);
+  font: var(--weight-medium) var(--text-sm)/1.2 var(--font-sans); color: var(--text-1);
+}
+.whoMeta { color: var(--text-3); font-weight: var(--weight-regular); }
+.whoMeta::before { content: '\00b7'; margin-right: var(--space-2); }
+.liveDot { width: 7px; height: 7px; border-radius: var(--radius-full); background: var(--rose); box-shadow: 0 0 0 3px color-mix(in srgb, var(--rose) 16%, transparent); }
+
+/* 1. The question, captioned word by word. */
+.question { grid-area: q; align-self: center; padding: var(--space-2) 0; }
+.caption {
+  font: var(--weight-light) clamp(22px, 1.4vw + 10px, 31px)/1.3 var(--font-display);
+  letter-spacing: -0.015em; color: var(--text-1); max-width: 24ch; text-wrap: pretty;
+}
+.word { opacity: 1; transition: opacity 360ms var(--ease-out); }
+.band[data-phase='clear'] .word { opacity: 0; transition-duration: 220ms; }
+.band[data-phase='ask'] .word { transition-delay: calc(var(--i) * 170ms); }
+.caret {
+  display: inline-block; width: 2px; height: 0.95em; margin-left: 2px; vertical-align: -0.12em;
+  background: var(--text-2); opacity: 0;
+}
+.band[data-phase='ask'] .caret { animation: blink 900ms steps(1) infinite; }
+
+/* 2. The edge: absent, forming, vivid. */
+.edge { grid-area: edge; position: relative; min-height: 220px; }
+.edgeVeil, .edgeCore { position: absolute; top: 4%; bottom: 4%; left: 50%; transform-origin: 50% 0; }
+.edgeVeil {
+  width: 72%; translate: -50% 0; rotate: 7deg; opacity: 0;
+  background: linear-gradient(180deg, var(--mint), var(--sapphire) 36%, var(--accent) 68%, var(--rose));
+  -webkit-mask: linear-gradient(90deg, transparent, #000 50%, transparent);
+  mask: linear-gradient(90deg, transparent, #000 50%, transparent);
+  transition: opacity var(--dur-slow) var(--ease-out), transform 900ms var(--ease-out);
+}
+.edgeCore {
+  width: 2px; translate: -50% 0; rotate: 7deg; overflow: hidden; border-radius: var(--radius-full);
+  background: linear-gradient(180deg, var(--mint), var(--sapphire) 36%, var(--accent) 68%, var(--rose));
+  transition: opacity var(--dur-slow) var(--ease-out), transform 900ms var(--ease-out);
+}
+.edgeRun {
+  position: absolute; left: 0; right: 0; top: 0; height: 30%; opacity: 0;
+  background: linear-gradient(180deg, transparent, var(--ground) 50%, transparent);
+}
+.band[data-phase='clear'] .edgeCore { opacity: 0; transform: scaleY(0.04); }
+.band[data-phase='clear'] .edgeVeil { opacity: 0; transform: scaleY(0.2); }
+.band[data-phase='ask'] .edgeCore { opacity: 0.35; transform: scaleY(0.14); }
+.band[data-phase='ask'] .edgeVeil { opacity: 0; transform: scaleY(0.2); }
+.band[data-phase='form'] .edgeCore { opacity: 0.8; transform: scaleY(0.66); }
+.band[data-phase='form'] .edgeVeil { opacity: 0.07; transform: scaleY(0.6); }
+.band[data-phase='form'] .edgeRun { opacity: 0.9; animation: run 1100ms linear infinite; }
+.band[data-phase='vivid'] .edgeVeil { opacity: 0.16; }
+
+.edgeState {
+  position: absolute; left: 0; right: 0; bottom: -4px; translate: 0 100%; display: grid; text-align: center;
+  font: var(--weight-regular) var(--text-xs)/1.3 var(--font-mono); color: var(--text-2);
+}
+.edgeState > span { grid-area: 1 / 1; opacity: 0; transition: opacity var(--dur-med) ease; }
+.band[data-phase='ask'] .edgeState [data-for='ask'],
+.band[data-phase='form'] .edgeState [data-for='form'],
+.band[data-phase='vivid'] .edgeState [data-for='vivid'] { opacity: 1; }
+
+/* 3. The answer, each line carrying its source. */
+.answer {
+  grid-area: a; position: relative; padding: var(--space-5) var(--space-6) var(--space-6);
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-1);
+}
+.lines { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-4); }
+.line { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; color: var(--text-1); max-width: 62ch; }
+.line, .jd { transition: opacity 420ms var(--ease-out), transform 420ms var(--ease-out); }
+.band[data-phase='vivid'] .line { transition-delay: calc(var(--i) * 420ms + 120ms); }
+.band[data-phase='vivid'] .jd { transition-delay: 1500ms; }
+.band:not([data-phase='vivid']) .line, .band:not([data-phase='vivid']) .jd { opacity: 0; transform: translateY(6px); transition-duration: 200ms; }
+
+.source {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 22px; padding: 0 var(--space-2);
+  border-radius: var(--radius-full); border: 1px solid var(--border); background: var(--surface-2);
+  font: var(--weight-medium) var(--text-xs)/1 var(--font-sans); color: var(--text-2);
+}
+.source::before { content: ''; width: 6px; height: 6px; border-radius: var(--radius-full); flex: none; }
+.source[data-kind='work']::before { background: var(--positive); }
+.source[data-kind='project']::before { background: var(--accent); }
+.source[data-kind='listed']::before { border: 1.5px solid var(--text-3); width: 7px; height: 7px; }
+
+.jd {
+  margin-top: var(--space-5); padding-top: var(--space-4); border-top: 1px dashed var(--border-strong);
+  font-size: var(--text-sm); color: var(--text-2); max-width: 62ch;
+}
+.jdTag {
+  display: inline-flex; align-items: center; min-height: 22px; margin-right: var(--space-2); padding: 0 var(--space-2);
+  border-radius: var(--radius-sm); border: 1px dashed var(--border-strong);
+  font: var(--weight-medium) var(--text-xs)/1 var(--font-sans); color: var(--text-1);
+}
+
+.band[data-running='false'] * { animation-play-state: paused; }
+
+@keyframes blink { 50% { opacity: 1; } }
+@keyframes run { from { transform: translateY(-100%); } to { transform: translateY(340%); } }
+
+@media (max-width: 900px) {
+  .band { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'cap' 'q' 'edge' 'a'; row-gap: var(--space-4); }
+  .caption { max-width: 32ch; }
+  .edge { min-height: 64px; }
+  .edgeVeil, .edgeCore { top: 50%; bottom: auto; left: 0; right: 0; width: auto; translate: 0 -50%; rotate: -2deg; transform-origin: 0 50%; }
+  .edgeCore { height: 2px; background: var(--fringe); }
+  .edgeVeil { height: 40px; background: var(--fringe); -webkit-mask: linear-gradient(180deg, transparent, #000 50%, transparent); mask: linear-gradient(180deg, transparent, #000 50%, transparent); }
+  .edgeRun { top: 0; bottom: 0; left: 0; width: 30%; height: auto; background: linear-gradient(90deg, transparent, var(--ground) 50%, transparent); }
+  .band[data-phase='clear'] .edgeCore { transform: scaleX(0.04); }
+  .band[data-phase='clear'] .edgeVeil, .band[data-phase='ask'] .edgeVeil { transform: scaleX(0.2); }
+  .band[data-phase='ask'] .edgeCore { transform: scaleX(0.14); }
+  .band[data-phase='form'] .edgeCore { transform: scaleX(0.66); }
+  .band[data-phase='form'] .edgeVeil { transform: scaleX(0.6); }
+  .band[data-phase='form'] .edgeRun { animation-name: runX; }
+  .edgeState { left: auto; right: 0; bottom: auto; top: 0; translate: 0 0; text-align: right; background: var(--ground); padding-left: var(--space-2); }
+  .answer { padding: var(--space-4); }
+}
+@keyframes runX { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .band *, .band *::before { transition: none !important; animation: none !important; }
+}
