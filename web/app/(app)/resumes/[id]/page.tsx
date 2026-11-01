@@ -55,7 +55,9 @@ export default async function ResumePage({ params }: { params: Promise<{ id: str
             )}
           </div>
           {r.has_file ? (
-            <iframe className={`pdf-frame ${s.frame}`} src={`/api/resumes/${r.id}/file`} title={`PDF preview of ${r.name}`} />
+            <div className={s.frameWrap}>
+              <iframe className={s.frame} src={`/api/resumes/${r.id}/file`} title={`PDF preview of ${r.name}`} />
+            </div>
           ) : (
             <div className={`text-view ${s.paper}`} tabIndex={0} aria-label="Resume text preview">{r.extracted_text}</div>
           )}

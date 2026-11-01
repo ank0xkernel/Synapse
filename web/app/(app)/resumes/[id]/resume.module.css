@@ -17,14 +17,15 @@
 .docBar h2 { font-size: var(--text-md); color: var(--text-2); }
 .open { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; font-size: var(--text-sm); color: var(--text-2); text-decoration: none; }
 @media (hover: hover) and (pointer: fine) { .open:hover { color: var(--text-1); } }
-.frame { height: min(calc(100dvh - 140px), 900px); min-height: 560px; border-radius: var(--radius-lg); box-shadow: var(--shadow-1); }
+/* The native PDF viewer paints its own dark chrome; a quiet frame keeps it from dominating the page. */
+.frameWrap { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+.frame { display: block; width: 100%; height: min(760px, 80dvh); border: 0; }
 .paper { max-height: min(calc(100dvh - 140px), 900px); min-height: 420px; padding: var(--space-8); background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-1); }
 .side { display: flex; flex-direction: column; gap: var(--space-8); min-width: 0; }
 
 @media (max-width: 1100px) {
   .workspace { grid-template-columns: minmax(0, 1fr); }
   .doc { position: static; }
-  .frame { height: 720px; min-height: 0; }
 }
 @media (max-width: 640px) {
   .page { gap: var(--space-6); }
