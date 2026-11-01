@@ -1,7 +1,10 @@
 /* Linked desktop rows and the manual token form, shared by the Desktop and Settings pages. */
 .none { color: var(--text-2); }
-.devices { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border-subtle); }
-.device { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: var(--space-4); align-items: start; padding: var(--space-5) 0; border-bottom: 1px solid var(--border-subtle); }
+.devices { list-style: none; margin: 0; padding: 0; }
+.device { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: var(--space-4); align-items: start; padding: var(--space-5) 0; }
+.device:first-child { padding-top: 0; }
+.device:last-child { padding-bottom: 0; }
+.device + .device { border-top: 1px solid var(--border-subtle); }
 .deviceIcon {
   width: 40px; height: 40px; border-radius: var(--radius-md); display: grid; place-items: center;
   background: var(--surface-1); border: 1px solid var(--border); color: var(--text-2);

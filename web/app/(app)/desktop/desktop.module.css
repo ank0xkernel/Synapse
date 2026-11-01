@@ -1,7 +1,7 @@
 /* Desktop: what the Mac receives, how to link one, and the devices that can read this account. */
 .page { display: flex; flex-direction: column; gap: var(--space-12); }
 .head { display: flex; flex-direction: column; gap: var(--space-3); max-width: 46rem; }
-.head h1 { font-size: var(--display-md); font-weight: var(--weight-light); }
+.head h1 { font-size: clamp(30px, 1.6vw + 20px, 44px); font-weight: var(--weight-light); }
 .head p { color: var(--text-2); font-size: var(--text-lg); max-width: 62ch; }
 
 .top { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: var(--space-10); align-items: start; }
@@ -38,7 +38,7 @@
 .section { display: flex; flex-direction: column; gap: var(--space-5); }
 .sectionHead { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); }
 
-.manual { border-top: 1px solid var(--border-subtle); padding-top: var(--space-5); }
+.manual { margin-top: calc(var(--space-6) * -1); }
 .manual summary {
   display: inline-flex; align-items: center; gap: var(--space-2); min-height: 44px; cursor: pointer; list-style: none;
   font-weight: var(--weight-medium); color: var(--text-2); border-radius: var(--radius-sm);

@@ -8,7 +8,7 @@ export default function FirstRun({ linked }: { linked: boolean }) {
     <div className={s.page}>
       <header className={s.head}>
         <div className={s.headText}>
-          <h1>Get Synapse ready for your next interview</h1>
+          <h1 className={s.hero}>Get Synapse ready for your next interview</h1>
           <p>The desktop app answers from your own resume and the job you are interviewing for. Three steps put both on your Mac.</p>
         </div>
       </header>

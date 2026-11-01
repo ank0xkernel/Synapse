@@ -3,7 +3,8 @@
 
 .head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-6); flex-wrap: wrap; }
 .headText { display: flex; flex-direction: column; gap: var(--space-3); max-width: 44rem; min-width: 0; }
-.headText h1 { font-size: var(--display-md); font-weight: var(--weight-light); letter-spacing: var(--tracking-display); }
+.headText h1 { font-size: clamp(30px, 1.6vw + 20px, 44px); font-weight: var(--weight-light); letter-spacing: var(--tracking-display); }
+.headText h1.hero { font-size: var(--display-md); }
 .headText p { color: var(--text-2); font-size: var(--text-lg); max-width: 62ch; }
 
 .board { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(260px, 1fr); gap: var(--space-10); align-items: start; }
