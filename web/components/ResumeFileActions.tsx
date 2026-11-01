@@ -2,21 +2,14 @@
 import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { call, uploadDriver, uploadPdfDirect } from '@/lib/client';
+import Icon from '@/components/Icon';
+import { PARSE, READ_BY, type ParseStatus } from '@/components/resume/labels';
+import s from '@/components/resume/workspace.module.css';
 
-type Status = 'ok' | 'failed' | 'needs_reprocess';
-
-const LABEL: Record<Status, { text: string; tone: 'positive' | 'danger' | 'warning' }> = {
-  ok: { text: 'Parsed', tone: 'positive' },
-  failed: { text: 'Parsing failed', tone: 'danger' },
-  needs_reprocess: { text: 'Parsed with an older parser', tone: 'warning' }
-};
-
-const READ_BY: Record<string, string> = { pdf: 'Text read from the PDF', ocr: 'Text read from scanned pages', docx: 'Text read from the Word file', text: 'Text as pasted or uploaded' };
-
-/** Parse status plus Replace file and Reprocess. Profile items you edited are kept by both. */
+/** How the resume was read and analysed, plus Replace file and Reprocess. Profile items you edited are kept by both. */
 export default function ResumeFileActions({ id, status, error, extraction, analysis, note }: {
   id: string;
-  status: Status;
+  status: ParseStatus;
   error: string | null;
   extraction: string;
   analysis: 'rules' | 'ai';
@@ -26,7 +19,7 @@ export default function ResumeFileActions({ id, status, error, extraction, analy
   const input = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const label = LABEL[status];
+  const label = PARSE[status];
 
   async function finish(r: { ok: true } | { ok: false; error: string }, done: string) {
     setBusy('');
@@ -58,22 +51,43 @@ export default function ResumeFileActions({ id, status, error, extraction, analy
     }
   }
 
+  const state = busy ? 'forming' : status === 'failed' ? 'dispersed' : status === 'ok' && !note ? 'vivid' : 'partial';
+
   return (
-    <div className="stack">
-      <div className="row">
-        <span className="status" data-tone={label.tone}>{label.text}</span>
-        <button type="button" className="btn btn-sm" disabled={!!busy} onClick={reprocess}>Reprocess</button>
-        <button type="button" className="btn btn-sm" disabled={!!busy} onClick={() => input.current?.click()}>Replace file</button>
-        <input ref={input} type="file" accept=".pdf,application/pdf" className="sr-only" aria-label="Replacement PDF" onChange={(e) => { replace(e.target.files?.[0]); e.target.value = ''; }} />
+    <section className={s.reading} data-state={state} aria-labelledby="reading-h">
+      <span className={s.edge} aria-hidden="true" />
+      <div className={s.readingHead}>
+        <h2 id="reading-h">How it was read</h2>
+        {busy ? <span className="status" data-tone="busy" role="status">{busy}</span> : <span className="status" data-tone={label.tone}>{label.text}</span>}
       </div>
-      <p className="meta">
-        {READ_BY[extraction] ?? 'Text extracted'}. Profile built {analysis === 'ai' ? 'by AI, keeping only what your resume says' : 'by section rules'}.
-      </p>
-      {note && <p className="meta" role="status">{note} Reprocess to try again.</p>}
+
+      <ol className={s.pipeline}>
+        <li data-ok={status !== 'failed'}>
+          <span className={s.node} aria-hidden="true" />
+          <div>
+            <h3>Text</h3>
+            <p>{READ_BY[extraction] ?? 'Text extracted'}.</p>
+          </div>
+        </li>
+        <li data-ok={status !== 'failed' && !note}>
+          <span className={s.node} aria-hidden="true" />
+          <div>
+            <h3>Profile</h3>
+            <p>Profile built {analysis === 'ai' ? 'by AI, keeping only what your resume says' : 'by section rules'}.</p>
+            {note && <p className={s.note} role="status">{note} Reprocess to try again.</p>}
+          </div>
+        </li>
+      </ol>
+
       {status === 'failed' && error && <p className="form-error" role="alert">{error}</p>}
       {status === 'needs_reprocess' && <p className="meta">Reprocess to re-read the original with the current parser. Items you edited stay as they are.</p>}
-      {busy && <p className="meta" role="status">{busy}</p>}
       {msg && <p className={msg.ok ? 'form-ok' : 'form-error'} role="status">{msg.text}</p>}
-    </div>
+
+      <div className={s.readingActions}>
+        <button type="button" className="btn btn-sm" disabled={!!busy} onClick={reprocess}><Icon name="refresh" size={15} />Reprocess</button>
+        <button type="button" className="btn btn-sm btn-ghost" disabled={!!busy} onClick={() => input.current?.click()}><Icon name="upload" size={15} />Replace file</button>
+        <input ref={input} type="file" accept=".pdf,application/pdf" className="sr-only" aria-label="Replacement PDF" onChange={(e) => { replace(e.target.files?.[0]); e.target.value = ''; }} />
+      </div>
+    </section>
   );
 }
