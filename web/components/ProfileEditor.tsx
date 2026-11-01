@@ -49,7 +49,7 @@ export default function ProfileEditor({ resumeId, initial }: { resumeId: string;
         <div className="row" key={i} style={{ alignItems: 'flex-start' }}>
           <div className="field grow">
             <label htmlFor={`${key}-${i}`} className="sr-only">{label} item {i + 1}</label>
-            <textarea id={`${key}-${i}`} className="textarea" style={{ minHeight: 44 }} rows={2} value={it.text} maxLength={2000} onChange={(e) => edit((d) => { d[key][i].text = e.target.value; })} />
+            <textarea id={`${key}-${i}`} className="textarea compact" rows={2} value={it.text} maxLength={2000} onChange={(e) => edit((d) => { d[key][i].text = e.target.value; })} />
             <Prov source={it.source} />
           </div>
           <button type="button" className="btn btn-sm btn-ghost" aria-label={`Remove ${label} item ${i + 1}`} onClick={() => edit((d) => { d[key].splice(i, 1); })}>Remove</button>
@@ -107,7 +107,7 @@ export default function ProfileEditor({ resumeId, initial }: { resumeId: string;
           <div className="entry" key={i}>
             <div className="field">
               <label htmlFor={`edu-${i}`}>Institution, degree and field</label>
-              <textarea id={`edu-${i}`} className="textarea" style={{ minHeight: 44 }} rows={2} value={it.text} maxLength={2000} onChange={(e) => edit((d) => { d.education[i].text = e.target.value; })} />
+              <textarea id={`edu-${i}`} className="textarea compact" rows={2} value={it.text} maxLength={2000} onChange={(e) => edit((d) => { d.education[i].text = e.target.value; })} />
             </div>
             <div className="field">
               <label htmlFor={`edu-g-${i}`}>Grade</label>
@@ -141,7 +141,7 @@ export default function ProfileEditor({ resumeId, initial }: { resumeId: string;
             </div>
             <div className="field">
               <label htmlFor={`add-t-${i}`}>Detail</label>
-              <textarea id={`add-t-${i}`} className="textarea" style={{ minHeight: 44 }} rows={2} value={it.text} maxLength={2000} onChange={(e) => edit((d) => { d.additional[i].text = e.target.value; })} />
+              <textarea id={`add-t-${i}`} className="textarea compact" rows={2} value={it.text} maxLength={2000} onChange={(e) => edit((d) => { d.additional[i].text = e.target.value; })} />
             </div>
             <div className="row-between">
               <Prov source={it.source} />
@@ -159,7 +159,7 @@ export default function ProfileEditor({ resumeId, initial }: { resumeId: string;
           <span className="hint">Written by you. It is sent to the desktop app as your own words.</span>
         </div>
       </section>
-      <div className="row" style={{ position: 'sticky', bottom: 0, padding: '12px 0', background: '#0b0b0e', borderTop: '1px solid var(--border-subtle)' }}>
+      <div className="row save-bar">
         <button type="button" className="btn btn-primary" onClick={save} disabled={busy || !dirty}>{busy ? 'Saving...' : 'Save profile'}</button>
         {dirty && !msg && <span className="status" data-tone="warning">Unsaved changes</span>}
         {msg && <span className={msg.ok ? 'form-ok' : 'form-error'} role="status">{msg.text}</span>}

@@ -2,8 +2,11 @@
 'use strict';
 
 /**
- * Generates the Synapse application icon set (PNG / ICNS / ICO) with no external
- * dependencies. Run with `node scripts/generate-icons.js` after changing the mark.
+ * Generates the Synapse application icon set (PNG / ICNS / ICO) and the tray glyph.
+ * The app icon comes from the brand artwork in assets/brand/synapse-app-icon.png,
+ * resized with macOS `sips`; elsewhere it falls back to the vector badge below.
+ * The tray glyph is always drawn here (it must be an alpha-only template image).
+ * Run with `node scripts/generate-icons.js` after changing the mark.
  */
 
 const fs = require('fs');
@@ -13,6 +16,17 @@ const { execFileSync } = require('child_process');
 
 const ASSETS_DIR = path.join(__dirname, '..', 'assets');
 const SS = 4; // supersampling factor for anti-aliasing
+const BRAND_ICON = path.join(ASSETS_DIR, 'brand', 'synapse-app-icon.png');
+
+/** The app icon at `size` px: the brand artwork when available, else the vector badge. */
+function appIcon(size) {
+  if (process.platform !== 'darwin' || !fs.existsSync(BRAND_ICON)) return renderIcon(size);
+  const out = path.join(require('os').tmpdir(), `synapse-icon-${size}.png`);
+  execFileSync('sips', ['-z', String(size), String(size), BRAND_ICON, '--out', out], { stdio: 'ignore' });
+  const png = fs.readFileSync(out);
+  fs.rmSync(out, { force: true });
+  return png;
+}
 
 // ---------------------------------------------------------------------------
 // Minimal RGBA PNG encoder
@@ -227,7 +241,7 @@ function buildIcns(iconsetDir, outputPath) {
 
   const cache = new Map();
   for (const [name, size] of variants) {
-    if (!cache.has(size)) cache.set(size, renderIcon(size));
+    if (!cache.has(size)) cache.set(size, appIcon(size));
     fs.writeFileSync(path.join(iconsetDir, name), cache.get(size));
   }
 
@@ -239,11 +253,11 @@ function buildIcns(iconsetDir, outputPath) {
 function main() {
   fs.mkdirSync(ASSETS_DIR, { recursive: true });
 
-  const png1024 = renderIcon(1024);
+  const png1024 = appIcon(1024);
   fs.writeFileSync(path.join(ASSETS_DIR, 'icon.png'), png1024);
   console.log('assets/icon.png (1024x1024)');
 
-  const png256 = renderIcon(256);
+  const png256 = appIcon(256);
   fs.writeFileSync(path.join(ASSETS_DIR, 'icon.ico'), buildIco(png256, 256));
   console.log('assets/icon.ico (256x256)');
 

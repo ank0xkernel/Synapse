@@ -20,7 +20,10 @@ if (!process.versions.electron) {
   const child = spawn(bin, [fileURLToPath(import.meta.url)], { env, stdio: 'inherit' });
   child.on('exit', (code) => process.exit(code ?? 1));
 } else {
-  const { app, BrowserWindow, session } = await import('electron');
+  const { app, BrowserWindow, session, nativeTheme } = await import('electron');
+  // SHOT_THEME=light|dark drives prefers-color-scheme; files get the theme as a suffix.
+  const THEME = process.env.SHOT_THEME || '';
+  if (THEME) nativeTheme.themeSource = THEME;
   const pdf = fs.readFileSync(path.join(here, '..', 'tests', 'fixtures', 'resume.pdf'));
 
   /** Minimal API client that keeps the session cookie so both seeding and the browser share one login. */
@@ -80,7 +83,7 @@ if (!process.versions.electron) {
         win.setContentSize(w, Math.min(height, 4000));
         await sleep(500);
         const img = await win.webContents.capturePage();
-        const file = path.join(OUT, `${set}-${name}-${w}.png`);
+        const file = path.join(OUT, `${set}-${name}-${w}${THEME ? '-' + THEME : ''}.png`);
         fs.writeFileSync(file, img.toPNG());
         const landed = new URL(win.webContents.getURL()).pathname;
         if (landed !== url.split('?')[0]) console.log(`REDIRECTED ${url} -> ${landed}`);

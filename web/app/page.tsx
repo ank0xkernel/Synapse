@@ -1,4 +1,6 @@
 import Link from 'next/link';
+import BrandMark from '@/components/BrandMark';
+import ThemeSwitch from '@/components/ThemeSwitch';
 import { currentUser } from '@/lib/auth';
 
 const FEATURES = [
@@ -23,8 +25,9 @@ export default async function Landing() {
   return (
     <>
       <header className="pub-nav">
-        <span className="brand"><span className="brand-mark" aria-hidden="true" />Synapse</span>
+        <span className="brand"><BrandMark />Synapse</span>
         <nav className="row" aria-label="Account">
+          <ThemeSwitch />
           {user ? (
             <Link className="btn btn-primary" href="/dashboard">Open dashboard</Link>
           ) : (
