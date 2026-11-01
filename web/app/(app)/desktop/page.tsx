@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { requirePageUser } from '@/lib/auth';
-import { getActiveResume, getSession, listDeviceTokens } from '@/lib/data';
+import { buildContextBundle, getActiveResume, getSession, listDeviceTokens } from '@/lib/data';
 import DeviceTokenCreate from '@/components/DeviceTokens';
 import LinkedDesktops from '@/components/LinkedDesktops';
 
@@ -9,11 +9,13 @@ export const metadata: Metadata = { title: 'Desktop' };
 
 export default async function Desktop() {
   const user = await requirePageUser();
-  const [tokens, active, session] = await Promise.all([
+  const [tokens, active, session, bundle] = await Promise.all([
     listDeviceTokens(user.id),
     getActiveResume(user.id),
-    user.activeSessionId ? getSession(user.id, user.activeSessionId) : null
+    user.activeSessionId ? getSession(user.id, user.activeSessionId) : null,
+    buildContextBundle(user.id, null)
   ]);
+  const currentVersion = typeof bundle === 'string' ? null : bundle.body.version;
   return (
     <div className="stack-lg">
       <div className="page-head">
@@ -44,7 +46,7 @@ export default async function Desktop() {
 
       <section className="card stack" aria-labelledby="tok">
         <h2 id="tok">Linked desktops</h2>
-        <LinkedDesktops tokens={tokens} />
+        <LinkedDesktops tokens={tokens} currentVersion={currentVersion} />
       </section>
 
       <section className="card stack" aria-labelledby="manual">

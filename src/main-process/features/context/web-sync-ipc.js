@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { createCredentialStore } = require('../../../services/web-sync/credential-store');
 const { createWebSync } = require('../../../services/web-sync/web-sync');
-const { applyWebBundle, clearWebContext } = require('./context-ipc');
+const { applyWebBundle, canReplaceWithWebContext, clearWebContext } = require('./context-ipc');
 
 function registerWebSyncIpc({ ipcMain, app, shell, safeStorage, sendToWindow }) {
   const dir = path.join(app.getPath('userData'), 'web-sync');
@@ -27,6 +27,7 @@ function registerWebSyncIpc({ ipcMain, app, shell, safeStorage, sendToWindow }) 
     cacheStore,
     openExternal: (url) => shell.openExternal(url),
     applyBundle: applyWebBundle,
+    canAutoApply: () => canReplaceWithWebContext(cacheStore.load()?.bundle),
     clearWebContext: () => {
       clearWebContext();
       removePreviews();

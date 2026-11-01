@@ -118,10 +118,12 @@ export interface DeviceToken {
   revoked_at: Date | null;
   expires_at: Date;
   linked_via: 'manual' | 'pkce';
+  context_version: string | null;
+  context_fetched_at: Date | null;
 }
 export const listDeviceTokens = (uid: string) =>
   query<DeviceToken>(
-    'SELECT id, name, prefix, created_at, last_used_at, revoked_at, expires_at, linked_via FROM device_tokens WHERE user_id = $1 ORDER BY created_at DESC',
+    'SELECT id, name, prefix, created_at, last_used_at, revoked_at, expires_at, linked_via, context_version, context_fetched_at FROM device_tokens WHERE user_id = $1 ORDER BY created_at DESC',
     [uid]
   );
 

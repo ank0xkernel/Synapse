@@ -25,7 +25,7 @@ Synapse is a macOS desktop interview assistant with a companion website. The des
 - Resume library: upload PDFs up to 8 MB, preview, rename, replace, delete, reprocess. Full text is kept; parsing failures are shown, not hidden. Scanned PDFs without a text layer are refused with a message (no OCR).
 - Candidate profile: experience, projects, education, skills and more, each marked as extracted or edited by you. Your edits survive reprocessing.
 - Job descriptions, interview prep (a resume-to-job comparison plus optional AI practice questions labeled as suggestions), and sessions that choose what the desktop app loads.
-- Desktop linking: approve the app once in your browser (OAuth-style PKCE over a 127.0.0.1 redirect). The desktop stores its token in the macOS Keychain, checks for newer context before a session, and only applies it when you confirm.
+- Desktop linking: approve the app once in your browser (OAuth-style PKCE over a 127.0.0.1 redirect). The desktop stores its token in the macOS Keychain, checks for newer context before a session, and applies it automatically unless you edited the context on the Mac (then it asks first). The agent uses the profile you reviewed on the website, including your corrections, and the Desktop page shows whether each linked Mac has your latest context.
 
 ## Architecture
 

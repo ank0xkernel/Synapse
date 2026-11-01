@@ -38,6 +38,9 @@ export function deriveReadiness(context) {
           ? 'No experience or projects recognized. Check that the resume uses clear section headings (for example "Experience", "Projects").'
           : 'No experience or projects recognized. This resume was saved by an older version that dropped its section headings; import the PDF again to fix it.' })
       : null,
+    hasResume && context.profileSource === 'web'
+      ? { tone: 'ok', text: 'Agent uses the profile you reviewed on Synapse web, including your corrections' }
+      : null,
     context.role || context.company
       ? { tone: 'ok', text: `Target: ${[context.role, context.company].filter(Boolean).join(' at ')}` }
       : { tone: 'idle', text: 'Optional: add the role and company so answers fit them' },

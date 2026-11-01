@@ -4,9 +4,10 @@
  * Desktop side of docs/desktop-web-contract.md (v1).
  *
  *   link()        browser sign-in with PKCE + loopback; token into the Keychain
- *   check()       one GET /context with If-None-Match; never applies anything
- *   applyPending  the user confirmed: write the fetched bundle into the local
- *                 interview context the AI reads
+ *   check()       one GET /context with If-None-Match; applies a newer bundle
+ *                 only when canAutoApply() says nothing local would be lost
+ *   applyPending  write the fetched bundle into the local interview context
+ *                 the AI reads (the user confirmed, or auto-apply)
  *   unlink()      revoke on the server, delete token, cache and web-sourced context
  *
  * No polling: check() runs when the user presses Refresh or starts listening.
@@ -52,6 +53,8 @@ function createWebSync({
   openExternal,
   applyBundle,
   clearWebContext,
+  // True when applying cannot overwrite anything the user wrote on this Mac.
+  canAutoApply = () => false,
   fetchImpl = fetch,
   deviceName = `Synapse on ${os.hostname().replace(/\.local$/, '')}`.slice(0, 60),
   now = () => Date.now(),
@@ -79,6 +82,7 @@ function createWebSync({
       applied: cached ? {
         version: cached.version,
         appliedAt: cached.appliedAt,
+        auto: Boolean(cached.auto),
         checkedAt: cached.checkedAt || null,
         resumeName: cached.bundle?.resume?.name || null,
         resumeId: cached.bundle?.resume?.id || null,
@@ -216,15 +220,16 @@ function createWebSync({
       return set(STATUS.UP_TO_DATE);
     }
     pending = body;
+    if (canAutoApply()) return applyPending({ auto: true });
     return set(STATUS.NEWER_AVAILABLE);
   }
 
-  /** The user confirmed the newer context. */
-  function applyPending() {
+  /** Writes the newer context; `auto` when no confirmation was needed. */
+  function applyPending({ auto = false } = {}) {
     if (!pending) return set(status, 'There is no newer context to apply.');
     applyBundle(pending);
     const timestamp = new Date(now()).toISOString();
-    cacheStore.save({ version: pending.version, bundle: pending, appliedAt: timestamp, checkedAt: timestamp });
+    cacheStore.save({ version: pending.version, bundle: pending, appliedAt: timestamp, checkedAt: timestamp, auto });
     pending = null;
     return set(STATUS.UP_TO_DATE);
   }
