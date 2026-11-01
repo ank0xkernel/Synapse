@@ -79,3 +79,8 @@
   .remove { width: 44px; }
   .saveBar > :global(.btn) { flex: 1 1 auto; }
 }
+/* Browsers without field-sizing keep a fixed box: give it room for three lines and let it be resized. */
+@supports not (field-sizing: content) {
+  /* Doubled class: must outrank .textarea.compact in ui.css. */
+  .quiet.quiet { min-height: calc(3lh + var(--space-4)); resize: vertical; }
+}

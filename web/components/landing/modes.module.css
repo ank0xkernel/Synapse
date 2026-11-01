@@ -1,4 +1,4 @@
-.wrap { display: grid; grid-template-columns: minmax(240px, 0.8fr) minmax(0, 1.6fr); gap: var(--space-10); align-items: start; }
+.wrap { display: grid; grid-template-columns: minmax(240px, 0.8fr) minmax(0, 1.6fr); gap: var(--space-10); align-items: stretch; }
 
 .tabs { display: flex; flex-direction: column; border-top: 1px solid var(--border-subtle); }
 .tab {
@@ -21,7 +21,7 @@
 .tabNote { font-size: var(--text-sm); color: var(--text-3); }
 
 .panel {
-  min-height: 420px; padding: var(--space-8); border-radius: var(--radius-xl);
+  padding: var(--space-8); border-radius: var(--radius-xl);
   background: var(--surface-1); box-shadow: var(--shadow-pop);
 }
 .panelHead { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-6); }
