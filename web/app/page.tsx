@@ -97,7 +97,7 @@ export default async function Landing() {
                 <span className={`tag ${s.fragTag}`}>Example</span>
                 <div className={s.nodes}>
                   <span className={s.node}><Icon name="desktop" size={18} />Synapse Desktop</span>
-                  <hr className={`fringe-line ${s.nodeLine}`} />
+                  <hr className={`hairline ${s.nodeLine}`} />
                   <span className={s.node}><Icon name="profile" size={18} />Your account</span>
                 </div>
                 <span className="status" data-tone="positive">Linked &middot; context cached on this Mac</span>
@@ -180,7 +180,7 @@ export default async function Landing() {
         </section>
 
         <section className={s.close} aria-labelledby="close-h">
-          <hr className="fringe-line" />
+          <hr className="hairline" />
           <h2 id="close-h" className={s.closeH}>Walk into the interview with your context ready.</h2>
           <div className={s.ctas}>
             {primary}

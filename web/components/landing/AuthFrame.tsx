@@ -44,7 +44,7 @@ export default function AuthFrame({ mode, title, intro, linking, children }: {
       </main>
 
       <aside className={s.side} aria-labelledby="side-h">
-        <hr className={`fringe-line ${s.seam}`} aria-hidden="true" />
+        <hr className={`hairline ${s.seam}`} aria-hidden="true" />
         {mode === 'login' ? (
           <div className={s.panel}>
             <h2 id="side-h" className={s.sideH}>Where you left it</h2>

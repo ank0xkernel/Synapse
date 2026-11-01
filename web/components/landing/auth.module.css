@@ -1,4 +1,4 @@
-/* Sign in / sign up: a calm form field on the left, a fringe seam, and a quieter field holding the account's contents. */
+/* Sign in / sign up: a calm form field on the left, a hairline seam, and a quieter field holding the account's contents. */
 .frame { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 0.92fr); min-height: 100dvh; }
 
 .formSide { display: flex; flex-direction: column; gap: var(--space-10); padding: var(--space-5) clamp(20px, 6vw, 96px) var(--space-8); }
@@ -14,7 +14,7 @@
 .privacy { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); color: var(--text-3); }
 
 .side { position: relative; display: grid; place-items: center; padding: var(--space-16) clamp(24px, 5vw, 72px); background: var(--surface-0); }
-.side .seam { position: absolute; left: 0; top: 0; bottom: 0; width: 1px; height: auto; background: linear-gradient(180deg, var(--mint), var(--sapphire) 36%, var(--accent) 68%, var(--rose)); }
+.side .seam { position: absolute; left: 0; top: 0; bottom: 0; width: 1px; height: auto; background: var(--border); }
 .panel { width: 100%; max-width: 440px; display: flex; flex-direction: column; gap: var(--space-6); }
 .sideH { font: var(--weight-light) var(--display-sm)/1.1 var(--font-display); letter-spacing: -0.02em; }
 
@@ -39,5 +39,5 @@
   .formSide { min-height: auto; gap: var(--space-8); }
   .formBody { margin: var(--space-4) 0 0; max-width: 480px; }
   .side { place-items: start; padding: var(--space-12) clamp(20px, 6vw, 96px); }
-  .side .seam { top: 0; left: 0; right: 0; bottom: auto; width: auto; height: 1px; background: var(--fringe); }
+  .side .seam { top: 0; left: 0; right: 0; bottom: auto; width: auto; height: 1px; background: var(--border); }
 }
