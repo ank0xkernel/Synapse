@@ -107,7 +107,7 @@ Without `BLOB_READ_WRITE_TOKEN`, PDFs are stored in Postgres (files up to 4.5 MB
 3. Optional: `GEMINI_API_KEY` for AI prep questions on the site.
 4. Deploy, then open `/api/health`. It reports database and storage status without secrets.
 
-The server refuses to start in production without `DATABASE_URL` and `BLOB_READ_WRITE_TOKEN`. Migrations are additive; back up with Neon's point-in-time restore before running new ones on populated data.
+Production builds fail, and the server refuses to start, without `DATABASE_URL` and `BLOB_READ_WRITE_TOKEN`. Migrations are additive; back up with Neon's point-in-time restore before running new ones on populated data.
 
 ## Phone companion
 
@@ -140,7 +140,7 @@ GitHub Actions runs the desktop suite and native helper build on macOS, and the 
 - **No transcript, "API key has been disabled or deleted"**: AssemblyAI rejected the key. Paste a new key in Settings.
 - **Listening but silence**: check System Settings → Privacy & Security → Screen & System Audio Recording for Synapse, then run `node scripts/diagnose-audio-capture.js`.
 - **Resume shows no experience or projects**: the resume needs clear section headings; resumes saved by older versions lost them, so import the PDF again or reprocess it on the website.
-- **Website build fails on Vercel**: confirm Root Directory is `web` and both storage integrations are connected to the environment being built.
+- **Website build fails on Vercel**: confirm Root Directory is `web` and both storage integrations are connected to the environment being built. The build stops with a message naming any missing variable. A project whose Root Directory is the repository root tries to package the desktop app and always fails; delete it or point it at `web`.
 
 ## Known limitations
 
