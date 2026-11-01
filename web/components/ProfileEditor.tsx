@@ -60,11 +60,14 @@ export default function ProfileEditor({ resumeId, initial }: { resumeId: string;
 
   const empty = (text: string) => <p className={s.empty}>{text}</p>;
 
-  const remove = (label: string, i: number, onRemove: () => void) => (
-    <button type="button" className={`btn btn-sm btn-ghost ${s.remove}`} aria-label={`Remove ${label} item ${i + 1}`} onClick={onRemove}>
-      <Icon name="close" size={15} />
-    </button>
-  );
+  const remove = (label: string, i: number, text: string, onRemove: () => void) => {
+    const words = text.trim().split(/\s+/).slice(0, 4).join(' ');
+    return (
+      <button type="button" className={`btn btn-sm btn-ghost ${s.remove}`} aria-label={`Remove ${label} item ${i + 1}${words ? `: ${words}` : ''}`} onClick={onRemove}>
+        <Icon name="close" size={15} />
+      </button>
+    );
+  };
 
   /** Short text items. `tone` sets how they read: identity lines, a summary paragraph, or compact facts in the margin. */
   const list = (key: ListKey, label: string, hint: string, tone: 'identity' | 'prose' | 'facts') => (
@@ -78,7 +81,7 @@ export default function ProfileEditor({ resumeId, initial }: { resumeId: string;
               <label htmlFor={`${key}-${i}`} className="sr-only">{label} item {i + 1}</label>
               <textarea
                 id={`${key}-${i}`}
-                className={`textarea compact ${s.quiet}`}
+                className={`textarea compact ${s.autosize}`}
                 data-lead={tone === 'identity' && i === 0}
                 rows={tone === 'prose' ? 3 : 1}
                 value={it.text}
@@ -87,7 +90,7 @@ export default function ProfileEditor({ resumeId, initial }: { resumeId: string;
               />
               <div className={s.itemFoot}>
                 <Prov source={it.source} />
-                {remove(label, i, () => edit((d) => { d[key].splice(i, 1); }))}
+                {remove(label, i, it.text, () => edit((d) => { d[key].splice(i, 1); }))}
               </div>
             </li>
           ))}
