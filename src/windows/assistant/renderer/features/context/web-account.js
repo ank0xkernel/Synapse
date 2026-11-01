@@ -33,8 +33,13 @@ export function initWebAccount({ onApplied = () => {}, showFeedback = () => {} }
   const urlInput = $('ctx-web-url');
   try { urlInput.value = localStorage.getItem(URL_KEY) || ''; } catch (_) { /* default empty */ }
 
+  let appliedVersion;
   function render(state) {
     if (!state) return;
+    // Applied by a click or automatically: either way the context view must reload.
+    const version = state.applied?.version || null;
+    if (appliedVersion !== undefined && version !== appliedVersion) onApplied(state);
+    appliedVersion = version;
     const [label, tone] = LABELS[state.status] || ['Unknown', 'idle'];
     root.dataset.status = state.status;
     const badge = $('ctx-web-badge');
@@ -45,7 +50,7 @@ export function initWebAccount({ onApplied = () => {}, showFeedback = () => {} }
     const details = [];
     if (linked) details.push(`Signed in as ${state.account.email}`);
     if (state.applied?.resumeName) {
-      details.push(`Using "${state.applied.resumeName}"${state.applied.role || state.applied.company ? ` for ${[state.applied.role, state.applied.company].filter(Boolean).join(' at ')}` : ''}, applied ${when(state.applied.appliedAt)}`);
+      details.push(`Using "${state.applied.resumeName}"${state.applied.role || state.applied.company ? ` for ${[state.applied.role, state.applied.company].filter(Boolean).join(' at ')}` : ''}, ${state.applied.auto ? 'synced automatically' : 'applied'} ${when(state.applied.appliedAt)}`);
     } else if (linked) {
       details.push('No website context applied yet');
     }
@@ -58,7 +63,9 @@ export function initWebAccount({ onApplied = () => {}, showFeedback = () => {} }
     const pending = state.pending;
     $('ctx-web-pending').hidden = !pending;
     if (pending) {
+      // Only shown when auto-apply held back: the context on this Mac was edited here.
       $('ctx-web-pending-detail').textContent = [
+        'Not applied automatically because the context on this Mac was edited here; using it replaces those edits',
         pending.resumeName ? `Resume: ${pending.resumeName}` : 'No resume',
         pending.role || pending.company ? `${[pending.role, pending.company].filter(Boolean).join(' at ')}` : null,
         pending.sessionTitle ? `Session: ${pending.sessionTitle}` : null,
@@ -92,10 +99,7 @@ export function initWebAccount({ onApplied = () => {}, showFeedback = () => {} }
   $('ctx-web-apply').addEventListener('click', async () => {
     const state = await api().webSyncApply?.();
     render(state);
-    if (state && !state.error) {
-      showFeedback('Website context applied', 'success');
-      onApplied(state);
-    }
+    if (state && !state.error) showFeedback('Website context applied', 'success');
   });
   $('ctx-web-pdf').addEventListener('click', async () => {
     const result = await api().webSyncViewPdf?.();

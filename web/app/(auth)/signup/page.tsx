@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import BrandMark from '@/components/BrandMark';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { currentUser } from '@/lib/auth';
@@ -12,7 +13,7 @@ export default async function Signup({ searchParams }: { searchParams: Promise<{
   if (await currentUser()) redirect(next);
   return (
     <main className="auth" id="main">
-      <Link href="/" className="brand"><span className="brand-mark" aria-hidden="true" />Synapse</Link>
+      <Link href="/" className="brand"><BrandMark />Synapse</Link>
       <div className="card auth-card">
         <div className="stack" style={{ gap: 6 }}>
           <h1>Create your account</h1>

@@ -103,16 +103,13 @@ body.window-resizing * { cursor: inherit !important; }
 .topbar-center { flex: 1; display: flex; justify-content: center; min-width: 0; }
 .action-buttons { gap: var(--space-2); }
 
+/* The Synapse app tile (assets/brand), inlined as a data URI in renderer.html. */
 .brand-mark {
-  display: grid;
-  place-items: center;
+  display: block;
   width: 24px;
   height: 24px;
-  border-radius: var(--radius-sm);
-  background: var(--accent-soft);
-  color: var(--accent-text);
+  flex: none;
 }
-.brand-mark svg { width: 15px; height: 15px; }
 
 /* Session state chip: the one place that says what Synapse is doing. */
 .session-state {

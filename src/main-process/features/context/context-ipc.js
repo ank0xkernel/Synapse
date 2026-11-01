@@ -41,6 +41,8 @@ function snapshot() {
     resumeFileName: context.resumeFileName || '',
     resumeImportedAt: context.resumeImportedAt || '',
     resumeSource: context.resumeSource || (context.background ? 'unknown' : ''),
+    // 'web': the agent uses the profile reviewed on Synapse web; 'parsed': read from the text here.
+    profileSource: context.structuredProfile?.source || (candidate ? 'parsed' : null),
     updatedAt: context.updatedAt,
     limits: { background: interviewContext.FIELDS.background.max, jobDescription: interviewContext.FIELDS.jobDescription.max },
     profile: candidate ? {
@@ -94,18 +96,43 @@ function userCorrectionsText(profile) {
   return blocks.length ? `\n\nCORRECTIONS FROM SYNAPSE WEB\n${blocks.join('\n')}` : '';
 }
 
-/** Writes a confirmed website context bundle (contract v1) into the local context the AI reads. */
+/** The text fields a website bundle writes, clamped the way save() stores them. */
+function webFields(bundle) {
+  const clamp = (key, value) => String(value || '').trim().slice(0, interviewContext.FIELDS[key].max);
+  return {
+    background: clamp('background', `${bundle.resume?.text || ''}${userCorrectionsText(bundle.profile)}`),
+    jobDescription: clamp('jobDescription', bundle.job_description?.text),
+    role: clamp('role', bundle.settings?.role || bundle.job_description?.role),
+    company: clamp('company', bundle.settings?.company || bundle.job_description?.company),
+    extraNotes: clamp('extraNotes', [bundle.profile?.custom_context?.text, bundle.session?.notes].filter(Boolean).join('\n\n'))
+  };
+}
+
+/**
+ * True when a newer website bundle can replace the local context without a
+ * prompt: nothing is set locally yet, or what is set is exactly what the last
+ * applied bundle wrote. Any edit made on this Mac keeps the confirm step.
+ */
+function canReplaceWithWebContext(lastAppliedBundle) {
+  const current = interviewContext.load();
+  const fields = ['background', 'jobDescription', 'role', 'company', 'extraNotes'];
+  if (fields.every((key) => !String(current[key] || '').trim())) return true;
+  if (current.resumeSource !== 'web' || !lastAppliedBundle) return false;
+  const expected = webFields(lastAppliedBundle);
+  return fields.every((key) => String(current[key] || '') === expected[key]);
+}
+
+/** Writes a website context bundle (contract v1) into the local context the AI reads. */
 function applyWebBundle(bundle) {
   const current = interviewContext.load();
-  const notes = [bundle.profile?.custom_context?.text, bundle.session?.notes].filter(Boolean).join('\n\n');
+  const fields = webFields(bundle);
   interviewContext.save({
     ...current,
-    background: `${bundle.resume?.text || ''}${userCorrectionsText(bundle.profile)}`.trim(),
-    jobDescription: bundle.job_description?.text || '',
-    role: bundle.settings?.role || bundle.job_description?.role || '',
-    company: bundle.settings?.company || bundle.job_description?.company || '',
+    ...fields,
+    // The agent reads the reviewed profile (with the user's edits) instead of re-parsing the text.
+    webProfile: bundle.resume ? bundle.profile : null,
+    webProfileFor: interviewContext.hashText(fields.background),
     interviewType: WEB_INTERVIEW_TYPES[bundle.session?.interview_type] || 'auto',
-    extraNotes: notes,
     resumeFileName: bundle.resume?.name || '',
     resumeImportedAt: bundle.resume?.updated_at || new Date().toISOString(),
     resumeSource: bundle.resume ? 'web' : ''
@@ -171,4 +198,4 @@ function registerContextIpc({ ipcMain, dialog, getMainWindow }) {
   });
 }
 
-module.exports = { registerContextIpc, snapshot, applyWebBundle, clearWebContext, userCorrectionsText };
+module.exports = { registerContextIpc, snapshot, applyWebBundle, canReplaceWithWebContext, clearWebContext, userCorrectionsText };

@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import BrandMark from '@/components/BrandMark';
 import { requirePageUser } from '@/lib/auth';
 import Sidebar from '@/components/Sidebar';
 
@@ -9,7 +10,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   return (
     <div className="shell">
       <aside className="sidebar">
-        <Link href="/dashboard" className="brand"><span className="brand-mark" aria-hidden="true" />Synapse</Link>
+        <Link href="/dashboard" className="brand"><BrandMark />Synapse</Link>
         <Sidebar email={user.email} />
       </aside>
       <main className="main" id="main">{children}</main>
