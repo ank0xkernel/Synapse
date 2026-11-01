@@ -43,7 +43,7 @@ export default function AuthForm({ mode, next = '/dashboard' }: { mode: 'login' 
         {signup && <span id="pw-hint" className="hint">At least 10 characters.</span>}
       </div>
       {error && <p className="form-error" role="alert">{error}</p>}
-      <button className="btn btn-primary" disabled={busy}>{busy ? 'Please wait...' : signup ? 'Create account' : 'Sign in'}</button>
+      <button className="btn btn-primary btn-lg" disabled={busy}>{busy ? 'Please wait...' : signup ? 'Create account' : 'Sign in'}</button>
       <p className="meta">
         {signup ? 'Already have an account? ' : 'New here? '}
         <Link href={`${signup ? '/login' : '/signup'}${next === '/dashboard' ? '' : `?next=${encodeURIComponent(next)}`}`}>{signup ? 'Sign in' : 'Create an account'}</Link>

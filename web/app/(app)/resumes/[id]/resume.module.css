@@ -1,0 +1,37 @@
+.page { display: flex; flex-direction: column; gap: var(--space-8); }
+.head { display: flex; flex-direction: column; gap: var(--space-4); }
+.titleRow { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-5); flex-wrap: wrap; }
+.titleBlock { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.h1 { font-weight: var(--weight-light); font-size: var(--display-md); overflow-wrap: anywhere; }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+
+.facts { margin: 0; display: flex; flex-wrap: wrap; gap: var(--space-3) var(--space-8); padding-top: var(--space-4); border-top: 1px solid var(--border); }
+.facts > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.facts dt { font-size: var(--text-xs); color: var(--text-3); }
+.facts dd { margin: 0; font-size: var(--text-sm); overflow-wrap: anywhere; }
+
+/* Two panes: the document as it is, beside what Synapse read from it. */
+.workspace { display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr); gap: var(--space-8); align-items: start; }
+.doc { position: sticky; top: var(--space-6); display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.docBar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; min-height: 32px; }
+.docBar h2 { font-size: var(--text-md); color: var(--text-2); }
+.open { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; font-size: var(--text-sm); color: var(--text-2); text-decoration: none; }
+@media (hover: hover) and (pointer: fine) { .open:hover { color: var(--text-1); } }
+/* The native PDF viewer paints its own dark chrome; a quiet frame keeps it from dominating the page. */
+.frameWrap { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+.frame { display: block; width: 100%; height: min(760px, 80dvh); border: 0; }
+.paper { max-height: min(calc(100dvh - 140px), 900px); min-height: 420px; padding: var(--space-8); background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-1); }
+.side { display: flex; flex-direction: column; gap: var(--space-8); min-width: 0; }
+
+@media (max-width: 1100px) {
+  .workspace { grid-template-columns: minmax(0, 1fr); }
+  .doc { position: static; }
+}
+@media (max-width: 640px) {
+  .page { gap: var(--space-6); }
+  .actions { width: 100%; }
+  .actions > :global(.btn) { flex: 1 1 auto; }
+  .frame { height: 480px; }
+  .paper { padding: var(--space-5); max-height: 520px; min-height: 0; }
+  .facts { gap: var(--space-3) var(--space-5); }
+}

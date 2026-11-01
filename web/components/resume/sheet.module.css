@@ -1,0 +1,37 @@
+.sheet {
+  position: relative; width: 84px; aspect-ratio: 8.5 / 11; flex: none; overflow: hidden; border-radius: 4px;
+  background: var(--surface-1); border: 1px solid var(--border-strong); box-shadow: var(--shadow-1);
+  transition: transform var(--dur-med) var(--ease-out);
+}
+.sheet[data-large='true'] { width: 100%; max-width: 220px; }
+
+/* The active resume is the one in use: its edge is vivid. */
+.sheet[data-active='true'] { border-color: transparent; }
+.sheet[data-active='true']::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; padding: 1.5px; pointer-events: none; background: var(--fringe);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+}
+.sheet[data-failed='true'] { opacity: 0.6; }
+
+.kind {
+  position: absolute; right: 5px; bottom: 5px; z-index: 1; padding: 1px 5px; border-radius: 3px;
+  font: var(--weight-medium) 9px/1.4 var(--font-mono); letter-spacing: 0.04em; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--border);
+}
+.sheet[data-large='true'] .kind { font-size: 10px; right: 8px; bottom: 8px; }
+
+/* The print is laid out at reading size and scaled onto the page, so it stays crisp at any size. */
+.print {
+  position: absolute; top: 9%; left: 10%; width: 320%; height: 364%; transform: scale(0.25); transform-origin: top left;
+  display: flex; flex-direction: column; gap: 3px; overflow: hidden; color: var(--text-3); font: 13px/1.45 var(--font-sans);
+}
+.print p { white-space: nowrap; overflow: hidden; }
+.print p[data-first='true'] { font: var(--weight-semibold) 20px/1.3 var(--font-display); color: var(--text-1); margin-bottom: 6px; }
+.sheet[data-large='true'] .print { width: 160%; height: 182%; transform: scale(0.5); font-size: 12px; gap: 4px; }
+.sheet[data-large='true'] .print p { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+/* Fade the foot of the page so the print reads as a preview, not the document. */
+.print::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 40%; background: linear-gradient(transparent, var(--surface-1)); }
+
+.blank { position: absolute; inset: 18% 14%; display: flex; flex-direction: column; gap: 10%; }
+.blank i { height: 3px; border-radius: 2px; background: var(--surface-3); }
+.blank i:first-child { width: 60%; height: 5px; background: var(--border-strong); }

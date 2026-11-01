@@ -1,14 +1,18 @@
 'use client';
-import { useRef, useState } from 'react';
+import { useRef, useState, type CSSProperties } from 'react';
 import { useRouter } from 'next/navigation';
 import { uploadDriver, uploadPdfDirect } from '@/lib/client';
+import Icon from '@/components/Icon';
+import s from '@/components/resume/upload.module.css';
 
 const MAX = 8 * 1024 * 1024;
 const OK_EXT = /\.(pdf|docx|txt|md)$/i;
 // One server request reads the file and builds the profile, so after the bytes are sent there is one honest stage.
 const PROCESSING = 'Reading and analysing';
+const DONE = 'Read and analysed';
 
-export default function UploadResume() {
+/** Intake for a new resume. The sheet's edge carries the state: absent at rest, forming while sent and read, vivid when done, dispersed on failure. */
+export default function UploadResume({ first = false }: { first?: boolean }) {
   const router = useRouter();
   const input = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
@@ -17,6 +21,12 @@ export default function UploadResume() {
   const [error, setError] = useState('');
   const [pasteOpen, setPasteOpen] = useState(false);
   const [retry, setRetry] = useState<(() => void) | null>(null);
+
+  function opened(id: string) {
+    setStage(DONE);
+    router.push(`/resumes/${id}`);
+    router.refresh();
+  }
 
   function send(form: FormData) {
     setRetry(() => () => send(form));
@@ -39,8 +49,7 @@ export default function UploadResume() {
         data = JSON.parse(xhr.responseText);
       } catch {}
       if (xhr.status >= 200 && xhr.status < 300 && data.ok && data.id) {
-        router.push(`/resumes/${data.id}`);
-        router.refresh();
+        opened(data.id);
       } else {
         setPct(null);
         setError(data.error || `Upload failed (${xhr.status})`);
@@ -56,8 +65,7 @@ export default function UploadResume() {
     setStage('Uploading');
     const r = await uploadPdfDirect(file, { onProgress: setPct, onStage: setStage });
     if (r.ok) {
-      router.push(`/resumes/${r.id}`);
-      router.refresh();
+      opened(r.id);
     } else {
       setPct(null);
       setError(r.error);
@@ -78,35 +86,77 @@ export default function UploadResume() {
   }
 
   const busy = pct !== null;
+  const sending = busy && stage === 'Uploading';
+  const state = error ? 'failed' : stage === DONE ? 'done' : sending ? 'uploading' : busy ? 'processing' : over ? 'over' : 'idle';
+  const progress = { '--p': (pct ?? 0) / 100 } as CSSProperties;
 
   return (
-    <div className="stack">
+    <div className={s.wrap}>
       <div
-        className="drop"
-        data-over={over}
+        className={s.intake}
+        data-state={state}
+        data-first={first}
         onDragOver={(e) => { e.preventDefault(); setOver(true); }}
         onDragLeave={() => setOver(false)}
         onDrop={(e) => { e.preventDefault(); setOver(false); if (!busy) pick(e.dataTransfer.files[0]); }}
       >
-        <strong>Drop a resume here</strong>
-        <span className="muted">PDF, Word (.docx), TXT or Markdown, up to 8 MB. Scanned PDFs are read when AI is set up.</span>
-        <input ref={input} id="resume-file" type="file" accept=".pdf,.docx,.txt,.md,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" className="sr-only" onChange={(e) => pick(e.target.files?.[0])} />
-        <div className="row">
-          <button type="button" className="btn btn-primary" disabled={busy} onClick={() => input.current?.click()}>Choose file</button>
-          <button type="button" className="btn" disabled={busy} onClick={() => setPasteOpen((v) => !v)} aria-expanded={pasteOpen}>Paste text instead</button>
+        <div className={s.sheet} aria-hidden="true">
+          <span className={s.fold} />
+          <span className={s.lines}><i /><i /><i /><i /><i /><i /><i /></span>
+          <span className={s.scan} />
+          <span className={s.edge} style={progress} />
         </div>
-        {busy && (
-          <div style={{ width: '100%', maxWidth: 360 }} role="status">
-            <div className="progress" role="progressbar" aria-valuenow={pct ?? 0} aria-valuemin={0} aria-valuemax={100} aria-label="Upload progress">
-              <span style={{ width: `${pct}%` }} />
-            </div>
-            <p className="meta">{stage}{stage === 'Uploading' ? ` ${pct}%` : '...'}</p>
+
+        <div className={s.body}>
+          <h2 className={s.title}>{first ? 'Start with your resume' : 'Add a resume'}</h2>
+          <p className={s.lead}>
+            Drop a file anywhere on this panel, or choose one. PDF, Word (.docx), TXT or Markdown, up to 8 MB. Scanned PDFs are read when AI is set up.
+          </p>
+          <input ref={input} id="resume-file" type="file" accept=".pdf,.docx,.txt,.md,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" className="sr-only" onChange={(e) => pick(e.target.files?.[0])} />
+          <div className={s.actions}>
+            <button type="button" className="btn btn-primary" disabled={busy} onClick={() => input.current?.click()}>
+              <Icon name="upload" size={16} />Choose file
+            </button>
+            <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => setPasteOpen((v) => !v)} aria-expanded={pasteOpen} aria-controls="paste-panel">
+              Paste text instead
+            </button>
           </div>
-        )}
+
+          {busy && (
+            <div className={s.progressBlock} role="status">
+              <ol className={s.stages}>
+                <li data-on={sending} data-done={!sending}>
+                  <span>Send the file</span>
+                  <span className="num">{sending ? `${pct}%` : 'Sent'}</span>
+                </li>
+                <li data-on={!sending && stage !== DONE} data-done={stage === DONE}>
+                  <span>{sending ? PROCESSING : stage}</span>
+                  <span>{stage === DONE ? 'Opening' : sending ? '' : 'Working'}</span>
+                </li>
+              </ol>
+              <div className={s.track} role="progressbar" aria-valuenow={pct ?? 0} aria-valuemin={0} aria-valuemax={100} aria-label="Upload progress">
+                <span style={progress} data-indeterminate={!sending} />
+              </div>
+            </div>
+          )}
+
+          {error && (
+            <div className={s.failure} role="alert">
+              <p>{error}</p>
+              {retry && !busy && (
+                <button type="button" className="btn btn-sm" onClick={retry}>
+                  <Icon name="refresh" size={15} />Try again
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       </div>
+
       {pasteOpen && (
         <form
-          className="stack card"
+          id="paste-panel"
+          className={s.paste}
           onSubmit={(e) => {
             e.preventDefault();
             const f = new FormData(e.currentTarget);
@@ -124,12 +174,6 @@ export default function UploadResume() {
           </div>
           <div><button className="btn btn-primary" disabled={busy}>Save resume</button></div>
         </form>
-      )}
-      {error && (
-        <div className="row" role="alert">
-          <p className="form-error">{error}</p>
-          {retry && !busy && <button type="button" className="btn btn-sm" onClick={retry}>Try again</button>}
-        </div>
       )}
     </div>
   );

@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { call } from '@/lib/client';
 import { INTERVIEW_TYPES, RESPONSE_MODES } from '@/lib/constants';
+import f from './workflow/forms.module.css';
 
 interface Initial {
   id?: string; title: string; company: string; role: string; interview_type: string; response_mode: string;
@@ -17,6 +18,12 @@ const toLocalInput = (iso: string | null) => {
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 };
 
+const STATUSES = [
+  { id: 'draft', label: 'Draft' },
+  { id: 'ready', label: 'Ready' },
+  { id: 'completed', label: 'Completed' }
+];
+
 export default function SessionForm(props: {
   initial?: Initial;
   resumes: { id: string; name: string }[];
@@ -27,27 +34,30 @@ export default function SessionForm(props: {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const type = initial?.interview_type ?? 'general';
+  const mode = initial?.response_mode ?? 'professional';
+  const status = initial?.status ?? 'draft';
 
   return (
     <form
-      className="stack"
+      className={f.form}
       onSubmit={async (e) => {
         e.preventDefault();
-        const f = new FormData(e.currentTarget);
-        const when = String(f.get('scheduledAt') || '');
+        const fd = new FormData(e.currentTarget);
+        const when = String(fd.get('scheduledAt') || '');
         setBusy(true);
         setMsg(null);
         const body = {
-          title: f.get('title'),
-          company: f.get('company'),
-          role: f.get('role'),
-          interviewType: f.get('interviewType'),
-          responseMode: f.get('responseMode'),
-          notes: f.get('notes'),
-          status: f.get('status'),
+          title: fd.get('title'),
+          company: fd.get('company'),
+          role: fd.get('role'),
+          interviewType: fd.get('interviewType'),
+          responseMode: fd.get('responseMode'),
+          notes: fd.get('notes'),
+          status: fd.get('status'),
           scheduledAt: when ? new Date(when).toISOString() : null,
-          resumeId: f.get('resumeId') || null,
-          jdId: f.get('jdId') || null
+          resumeId: fd.get('resumeId') || null,
+          jdId: fd.get('jdId') || null
         };
         const r = initial?.id ? await call('PATCH', `/api/sessions/${initial.id}`, body) : await call<{ id: string }>('POST', '/api/sessions', body);
         setBusy(false);
@@ -57,70 +67,108 @@ export default function SessionForm(props: {
         router.refresh();
       }}
     >
-      <div className="field">
-        <label htmlFor="s-title">Title</label>
-        <input id="s-title" name="title" className="input" defaultValue={initial?.title} required maxLength={160} placeholder="Backend interview, round 2" />
-      </div>
-      <div className="grid-2">
-        <div className="field">
-          <label htmlFor="s-company">Company</label>
-          <input id="s-company" name="company" className="input" defaultValue={initial?.company} maxLength={120} />
+      <div className={f.group} role="group" aria-labelledby="s-g-interview">
+        <div className={f.groupHead}>
+          <h3 id="s-g-interview">The interview</h3>
+          <p>What it is, who it is with, and when.</p>
         </div>
-        <div className="field">
-          <label htmlFor="s-role">Role</label>
-          <input id="s-role" name="role" className="input" defaultValue={initial?.role} maxLength={120} />
-        </div>
-      </div>
-      <div className="grid-2">
-        <div className="field">
-          <label htmlFor="s-resume">Resume</label>
-          <select id="s-resume" name="resumeId" className="select" defaultValue={initial ? initial.resume_id ?? '' : props.defaultResumeId ?? ''}>
-            <option value="">None</option>
-            {props.resumes.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-          </select>
-        </div>
-        <div className="field">
-          <label htmlFor="s-jd">Job description</label>
-          <select id="s-jd" name="jdId" className="select" defaultValue={initial?.jd_id ?? ''}>
-            <option value="">None</option>
-            {props.jds.map((j) => <option key={j.id} value={j.id}>{j.label}</option>)}
-          </select>
-        </div>
-      </div>
-      <div className="grid-2">
-        <div className="field">
-          <label htmlFor="s-type">Interview type</label>
-          <select id="s-type" name="interviewType" className="select" defaultValue={initial?.interview_type ?? 'general'}>
-            {INTERVIEW_TYPES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
-          </select>
-        </div>
-        <div className="field">
-          <label htmlFor="s-mode">Answer style</label>
-          <select id="s-mode" name="responseMode" className="select" defaultValue={initial?.response_mode ?? 'professional'}>
-            {RESPONSE_MODES.map((m) => <option key={m.id} value={m.id}>{m.label} - {m.description}</option>)}
-          </select>
-        </div>
-      </div>
-      <div className="grid-2">
-        <div className="field">
-          <label htmlFor="s-when">Scheduled for</label>
-          <input id="s-when" name="scheduledAt" type="datetime-local" className="input" defaultValue={toLocalInput(initial?.scheduled_at ?? null)} />
-        </div>
-        <div className="field">
-          <label htmlFor="s-status">Status</label>
-          <select id="s-status" name="status" className="select" defaultValue={initial?.status ?? 'draft'}>
-            <option value="draft">Draft</option>
-            <option value="ready">Ready</option>
-            <option value="completed">Completed</option>
-          </select>
+        <div className={f.fields}>
+          <div className="field">
+            <label htmlFor="s-title">Title</label>
+            <input id="s-title" name="title" className="input" defaultValue={initial?.title} required maxLength={160} placeholder="Backend interview, round 2" />
+          </div>
+          <div className={f.pair}>
+            <div className="field">
+              <label htmlFor="s-role">Role</label>
+              <input id="s-role" name="role" className="input" defaultValue={initial?.role} maxLength={120} />
+            </div>
+            <div className="field">
+              <label htmlFor="s-company">Company</label>
+              <input id="s-company" name="company" className="input" defaultValue={initial?.company} maxLength={120} />
+            </div>
+          </div>
+          <fieldset className={f.options}>
+            <legend>Interview type</legend>
+            <div className={f.optionList}>
+              {INTERVIEW_TYPES.map((t) => (
+                <label className={f.option} key={t.id}>
+                  <input type="radio" name="interviewType" value={t.id} defaultChecked={t.id === type} />
+                  <span className={f.optionName}>{t.label}</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          <div className={f.wrapRow}>
+            <div className="field">
+              <label htmlFor="s-when">Scheduled for</label>
+              <input id="s-when" name="scheduledAt" type="datetime-local" className="input" aria-describedby="s-when-hint" defaultValue={toLocalInput(initial?.scheduled_at ?? null)} />
+              <span id="s-when-hint" className="hint">Your local time</span>
+            </div>
+            <fieldset className={f.options}>
+              <legend>Status</legend>
+              <div className={f.segmented}>
+                {STATUSES.map((x) => (
+                  <label className={f.segment} key={x.id}>
+                    <input type="radio" name="status" value={x.id} defaultChecked={x.id === status} />
+                    {x.label}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          </div>
         </div>
       </div>
-      <div className="field">
-        <label htmlFor="s-notes">Interview context</label>
-        <textarea id="s-notes" name="notes" className="textarea" rows={8} defaultValue={initial?.notes} maxLength={8000} />
-        <span className="hint">Your own notes: interviewer names, team, topics to stress, things to avoid. Sent to the desktop app as written.</span>
+
+      <div className={f.group} role="group" aria-labelledby="s-g-material">
+        <div className={f.groupHead}>
+          <h3 id="s-g-material">Material</h3>
+          <p>The resume answers are grounded in, and the job they are aimed at.</p>
+        </div>
+        <div className={f.fields}>
+          <div className="field">
+            <label htmlFor="s-resume">Resume</label>
+            <select id="s-resume" name="resumeId" className="select" defaultValue={initial ? initial.resume_id ?? '' : props.defaultResumeId ?? ''}>
+              <option value="">None</option>
+              {props.resumes.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="s-jd">Job description</label>
+            <select id="s-jd" name="jdId" className="select" defaultValue={initial?.jd_id ?? ''}>
+              <option value="">None</option>
+              {props.jds.map((j) => <option key={j.id} value={j.id}>{j.label}</option>)}
+            </select>
+          </div>
+        </div>
       </div>
-      <div className="row">
+
+      <div className={f.group} role="group" aria-labelledby="s-g-answers">
+        <div className={f.groupHead}>
+          <h3 id="s-g-answers">Answers</h3>
+          <p>How the desktop app shapes answers during the call, and what it should know.</p>
+        </div>
+        <div className={f.fields}>
+          <fieldset className={f.options}>
+            <legend>Answer style</legend>
+            <div className={f.optionList}>
+              {RESPONSE_MODES.map((m) => (
+                <label className={f.option} key={m.id}>
+                  <input type="radio" name="responseMode" value={m.id} defaultChecked={m.id === mode} />
+                  <span className={f.optionName}>{m.label}</span>
+                  <span className={f.optionDesc}>{m.description}</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          <div className="field">
+            <label htmlFor="s-notes">Interview context</label>
+            <textarea id="s-notes" name="notes" className="textarea" rows={8} defaultValue={initial?.notes} maxLength={8000} />
+            <span className="hint">Your own notes: interviewer names, team, topics to stress, things to avoid. Sent to the desktop app as written.</span>
+          </div>
+        </div>
+      </div>
+
+      <div className={f.actions}>
         <button className="btn btn-primary" disabled={busy}>{busy ? 'Saving...' : initial?.id ? 'Save session' : 'Create session'}</button>
         {msg && <span className={msg.ok ? 'form-ok' : 'form-error'} role="status">{msg.text}</span>}
       </div>

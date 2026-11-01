@@ -1,0 +1,45 @@
+/* Desktop link consent: one sheet, the two ends of the link drawn first, then exactly what is being granted. */
+.page { min-height: 100dvh; display: flex; flex-direction: column; padding: var(--space-5) clamp(20px, 5vw, 64px) var(--space-16); }
+.top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.top :global(.brand) { padding-left: 0; }
+.sheet { width: 100%; max-width: 680px; margin: clamp(32px, 8vh, 96px) auto 0; display: flex; flex-direction: column; gap: var(--space-6); }
+
+.pair { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); }
+.end {
+  display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; padding: 10px var(--space-4);
+  border: 1px solid var(--border); border-radius: var(--radius-full); background: var(--surface-1); box-shadow: var(--shadow-1);
+  font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--text-1);
+}
+.end svg { flex: none; color: var(--text-2); }
+.email { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wire { position: relative; flex: 1 1 40px; min-width: 40px; display: grid; place-items: center; color: var(--accent-text); }
+.wire svg { position: relative; padding: 2px; background: var(--ground); box-sizing: content-box; }
+.wireLine { position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: var(--fringe); }
+
+.title { font: var(--weight-light) var(--display-md)/1.08 var(--font-display); letter-spacing: -0.03em; overflow-wrap: anywhere; }
+.lede { font-size: var(--text-lg); color: var(--text-2); max-width: 60ch; }
+
+.facts { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); gap: var(--space-8); padding: var(--space-6) 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.factH { margin-bottom: var(--space-3); font: var(--weight-medium) var(--text-sm)/1.3 var(--font-sans); color: var(--text-2); }
+.reads { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.reads li { display: flex; align-items: center; gap: var(--space-2); color: var(--text-1); }
+.reads svg { color: var(--positive); flex: none; }
+.req { margin: 0; display: flex; flex-direction: column; gap: var(--space-3); }
+.req > div { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: var(--space-3); }
+.req dt { font-size: var(--text-sm); color: var(--text-3); }
+.req dd { margin: 0; display: flex; flex-direction: column; gap: 2px; color: var(--text-1); overflow-wrap: anywhere; }
+.code { font-size: var(--text-sm); }
+.sub { font-size: var(--text-xs); color: var(--text-3); }
+
+.decide { display: flex; flex-direction: column; gap: var(--space-5); }
+.warn { display: flex; align-items: flex-start; gap: var(--space-2); font-size: var(--text-sm); color: var(--text-2); }
+.warn svg { flex: none; margin-top: 2px; color: var(--text-3); }
+.decide :global(.row) { gap: var(--space-3); }
+.actions { display: flex; gap: var(--space-3); }
+
+@media (max-width: 640px) {
+  .facts { grid-template-columns: minmax(0, 1fr); gap: var(--space-6); }
+  .pair { flex-wrap: wrap; }
+  .wire { display: none; }
+  .decide :global(.row > .btn) { flex: 1 1 auto; }
+}

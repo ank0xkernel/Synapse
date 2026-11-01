@@ -1,0 +1,51 @@
+/* The interchange: employer-only, the meeting point, candidate-only. Colour only where the two meet. */
+.root { display: flex; flex-direction: column; gap: var(--space-6); min-width: 0; }
+.head { display: flex; flex-direction: column; gap: var(--space-3); }
+.summary { color: var(--text-2); max-width: 68ch; }
+.count { color: var(--text-1); font-weight: var(--weight-medium); font-variant-numeric: tabular-nums; }
+.resume { color: var(--text-1); font-weight: var(--weight-medium); overflow-wrap: anywhere; }
+
+/* One segment per JD technology. Matched segments each show their slice of the fringe. */
+.ticks { display: flex; gap: 3px; width: 100%; max-width: 520px; height: 8px; }
+.tick { flex: 1 1 0; min-width: 3px; border-radius: var(--radius-full); background: var(--surface-3); box-shadow: inset 0 0 0 1px var(--border-subtle); }
+.tick[data-on='true'] {
+  background: var(--fringe);
+  background-size: calc(var(--total) * 100%) 100%;
+  background-position: calc(var(--i) / max(var(--total) - 1, 1) * 100%) 0;
+  box-shadow: none;
+}
+
+.lanes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr) minmax(0, 1fr); gap: 0; align-items: stretch; }
+.lane { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-5); min-width: 0; }
+.lane[data-side='jd'] { padding-left: 0; }
+.lane[data-side='resume'] { padding-right: 0; }
+.lane[data-side='both'] { background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-1); }
+.laneHead { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); }
+.laneTitle { margin: 0; font: var(--weight-medium) var(--text-md)/1.3 var(--font-display); letter-spacing: var(--tracking-tight); }
+.n { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--text-3); font-variant-numeric: tabular-nums; }
+.note { font-size: var(--text-sm); color: var(--text-3); max-width: 40ch; }
+.empty { font-size: var(--text-sm); color: var(--text-2); }
+
+.chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 7px; min-height: 28px; padding: 0 11px; border-radius: var(--radius-full);
+  font-size: var(--text-sm); color: var(--text-1); overflow-wrap: anywhere;
+}
+/* Employer side: an outline, nothing filled in. */
+.chip[data-kind='gap'] { border: 1px dashed var(--border-strong); color: var(--text-2); }
+/* Candidate side: solid, theirs. */
+.chip[data-kind='own'] { background: var(--surface-2); border: 1px solid var(--border); }
+/* The meeting point: a spectral node. */
+.chip[data-kind='match'] { background: var(--surface-2); border: 1px solid var(--accent-border); }
+.chip[data-kind='match']::before {
+  content: ''; width: 7px; height: 7px; border-radius: var(--radius-full); flex: none;
+  background: conic-gradient(from 200deg, var(--mint), var(--sapphire), var(--accent), var(--rose), var(--mint));
+}
+.method { font-size: var(--text-sm); color: var(--text-3); }
+
+@media (max-width: 900px) {
+  .lanes { grid-template-columns: minmax(0, 1fr); gap: var(--space-2); }
+  .lane[data-side='both'] { order: -1; }
+  .lane[data-side='jd'], .lane[data-side='resume'] { padding: var(--space-4) 0; border-top: 1px solid var(--border-subtle); }
+}
+.title { font: var(--weight-medium) var(--text-lg)/1.3 var(--font-display); letter-spacing: var(--tracking-tight); }
