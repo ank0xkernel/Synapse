@@ -1,0 +1,98 @@
+/* Resume intake. The paper sheet carries the cloud states on its edge:
+   idle (absent) -> uploading/processing (forming) -> done (vivid) -> failed (dispersed). */
+.wrap { display: flex; flex-direction: column; gap: var(--space-3); }
+
+.intake {
+  position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-8); align-items: center;
+  padding: var(--space-8) var(--space-8) var(--space-8) var(--space-10);
+  border: 1px dashed var(--border-strong); border-radius: var(--radius-xl); background: var(--surface-1);
+  transition: border-color var(--dur-med) ease, background-color var(--dur-med) ease;
+}
+.intake[data-first='true'] { padding-block: var(--space-12); }
+.intake[data-state='over'] { border-color: var(--accent); background: var(--accent-soft); }
+.intake[data-state='uploading'], .intake[data-state='processing'], .intake[data-state='done'] { border-style: solid; border-color: var(--border); }
+
+/* ── The sheet ─────────────────────────────────────────────── */
+.sheet {
+  position: relative; width: 104px; aspect-ratio: 8.5 / 11; flex: none; border-radius: 4px;
+  background: var(--surface-1); border: 1px solid var(--border-strong); box-shadow: var(--shadow-1);
+  overflow: hidden; transition: transform var(--dur-slow) var(--ease-out), opacity var(--dur-slow) var(--ease-out);
+}
+.intake[data-first='true'] .sheet { width: 128px; }
+.fold { position: absolute; top: 0; right: 0; width: 22px; height: 22px; background: linear-gradient(225deg, var(--surface-3) 50%, transparent 50%); border-bottom-left-radius: 3px; }
+.lines { position: absolute; inset: 22% 14% 14%; display: flex; flex-direction: column; gap: 9%; }
+.lines i { display: block; height: 3px; border-radius: 2px; background: var(--surface-3); }
+.lines i:nth-child(1) { width: 58%; height: 5px; background: var(--border-strong); }
+.lines i:nth-child(3) { width: 86%; } .lines i:nth-child(4) { width: 70%; } .lines i:nth-child(6) { width: 78%; } .lines i:nth-child(7) { width: 44%; }
+
+/* Fringe edge along the foot of the sheet: grows with the upload. */
+.edge {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--fringe);
+  transform-origin: left center; transform: scaleX(0); opacity: 0;
+  transition: transform var(--dur-med) linear, opacity var(--dur-med) ease;
+}
+.intake[data-state='uploading'] .edge { opacity: 1; transform: scaleX(var(--p, 0)); }
+.intake[data-state='processing'] .edge, .intake[data-state='done'] .edge { opacity: 1; transform: scaleX(1); }
+
+/* Whole-sheet fringe, forming while the text is read and the profile built, vivid when done. */
+.sheet::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; padding: 1.5px; pointer-events: none; opacity: 0;
+  background: var(--fringe);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  transition: opacity var(--dur-slow) var(--ease-out);
+}
+.intake[data-state='processing'] .sheet::after { animation: forming 1.8s var(--ease-in-out) infinite; }
+.intake[data-state='done'] .sheet::after { opacity: 1; }
+.intake[data-state='done'] .sheet { transform: translateY(-4px); }
+
+/* A reading line passes down the page while the server reads it. */
+.scan { position: absolute; left: 8%; right: 8%; top: 0; height: 2px; border-radius: 2px; background: var(--fringe); opacity: 0; }
+.intake[data-state='processing'] .scan { animation: read 2.2s var(--ease-in-out) infinite; }
+
+/* Dispersed: the sheet drifts out of focus, the colour leaves it. */
+.intake[data-state='failed'] .sheet { opacity: 0.55; transform: rotate(-3deg) translateY(2px); }
+.intake[data-state='failed'] .lines i { opacity: 0.6; }
+
+@keyframes forming { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+@keyframes read { 0% { transform: translateY(0); opacity: 0; } 15% { opacity: 0.9; } 85% { opacity: 0.9; } 100% { transform: translateY(150px); opacity: 0; } }
+
+/* ── Copy and actions ──────────────────────────────────────── */
+.body { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.title { font: var(--weight-light) var(--text-xl)/1.2 var(--font-display); letter-spacing: var(--tracking-tight); }
+.intake[data-first='true'] .title { font-size: var(--display-sm); }
+.lead { color: var(--text-2); max-width: 62ch; }
+.actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
+
+/* ── Progress ──────────────────────────────────────────────── */
+.progressBlock { display: flex; flex-direction: column; gap: var(--space-3); max-width: 440px; margin-top: var(--space-2); }
+.stages { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); }
+.stages li { display: flex; flex-direction: column; gap: 2px; font-size: var(--text-sm); color: var(--text-3); transition: color var(--dur-med) ease; }
+.stages li > span:first-child { font-weight: var(--weight-medium); }
+.stages li[data-on='true'] { color: var(--text-1); }
+.stages li[data-done='true'] { color: var(--text-2); }
+.stages li > span:last-child { color: var(--text-3); min-height: 1.4em; }
+.track { position: relative; height: 3px; border-radius: var(--radius-full); background: var(--surface-3); overflow: hidden; }
+.track > span { position: absolute; inset: 0; background: var(--fringe); transform-origin: left center; transform: scaleX(var(--p, 0)); transition: transform var(--dur-med) linear; }
+.track > span[data-indeterminate='true'] { transform: scaleX(1); animation: forming 1.8s var(--ease-in-out) infinite; }
+
+.failure { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); margin-top: var(--space-2); color: var(--danger); font-size: var(--text-sm); }
+.failure p { max-width: 60ch; }
+
+/* ── Paste panel ───────────────────────────────────────────── */
+.paste { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-6); border: 1px solid var(--border); border-radius: var(--radius-xl); background: var(--surface-1); box-shadow: var(--shadow-1); animation: rise var(--dur-med) var(--ease-out); }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+@media (max-width: 640px) {
+  .intake { grid-template-columns: minmax(0, 1fr); gap: var(--space-5); padding: var(--space-6) var(--space-5); justify-items: start; }
+  .intake[data-first='true'] { padding-block: var(--space-8); }
+  .sheet, .intake[data-first='true'] .sheet { width: 76px; }
+  .actions > :global(.btn) { flex: 1 1 auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .intake[data-state='processing'] .scan { animation: none; }
+  .intake[data-state='processing'] .sheet::after, .track > span[data-indeterminate='true'] { animation-duration: 3.6s; }
+  .intake[data-state='failed'] .sheet, .intake[data-state='done'] .sheet { transform: none; }
+  .paste { animation: none; }
+}

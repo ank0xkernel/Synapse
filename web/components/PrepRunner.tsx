@@ -3,31 +3,31 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { call } from '@/lib/client';
 
-export default function PrepRunner(props: { sessionId: string; aiConfigured: boolean; ready: boolean }) {
+/** One prep action. `deterministic` re-runs the rule-based comparison; `ai` generates a new set of suggestions. */
+export default function PrepRunner(props: { sessionId: string; mode: 'deterministic' | 'ai'; ready: boolean; hasResult: boolean }) {
   const router = useRouter();
-  const [busy, setBusy] = useState<'deterministic' | 'ai' | null>(null);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
-  async function run(mode: 'deterministic' | 'ai') {
-    setBusy(mode);
+  async function run() {
+    setBusy(true);
     setError('');
-    const r = await call('POST', `/api/sessions/${props.sessionId}/prep`, { mode });
-    setBusy(null);
+    const r = await call('POST', `/api/sessions/${props.sessionId}/prep`, { mode: props.mode });
+    setBusy(false);
     if (!r.ok) setError(r.error);
     else router.refresh();
   }
 
+  const label =
+    props.mode === 'deterministic'
+      ? busy ? 'Comparing...' : props.hasResult ? 'Compare again' : 'Compare resume and job description'
+      : busy ? 'Generating (up to a minute)...' : props.hasResult ? 'Generate a new set' : 'Generate AI preparation';
+
   return (
-    <div className="stack">
-      <div className="row">
-        <button className="btn btn-primary" disabled={!props.ready || !!busy} onClick={() => run('deterministic')}>
-          {busy === 'deterministic' ? 'Comparing...' : 'Compare resume and job description'}
-        </button>
-        <button className="btn" disabled={!props.ready || !props.aiConfigured || !!busy} onClick={() => run('ai')}>
-          {busy === 'ai' ? 'Generating (up to a minute)...' : 'Generate AI preparation'}
-        </button>
-      </div>
-      {!props.aiConfigured && <p className="notice" data-tone="warning">AI preparation needs GEMINI_API_KEY on the server. The comparison above works without it.</p>}
+    <div className="row">
+      <button type="button" className={`btn${props.hasResult ? '' : ' btn-primary'}`} disabled={!props.ready || busy} onClick={run}>
+        {label}
+      </button>
       {error && <p className="form-error" role="alert">{error}</p>}
     </div>
   );
