@@ -1,8 +1,5 @@
 /* Desktop: what the Mac receives, how to link one, and the devices that can read this account. */
 .page { display: flex; flex-direction: column; gap: var(--space-12); }
-.head { display: flex; flex-direction: column; gap: var(--space-3); max-width: 46rem; }
-.head h1 { font-size: clamp(30px, 1.6vw + 20px, 44px); font-weight: var(--weight-light); }
-.head p { color: var(--text-2); font-size: var(--text-lg); max-width: 62ch; }
 
 .top { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: var(--space-10); align-items: start; }
 

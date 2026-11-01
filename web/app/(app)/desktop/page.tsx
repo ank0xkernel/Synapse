@@ -18,6 +18,7 @@ const HEAD = {
   never: ['Your Mac is linked but has not fetched your context', 'The app fetches it when you select Refresh or start listening, then works from its cached copy.'],
   unknown: ['Nothing to send to your Mac yet', 'Upload a resume or create a session. The desktop app fetches that context before each interview.']
 } as const;
+const TONE: Record<keyof typeof HEAD, string | undefined> = { latest: 'positive', older: 'warning', never: 'accent', none: 'accent', unknown: undefined };
 
 export default async function Desktop() {
   const user = await requirePageUser();
@@ -37,8 +38,9 @@ export default async function Desktop() {
 
   return (
     <div className={s.page}>
-      <header className={s.head}>
-        <h1>{title}</h1>
+      <header className="page-head">
+        <h1>Desktop app</h1>
+        <span className="status" data-tone={TONE[sync]}>{title}</span>
         <p>{lead}</p>
       </header>
 
