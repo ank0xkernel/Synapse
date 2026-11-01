@@ -89,7 +89,10 @@ export default async function PrepPage({ params }: { params: Promise<{ id: strin
         </div>
         <div className={s.stepBody}>
           {!hasAi && (
-            <p className="notice" data-tone="warning">AI preparation needs GEMINI_API_KEY on the server. The skill overview above works without it.</p>
+            <div className={s.keyNotice} role="note">
+              <p className={s.keyHead}>AI preparation needs GEMINI_API_KEY on the server.</p>
+              <p>The skill overview above works without it.</p>
+            </div>
           )}
           {a ? <PracticeDeck content={a} /> : hasAi && <p className={s.waiting}>Not generated yet. You get practice questions, behavioral prompts, STAR outlines to reveal step by step, and points for each project on your resume.</p>}
         </div>

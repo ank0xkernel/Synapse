@@ -42,6 +42,11 @@
 .reqs { display: flex; flex-direction: column; gap: var(--space-3); padding-top: var(--space-5); border-top: 1px solid var(--border-subtle); }
 .reqs ol { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: var(--space-2); max-width: 72ch; }
 .reqs ol ::marker { color: var(--text-3); font-family: var(--font-mono); font-size: var(--text-sm); }
+.keyNotice {
+  display: flex; flex-direction: column; gap: var(--space-1); max-width: 68ch; padding: var(--space-3) var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent); border-radius: var(--radius-md); background: var(--surface-1); color: var(--text-2);
+}
+.keyHead { color: var(--warning); font-weight: var(--weight-medium); }
 
 @media (max-width: 900px) {
   .row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }

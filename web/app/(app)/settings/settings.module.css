@@ -15,12 +15,11 @@
 .danger {
   display: grid; grid-template-columns: minmax(0, 18rem) minmax(0, 1fr); gap: var(--space-10);
   padding: var(--space-8); border-radius: var(--radius-lg);
-  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent); background: var(--danger-soft);
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent); background: var(--surface-1);
 }
 .danger h2 { color: var(--danger); }
-.danger .about p { color: var(--text-1); }
 .dangerBody { min-width: 0; }
-.dangerBody :global(.input) { max-width: 26rem; background: var(--surface-1); }
+.dangerBody :global(.input) { max-width: 26rem; }
 
 @media (max-width: 900px) {
   .group, .danger { grid-template-columns: minmax(0, 1fr); gap: var(--space-5); }
