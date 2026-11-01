@@ -107,6 +107,24 @@ describe('resumes', () => {
     assert.ok(prof.achievements.length === 0);
   });
 
+  test('summary, contact and non-core sections are saved, not dropped', async () => {
+    const f = new FormData();
+    f.set('text', ['Riya Sen', 'riya@example.com', 'CAREER OBJECTIVE', 'Data engineer who builds reliable pipelines.', 'EXPERIENCE',
+      'Flipkart - Data Engineer (Jan 2021 - Present)', 'Moved nightly batch jobs to streaming with Kafka.', 'Tech Stack: Spark, Airflow',
+      'Cut warehouse costs by 30% by partitioning hot tables.', 'PUBLICATIONS', 'Streaming at scale, VLDB workshop 2022.'].join('\n'));
+    const up = await c.json('POST', '/api/resumes', f);
+    assert.equal(up.status, 200, JSON.stringify(up.data));
+    const p = (await S.db.query('SELECT data FROM candidate_profiles WHERE resume_id=$1', [up.data.id])).rows[0].data;
+    assert.ok(p.summary.some((s) => /reliable pipelines/.test(s.text)), JSON.stringify(p.summary));
+    assert.ok(p.contact.some((s) => s.text === 'Riya Sen'));
+    assert.deepEqual(p.additional.map((a) => a.heading), ['PUBLICATIONS']);
+    const exp = p.experience.flatMap((e) => e.bullets).join('\n');
+    assert.match(exp, /Tech Stack: Spark/);
+    assert.match(exp, /warehouse costs/, 'the bullet after a Tech Stack line stays in the job');
+    assert.ok(p.experience.some((e) => e.technologies.includes('Kafka') && e.technologies.includes('Spark')));
+    await c.json('DELETE', `/api/resumes/${up.data.id}`);
+  });
+
   test('PDF preview route streams private bytes with the required headers', async () => {
     const res = await c.req('GET', `/api/resumes/${first}/file`);
     assert.equal(res.status, 200);

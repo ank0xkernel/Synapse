@@ -19,7 +19,13 @@ const entry = z.object({
   source: src
 });
 
+const headedItem = z.object({ heading: text(120).default(''), text: text(20000).min(1), source: src });
+
+// summary, contact and additional default to [] so profiles stored before they existed stay valid.
 export const profileSchema = z.object({
+  summary: z.array(textItem).max(200).default([]),
+  contact: z.array(textItem).max(50).default([]),
+  additional: z.array(headedItem).max(1000).default([]),
   education: z.array(eduItem).max(300),
   experience: z.array(entry).max(300),
   projects: z.array(entry).max(300),
@@ -31,6 +37,9 @@ export const profileSchema = z.object({
 export type Profile = z.infer<typeof profileSchema>;
 
 export const emptyProfile = (): Profile => ({
+  summary: [],
+  contact: [],
+  additional: [],
   education: [],
   experience: [],
   projects: [],
@@ -49,11 +58,15 @@ interface RawEntry {
 interface RawItem {
   text: string;
   grade?: string | null;
+  heading?: string;
 }
 
 /** Profile derived only from what the resume text says. Empty sections stay empty. */
 export function extractProfile(resumeText: string): Profile {
   const raw = buildCandidateProfile(resumeText) as unknown as {
+    summary: RawItem[];
+    contact: RawItem[];
+    additional: RawItem[];
     education: RawItem[];
     experience: RawEntry[];
     projects: RawEntry[];
@@ -71,6 +84,9 @@ export function extractProfile(resumeText: string): Profile {
       source: 'extracted' as const
     }));
   return {
+    summary: items(raw.summary),
+    contact: items(raw.contact),
+    additional: raw.additional.map((i) => ({ heading: i.heading ?? '', text: i.text, source: 'extracted' as const })),
     education: raw.education.map((e) => ({ text: e.text, grade: e.grade ?? '', source: 'extracted' as const })),
     experience: entries(raw.experience),
     projects: entries(raw.projects),
@@ -93,6 +109,9 @@ export function mergeReprocessed(old: Profile, fresh: Profile): Profile {
     return [...mine, ...after.filter((i) => !seen.has(strip(i)))];
   };
   return {
+    summary: merge(old.summary, fresh.summary),
+    contact: merge(old.contact, fresh.contact),
+    additional: merge(old.additional, fresh.additional),
     education: merge(old.education, fresh.education),
     experience: merge(old.experience, fresh.experience),
     projects: merge(old.projects, fresh.projects),
@@ -116,6 +135,9 @@ export function applyProvenance(incoming: Profile, previous: Profile): Profile {
   };
   const cc = incoming.custom_context;
   return {
+    summary: mark(incoming.summary, previous.summary),
+    contact: mark(incoming.contact, previous.contact),
+    additional: mark(incoming.additional, previous.additional),
     education: mark(incoming.education, previous.education),
     experience: mark(incoming.experience, previous.experience),
     projects: mark(incoming.projects, previous.projects),
@@ -129,11 +151,13 @@ export function applyProvenance(incoming: Profile, previous: Profile): Profile {
 /** All profile text flattened, for technology matching and prompts. */
 export function profileText(p: Profile): string {
   return [
+    ...p.summary.map((s) => s.text),
     ...p.education.map((e) => e.text),
     ...[...p.experience, ...p.projects].flatMap((e) => [e.name, ...e.bullets]),
     ...p.skills.map((s) => s.text),
     ...p.achievements.map((s) => s.text),
     ...p.certifications.map((s) => s.text),
+    ...p.additional.map((s) => s.text),
     p.custom_context.text
   ].join('\n');
 }
