@@ -1,0 +1,62 @@
+/* Desktop: what the Mac receives, how to link one, and the devices that can read this account. */
+.page { display: flex; flex-direction: column; gap: var(--space-12); }
+.head { display: flex; flex-direction: column; gap: var(--space-3); max-width: 46rem; }
+.head h1 { font-size: var(--display-md); font-weight: var(--weight-light); }
+.head p { color: var(--text-2); font-size: var(--text-lg); max-width: 62ch; }
+
+.top { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: var(--space-10); align-items: start; }
+
+.manifest {
+  display: flex; flex-direction: column; gap: var(--space-5); padding: var(--space-8); min-width: 0;
+  border-radius: var(--radius-xl); background: var(--surface-1); border: 1px solid var(--border); box-shadow: var(--shadow-1);
+}
+.manifest:global(.fringe) { border-color: transparent; }
+.fields { margin: 0; display: flex; flex-direction: column; }
+.fields > div { display: grid; grid-template-columns: 11rem minmax(0, 1fr); gap: var(--space-4); padding: var(--space-3) 0; border-top: 1px solid var(--border-subtle); }
+.fields > div:first-child { border-top: 0; padding-top: 0; }
+.fields dt { color: var(--text-3); font-size: var(--text-sm); padding-top: 2px; }
+.fields dd { margin: 0; font-weight: var(--weight-medium); overflow-wrap: anywhere; }
+.none { color: var(--text-3); font-weight: var(--weight-regular); }
+.version { font-size: var(--text-sm); color: var(--text-3); }
+.version .mono { color: var(--text-2); }
+
+.howto { display: flex; flex-direction: column; gap: var(--space-5); padding-top: var(--space-2); min-width: 0; }
+.steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.steps li { position: relative; display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: var(--space-4); padding-bottom: var(--space-5); }
+.steps li:last-child { padding-bottom: 0; }
+.steps li:not(:last-child)::before { content: ''; position: absolute; left: 13.5px; top: 32px; bottom: 4px; width: 1px; background: var(--border-strong); }
+.steps p { color: var(--text-2); padding-top: 3px; }
+.steps b { color: var(--text-1); font-weight: var(--weight-medium); }
+.num {
+  width: 28px; height: 28px; border-radius: var(--radius-full); display: grid; place-items: center;
+  border: 1px solid var(--accent-border); background: var(--accent-soft); color: var(--accent-text);
+  font: var(--weight-medium) var(--text-sm)/1 var(--font-display);
+}
+.fine { display: flex; gap: var(--space-2); align-items: flex-start; font-size: var(--text-sm); color: var(--text-3); max-width: 60ch; }
+.fine svg { flex: none; margin-top: 2px; }
+
+.section { display: flex; flex-direction: column; gap: var(--space-5); }
+.sectionHead { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); }
+
+.manual { border-top: 1px solid var(--border-subtle); padding-top: var(--space-5); }
+.manual summary {
+  display: inline-flex; align-items: center; gap: var(--space-2); min-height: 44px; cursor: pointer; list-style: none;
+  font-weight: var(--weight-medium); color: var(--text-2); border-radius: var(--radius-sm);
+}
+.manual summary::-webkit-details-marker { display: none; }
+.manual summary::before {
+  content: ''; width: 7px; height: 7px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg); transition: transform var(--dur-fast) var(--ease-out);
+}
+.manual[open] summary::before { transform: rotate(45deg); }
+@media (hover: hover) and (pointer: fine) { .manual summary:hover { color: var(--text-1); } }
+.manualBody { display: flex; flex-direction: column; gap: var(--space-4); padding-top: var(--space-3); max-width: 640px; }
+
+@media (max-width: 1100px) {
+  .top { grid-template-columns: minmax(0, 1fr); gap: var(--space-10); }
+}
+@media (max-width: 640px) {
+  .page { gap: var(--space-10); }
+  .manifest { padding: var(--space-6) var(--space-5); }
+  .fields > div { grid-template-columns: minmax(0, 1fr); gap: var(--space-1); }
+}
