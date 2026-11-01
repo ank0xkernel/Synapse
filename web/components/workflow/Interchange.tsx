@@ -61,7 +61,7 @@ export default function Interchange(props: {
           <Chips items={gaps} kind="gap" empty="Nothing missing from the known list." />
         </div>
 
-        <div className={`${s.lane} fringe`} data-side="both">
+        <div className={s.lane} data-side="both">
           <div className={s.laneHead}>
             <L className={s.laneTitle}>In both</L>
             <span className={s.n}>{matched.length}</span>

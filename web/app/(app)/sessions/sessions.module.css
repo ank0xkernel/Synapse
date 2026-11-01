@@ -3,7 +3,6 @@
   display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-5); border-radius: var(--radius-full);
   background: var(--surface-1); border: 1px solid var(--border); color: var(--text-2); box-shadow: var(--shadow-1);
 }
-.loaded:global(.fringe) { border-color: transparent; color: var(--text-1); }
 .loaded svg { flex: none; color: var(--text-3); }
 .loaded p { overflow-wrap: anywhere; }
 
@@ -78,7 +77,6 @@
   position: sticky; top: var(--space-6); display: flex; flex-direction: column; gap: var(--space-4);
   padding: var(--space-6); border-radius: var(--radius-lg); background: var(--surface-1); border: 1px solid var(--border); box-shadow: var(--shadow-1);
 }
-.receives:global(.fringe) { border-color: transparent; }
 .receives h2 { display: flex; align-items: center; gap: var(--space-2); font: var(--weight-medium) var(--text-lg)/1.3 var(--font-display); }
 .receives > p { font-size: var(--text-sm); color: var(--text-2); }
 .bundle { margin: 0; display: flex; flex-direction: column; }

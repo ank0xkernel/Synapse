@@ -56,7 +56,7 @@ export default async function Sessions() {
         </section>
       ) : (
         <>
-          <div className={`${s.loaded} ${loaded ? 'fringe' : ''}`}>
+          <div className={s.loaded}>
             <Icon name="desktop" size={20} />
             {loaded ? (
               <p>The desktop app loads <Link href={`/sessions/${loaded.id}`}>{loaded.title}</Link>.</p>

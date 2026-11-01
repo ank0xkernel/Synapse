@@ -59,7 +59,7 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
           />
         </section>
 
-        <aside className={`${s.receives} ${isActive ? 'fringe' : ''}`} aria-labelledby="recv-h">
+        <aside className={s.receives} aria-labelledby="recv-h">
           <h2 id="recv-h"><Icon name="desktop" size={18} /> What the desktop receives</h2>
           <p>
             {isActive
