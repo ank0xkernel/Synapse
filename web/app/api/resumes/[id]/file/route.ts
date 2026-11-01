@@ -4,7 +4,7 @@ import { extractPdfText, MAX_FILE_BYTES } from '@/lib/resume-extract';
 import { pdfResponse, replaceResumeFile } from '@/lib/resume-file';
 import { driver, sha256 } from '@/lib/storage';
 
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 export const GET = api<{ id: string }>(async (_req, { params }) => {
   const user = await requireUser();
@@ -24,10 +24,11 @@ export const PUT = api<{ id: string }>(async (req, { params }) => {
   const file = form?.get('file');
   if (!(file instanceof File) || file.size === 0) throw new ApiError(400, 'Attach a PDF file');
   const buf = Buffer.from(await file.arrayBuffer());
-  const text = await extractPdfText(buf);
+  const { text, method } = await extractPdfText(buf);
   await replaceResumeFile(user.id, id, {
     fileName: file.name.slice(0, 200) || 'resume.pdf',
     text,
+    method,
     file: { mime: 'application/pdf', size: buf.length, bytes: buf, key: null, sha256: sha256(buf) }
   });
   return {};

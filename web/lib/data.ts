@@ -18,6 +18,9 @@ export interface ResumeSummary {
   text_chars: number;
   parse_status: 'ok' | 'failed' | 'needs_reprocess';
   parse_error: string | null;
+  extraction_method: 'text' | 'pdf' | 'ocr' | 'docx';
+  analysis_method: 'rules' | 'ai';
+  analysis_note: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -26,7 +29,7 @@ export interface Resume extends ResumeSummary {
 }
 
 const RESUME_COLS = `id, name, file_name, mime, size_bytes, (file_bytes IS NOT NULL OR storage_key IS NOT NULL) AS has_file, is_active,
-  length(extracted_text) AS text_chars, parse_status, parse_error, created_at, updated_at`;
+  length(extracted_text) AS text_chars, parse_status, parse_error, extraction_method, analysis_method, analysis_note, created_at, updated_at`;
 
 export const listResumes = (uid: string) =>
   query<ResumeSummary>(`SELECT ${RESUME_COLS} FROM resumes WHERE user_id = $1 ORDER BY is_active DESC, created_at DESC`, [uid]);

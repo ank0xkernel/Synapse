@@ -1,8 +1,11 @@
 import { api, idParam, notFound, readJson } from '@/lib/http';
 import { requireUser } from '@/lib/auth';
-import { one, query } from '@/lib/db';
+import { one, query, withTx } from '@/lib/db';
 import { getProfile } from '@/lib/data';
-import { applyProvenance, extractProfile, profileSchema } from '@/lib/profile';
+import { applyProvenance, profileSchema } from '@/lib/profile';
+import { buildProfile } from '@/lib/ai-resume';
+
+export const maxDuration = 60;
 import { z } from 'zod';
 
 type P = { id: string };
@@ -30,11 +33,14 @@ export const POST = api<P>(async (req, { params }) => {
   await readJson(req, z.object({ confirm: z.literal(true) }), 1024);
   const r = await one<{ extracted_text: string }>('SELECT extracted_text FROM resumes WHERE user_id = $1 AND id = $2', [user.id, id]);
   if (!r) throw notFound();
-  const profile = extractProfile(r.extracted_text);
-  await query(
-    `INSERT INTO candidate_profiles (resume_id, user_id, data) VALUES ($1, $2, $3)
-     ON CONFLICT (resume_id) DO UPDATE SET data = EXCLUDED.data, updated_at = now()`,
-    [id, user.id, JSON.stringify(profile)]
-  );
+  const { profile, method, note } = await buildProfile(r.extracted_text);
+  await withTx(async (q) => {
+    await q(
+      `INSERT INTO candidate_profiles (resume_id, user_id, data) VALUES ($1, $2, $3)
+       ON CONFLICT (resume_id) DO UPDATE SET data = EXCLUDED.data, updated_at = now()`,
+      [id, user.id, JSON.stringify(profile)]
+    );
+    await q('UPDATE resumes SET analysis_method = $3, analysis_note = $4, updated_at = now() WHERE user_id = $1 AND id = $2', [user.id, id, method, note]);
+  });
   return { profile };
 });

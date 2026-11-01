@@ -35,14 +35,14 @@ export const POST = api(async (req) => {
       read: (k) => store.read(k),
       remove: (k) => store.remove(k),
       extract: extractPdfText,
-      save: async ({ key, bytes, sha256: sha, text }) => {
+      save: async ({ key, bytes, sha256: sha, text, method }) => {
         const file = { mime: 'application/pdf', size: bytes, bytes: null, key, sha256: sha };
         if (replaceId) {
-          const { oldKey } = await replaceResumeFile(user.id, replaceId, { fileName, text, file });
+          const { oldKey } = await replaceResumeFile(user.id, replaceId, { fileName, text, method, file });
           if (oldKey) await store.remove(oldKey).catch((e) => console.error(JSON.stringify({ level: 'warn', msg: 'old blob delete failed', err: String(e?.message ?? e) })));
           return { id: replaceId, created: false };
         }
-        return createResume(user.id, { name: b.name || fileName.replace(/\.pdf$/i, '') || 'Resume', fileName, text, file });
+        return createResume(user.id, { name: b.name || fileName.replace(/\.pdf$/i, '') || 'Resume', fileName, text, method, file });
       }
     },
     sha256

@@ -1,13 +1,14 @@
 import { api, ApiError } from '@/lib/http';
 import { requireUser } from '@/lib/auth';
-import { extractResume, MAX_FILE_BYTES } from '@/lib/resume-extract';
+import { type ExtractionMethod, extractResume, MAX_FILE_BYTES } from '@/lib/resume-extract';
 import { createResume } from '@/lib/resume-file';
 import { driver, sha256 } from '@/lib/storage';
 
-export const maxDuration = 30;
+// OCR of a scan plus AI analysis can take most of a minute.
+export const maxDuration = 60;
 
 /**
- * multipart: `file` (pdf/txt/md) or `text` (+ optional `name`). With the blob driver PDFs go
+ * multipart: `file` (pdf/docx/txt/md) or `text` (+ optional `name`). With the blob driver PDFs go
  * browser -> storage -> /api/resumes/finalize instead, because Functions accept 4.5 MB bodies at most.
  */
 export const POST = api(async (req) => {
@@ -21,7 +22,7 @@ export const POST = api(async (req) => {
   const nameInput = String(form.get('name') ?? '').trim().slice(0, 120);
 
   let fileName: string;
-  let ex: { mime: string; text: string; keepBytes: boolean };
+  let ex: { mime: string; text: string; method: ExtractionMethod; keepBytes: boolean };
   let bytes: Buffer | null = null;
   if (file instanceof File && file.size > 0) {
     if (file.size > MAX_FILE_BYTES) throw new ApiError(413, 'File is larger than 8 MB');
@@ -33,13 +34,13 @@ export const POST = api(async (req) => {
   } else if (typeof pasted === 'string' && pasted.trim()) {
     if (pasted.length > 200_000) throw new ApiError(413, 'Pasted text is too long');
     fileName = 'pasted-text.txt';
-    ex = { mime: 'text/plain', text: pasted.trim(), keepBytes: false };
+    ex = { mime: 'text/plain', text: pasted.trim(), method: 'text', keepBytes: false };
   } else {
-    throw new ApiError(400, 'Attach a PDF, TXT or MD file, or paste text');
+    throw new ApiError(400, 'Attach a PDF, Word (.docx), TXT or MD file, or paste text');
   }
 
-  const name = nameInput || fileName.replace(/\.(pdf|txt|md)$/i, '') || 'Resume';
+  const name = nameInput || fileName.replace(/\.(pdf|docx|txt|md)$/i, '') || 'Resume';
   const stored = { mime: ex.mime, size: bytes ? bytes.length : Buffer.byteLength(ex.text), bytes, key: null, sha256: bytes ? sha256(bytes) : null };
-  const { id } = await createResume(user.id, { name, fileName, text: ex.text, file: stored });
+  const { id } = await createResume(user.id, { name, fileName, text: ex.text, method: ex.method, file: stored });
   return { id };
 });
