@@ -21,6 +21,8 @@
                  base-uri 'none';
                  object-src 'none'">
   <title>Synapse</title>
+  <link rel="stylesheet" href="ui/fonts.css">
+  <link rel="stylesheet" href="ui/brand-tokens.css">
   <link rel="stylesheet" href="ui/tokens.css">
   <link rel="stylesheet" href="ui/app.css">
 </head>
@@ -129,13 +131,21 @@
     </header>
 
     <!-- Live answer feed -->
+    <div class="context-strip" aria-label="Active interview context">
+      <button type="button" id="context-summary" class="context-summary" aria-label="Open active resume and job context">
+        <span class="context-indicator" aria-hidden="true"></span>
+        <span id="context-summary-resume">Loading saved context…</span>
+        <span id="context-summary-job" class="context-job"></span>
+      </button>
+      <button type="button" id="session-details" class="btn btn-ghost btn-sm">Session details</button>
+    </div>
     <main id="chat-container" class="chat-container">
       <div id="chat-messages" class="chat-messages" role="log" aria-live="polite" aria-label="Transcript and answers"></div>
       <!-- Outside #chat-messages so Clear (which empties the feed) cannot remove it;
            CSS hides it whenever the feed has a message. -->
         <div class="chat-empty-state" id="chat-empty-state">
-          <p class="chat-empty-title">Ready when the interview starts</p>
-          <p class="chat-empty-body">Press Listen. Synapse hears your call through your normal speakers or headphones, and answers appear here as the interviewer finishes a question.</p>
+          <h1 class="chat-empty-title">Your next answer starts here.</h1>
+          <p class="chat-empty-body">Choose your audio sources, check your context, then press Listen. Questions and grounded answers will appear here as the conversation unfolds.</p>
           <ul class="chat-empty-keys">
             <li><span class="keys"><kbd>⌥</kbd><kbd>⇧</kbd><kbd>T</kbd></span><span>Listen</span></li>
             <li><span class="keys"><kbd>⌥</kbd><kbd>⇧</kbd><kbd>A</kbd></span><span>Answer now</span></li>
@@ -341,7 +351,7 @@
     <!-- Settings -->
     <aside id="settings-panel" class="sheet settings-panel hidden" role="dialog" aria-labelledby="settings-title">
       <header class="sheet-header settings-header">
-        <h2 id="settings-title" class="sheet-title settings-title">Settings</h2>
+        <h2 id="settings-title" class="sheet-title settings-title" tabindex="-1" data-autofocus>Settings</h2>
         <button id="close-settings" class="icon-btn close-btn" type="button" aria-label="Close settings">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
         </button>
@@ -407,7 +417,11 @@
         </section>
 
         <section class="settings-section">
-          <h3 class="section-title">Reading</h3>
+          <h3 class="section-title">Appearance &amp; reading</h3>
+          <div class="field">
+            <span class="field-label">Color theme</span>
+            <button id="theme-toggle-btn" class="btn" type="button" aria-pressed="true">Switch light / dark</button>
+          </div>
           <div class="field settings-group">
             <span class="field-label settings-label" id="answer-size-label">Answer text size</span>
             <div class="stepper" role="group" aria-labelledby="answer-size-label">
@@ -425,8 +439,8 @@
             <input type="range" id="setting-window-opacity" class="range settings-range" min="1" max="10" step="1" value="10" />
           </div>
           <div class="field settings-group">
-            <div class="field-label-row"><label class="field-label" for="setting-transparency">Background</label><output id="setting-transparency-value" class="value-chip">82%</output></div>
-            <input type="range" id="setting-transparency" class="range" min="20" max="100" step="1" value="82">
+            <div class="field-label-row"><label class="field-label" for="setting-transparency">Background</label><output id="setting-transparency-value" class="value-chip">100%</output></div>
+            <input type="range" id="setting-transparency" class="range" min="20" max="100" step="1" value="100">
           </div>
           <div class="field settings-group">
             <div class="field-label-row"><label class="field-label" for="setting-brightness">Brightness</label><output id="setting-brightness-value" class="value-chip">100%</output></div>
