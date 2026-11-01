@@ -28,7 +28,6 @@
   border-radius: var(--radius-full); background: var(--text-3); box-shadow: 0 0 0 4px var(--ground);
 }
 .station:last-child::before { background: conic-gradient(var(--mint), var(--sapphire), var(--accent), var(--rose), var(--mint)); }
-.where { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-sm); color: var(--text-3); }
 .frag {
   margin-top: auto; display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-4);
   background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-1);

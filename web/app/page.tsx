@@ -81,9 +81,8 @@ export default async function Landing() {
           </div>
           <ol className={s.stations}>
             <li className={s.station}>
-              <span className={s.where}><Icon name="resume" size={16} />On the web</span>
               <h3 className={s.h3}>Add your material</h3>
-              <p className={s.small}>Upload a resume, paste the job description and create a session.</p>
+              <p className={s.small}>On the web, upload a resume, paste the job description and create a session.</p>
               <div className={s.frag} aria-hidden="true">
                 <span className={`tag ${s.fragTag}`}>Example</span>
                 <div className={s.fragRow}><Icon name="file" size={16} /><span className={s.fragName}>Backend resume.pdf</span><span className="status" data-tone="positive">Active</span></div>
@@ -92,7 +91,6 @@ export default async function Landing() {
               </div>
             </li>
             <li className={s.station}>
-              <span className={s.where}><Icon name="link" size={16} />In your browser</span>
               <h3 className={s.h3}>Link the desktop app</h3>
               <p className={s.small}>Approve it once in your browser. It fetches your context before the session starts.</p>
               <div className={`${s.frag} ${s.fragLink}`} aria-hidden="true">
@@ -106,9 +104,8 @@ export default async function Landing() {
               </div>
             </li>
             <li className={s.station}>
-              <span className={s.where}><Icon name="mic" size={16} />During the call</span>
               <h3 className={s.h3}>Run the interview on your Mac</h3>
-              <p className={s.small}>The app listens, transcribes and streams answers on its own, without waiting on this site.</p>
+              <p className={s.small}>During the call, the app listens, transcribes and streams answers on its own, without waiting on this site.</p>
               <div className={`${s.frag} ${s.fragCall}`} aria-hidden="true">
                 <span className={`tag ${s.fragTag}`}>Example</span>
                 <div className={s.callBar}><span className="status" data-tone="busy">Listening</span><span className={s.mono}>00:05</span><span className={s.callMode}>Professional</span></div>
