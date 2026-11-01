@@ -33,5 +33,11 @@ export function safeEqual(a: string, b: string) {
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 }
 
-/** Only same-site relative paths are allowed as a post-login destination. */
-export const safeNext = (v: unknown) => (typeof v === 'string' && /^\/(?![/\\])/.test(v) && v.length < 2000 ? v : '/dashboard');
+/**
+ * Only same-site relative paths are allowed as a post-login destination. Control characters are
+ * refused because URL parsing strips tabs and newlines, which turns "/\t/evil.com" into "//evil.com".
+ */
+export const safeNext = (v: unknown) =>
+  typeof v === 'string' && v.length < 2000 && /^\/(?![/\\])[^\x00-\x1f\x7f]*$/.test(v) && new URL(v, 'https://x.invalid').origin === 'https://x.invalid'
+    ? v
+    : '/dashboard';

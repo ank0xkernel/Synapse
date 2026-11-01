@@ -375,15 +375,37 @@ describe('desktop context', () => {
   });
 });
 
+describe('post-login redirect', () => {
+  test('only same-site paths survive ?next=, including control-character tricks', async () => {
+    const c = await signup(S.base, 'next@example.com');
+    const cases = {
+      '/resumes': '/resumes',
+      '//evil.example': '/dashboard',
+      '/\\evil.example': '/dashboard',
+      '/%09/evil.example': '/dashboard',
+      '/%0a/evil.example': '/dashboard',
+      'https://evil.example': '/dashboard'
+    };
+    for (const [next, want] of Object.entries(cases)) {
+      const r = await c.req('GET', `/login?next=${next}`);
+      assert.equal(r.status, 307, next);
+      assert.equal(r.headers.get('location'), want, next);
+    }
+  });
+});
+
 describe('account', () => {
   test('change password signs out other sessions; delete account removes everything', async () => {
     const c1 = await signup(S.base, 'acct@example.com');
     const c2 = client(S.base);
     assert.equal((await c2.json('POST', '/api/auth/login', { email: 'acct@example.com', password: PW })).status, 200);
     await c1.upload(makePdf());
+    const dev = { authorization: `Bearer ${(await c1.json('POST', '/api/device-tokens', { name: 'mac' })).data.token}` };
+    assert.equal((await fetch(`${S.base}/api/desktop/v1/me`, { headers: dev })).status, 200);
     assert.equal((await c1.json('POST', '/api/account/password', { current: 'wrong-password', next: 'a brand new password' })).status, 403);
     assert.equal((await c1.json('POST', '/api/account/password', { current: PW, next: 'a brand new password' })).status, 200);
     assert.equal((await c2.json('POST', '/api/device-tokens', { name: 'x' })).status, 401, 'other session was revoked');
+    assert.equal((await fetch(`${S.base}/api/desktop/v1/me`, { headers: dev })).status, 401, 'linked desktop was revoked');
     assert.equal((await c1.json('POST', '/api/device-tokens', { name: 'x' })).status, 200);
 
     assert.equal((await c1.json('DELETE', '/api/account', { password: 'nope-nope-nope' })).status, 403);
