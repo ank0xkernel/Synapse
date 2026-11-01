@@ -99,6 +99,12 @@ class ResumeParser {
         push(line);
         continue;
       }
+      if (heading && heading.rest && heading.section === 'Additional' && currentSection !== 'Header') {
+        // "Languages: Python, Go" under Skills is content; a non-core section
+        // only starts on a heading line of its own.
+        push(line);
+        continue;
+      }
       if (heading) {
         currentSection = heading.section;
         currentHeading = heading.title;
