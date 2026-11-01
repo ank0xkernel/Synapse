@@ -3,6 +3,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import LogoutButton from './LogoutButton';
+import ThemeSwitch from './ThemeSwitch';
 
 const ITEMS = [
   ['/dashboard', 'Dashboard'],
@@ -35,7 +36,10 @@ export default function Sidebar({ email }: { email: string }) {
         </nav>
         <div className="sidebar-foot">
           <span className="meta email">{email}</span>
-          <LogoutButton />
+          <div className="row-between">
+            <ThemeSwitch />
+            <LogoutButton />
+          </div>
         </div>
       </div>
     </>
