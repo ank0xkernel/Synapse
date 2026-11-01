@@ -4,7 +4,9 @@ import { useRouter } from 'next/navigation';
 import { uploadDriver, uploadPdfDirect } from '@/lib/client';
 
 const MAX = 8 * 1024 * 1024;
-const OK_EXT = /\.(pdf|txt|md)$/i;
+const OK_EXT = /\.(pdf|docx|txt|md)$/i;
+// One server request reads the file and builds the profile, so after the bytes are sent there is one honest stage.
+const PROCESSING = 'Reading and analysing';
 
 export default function UploadResume() {
   const router = useRouter();
@@ -14,8 +16,10 @@ export default function UploadResume() {
   const [stage, setStage] = useState('');
   const [error, setError] = useState('');
   const [pasteOpen, setPasteOpen] = useState(false);
+  const [retry, setRetry] = useState<(() => void) | null>(null);
 
   function send(form: FormData) {
+    setRetry(() => () => send(form));
     setError('');
     setPct(0);
     setStage('Uploading');
@@ -24,7 +28,7 @@ export default function UploadResume() {
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) setPct(Math.round((e.loaded / e.total) * 100));
     };
-    xhr.upload.onload = () => setStage('Extracting text');
+    xhr.upload.onload = () => setStage(PROCESSING);
     xhr.onerror = () => {
       setPct(null);
       setError('Network error. Check your connection and try again.');
@@ -46,6 +50,7 @@ export default function UploadResume() {
   }
 
   async function sendDirect(file: File) {
+    setRetry(() => () => sendDirect(file));
     setError('');
     setPct(0);
     setStage('Uploading');
@@ -61,7 +66,9 @@ export default function UploadResume() {
 
   async function pick(file: File | undefined) {
     if (!file) return;
-    if (!OK_EXT.test(file.name)) return setError('Only PDF, TXT and MD files are accepted.');
+    setRetry(null);
+    if (/\.doc$/i.test(file.name)) return setError('Older Word .doc files are not supported. Save it as .docx or PDF and upload that.');
+    if (!OK_EXT.test(file.name)) return setError('Only PDF, Word (.docx), TXT and MD files are accepted.');
     if (file.size > MAX) return setError('That file is larger than 8 MB.');
     if (file.size === 0) return setError('That file is empty.');
     if (/\.pdf$/i.test(file.name) && (await uploadDriver()) === 'blob') return sendDirect(file);
@@ -82,8 +89,8 @@ export default function UploadResume() {
         onDrop={(e) => { e.preventDefault(); setOver(false); if (!busy) pick(e.dataTransfer.files[0]); }}
       >
         <strong>Drop a resume here</strong>
-        <span className="muted">PDF, TXT or Markdown, up to 8 MB</span>
-        <input ref={input} id="resume-file" type="file" accept=".pdf,.txt,.md,application/pdf,text/plain" className="sr-only" onChange={(e) => pick(e.target.files?.[0])} />
+        <span className="muted">PDF, Word (.docx), TXT or Markdown, up to 8 MB. Scanned PDFs are read when AI is set up.</span>
+        <input ref={input} id="resume-file" type="file" accept=".pdf,.docx,.txt,.md,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" className="sr-only" onChange={(e) => pick(e.target.files?.[0])} />
         <div className="row">
           <button type="button" className="btn btn-primary" disabled={busy} onClick={() => input.current?.click()}>Choose file</button>
           <button type="button" className="btn" disabled={busy} onClick={() => setPasteOpen((v) => !v)} aria-expanded={pasteOpen}>Paste text instead</button>
@@ -118,7 +125,12 @@ export default function UploadResume() {
           <div><button className="btn btn-primary" disabled={busy}>Save resume</button></div>
         </form>
       )}
-      {error && <p className="form-error" role="alert">{error}</p>}
+      {error && (
+        <div className="row" role="alert">
+          <p className="form-error">{error}</p>
+          {retry && !busy && <button type="button" className="btn btn-sm" onClick={retry}>Try again</button>}
+        </div>
+      )}
     </div>
   );
 }

@@ -32,7 +32,7 @@ export default async function ResumePage({ params }: { params: Promise<{ id: str
         </div>
         <p className="meta">{r.file_name} - {fmtBytes(r.size_bytes)} - {r.text_chars.toLocaleString('en-US')} characters extracted - updated {fmtDate(r.updated_at)}</p>
       </div>
-      <ResumeFileActions id={r.id} status={r.parse_status} error={r.parse_error} />
+      <ResumeFileActions id={r.id} status={r.parse_status} error={r.parse_error} extraction={r.extraction_method} analysis={r.analysis_method} note={r.analysis_note} />
       <div className="grid-2">
         <section className="card" aria-labelledby="prev">
           <h2 id="prev">Preview</h2>
