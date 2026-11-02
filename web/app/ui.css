@@ -113,6 +113,14 @@ a.title:hover { color: var(--accent-text); }
   background: var(--surface-1); color: var(--text-1); font: inherit; font-size: var(--text-md);
   transition: border-color var(--dur-fast) ease, box-shadow var(--dur-med) var(--ease-out);
 }
+.input-wrap { position: relative; display: flex; align-items: center; width: 100%; }
+.input-wrap .input { padding-right: 42px; }
+.input-eye {
+  position: absolute; right: 0; top: 0; bottom: 0; width: 42px; display: inline-grid; place-items: center;
+  border: 0; background: transparent; color: var(--text-3); cursor: pointer; border-radius: var(--radius-md);
+  transition: color var(--dur-fast) ease;
+}
+.input-eye:hover { color: var(--text-1); }
 .textarea { padding: var(--space-3); line-height: var(--leading-body); resize: vertical; min-height: 120px; }
 .textarea.compact { min-height: 44px; }
 .input::placeholder, .textarea::placeholder { color: var(--text-3); }

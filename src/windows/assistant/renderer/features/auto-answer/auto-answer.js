@@ -156,6 +156,10 @@ function initAutoAnswer() {
         questionQueue.push(item);
         publishQueue();
 
+        // Flush transcript synchronously so chatMessagesArray has the question
+        // and askBtn.disabled state is updated before checking it!
+        window.__synapseFlushHostTranscript?.(item.source || 'system');
+
         if (!askBtn.disabled) {
             processNextQuestion();
             return;
@@ -220,7 +224,7 @@ function initAutoAnswer() {
          * that race: by the time askAiWithSessionContext() reads chat, this
          * question is provably already in it.
          */
-        window.__synapseFlushHostTranscript?.('system');
+        window.__synapseFlushHostTranscript?.(question.source || 'system');
 
         // Must come after the flush above: this is what makes the resolved
         // framing ("Why?" -> "...specifically regarding PostgreSQL") the
@@ -348,7 +352,8 @@ function initAutoAnswer() {
         window.electronAPI.onVoskPartial((data) => {
             if (!enabled) return;
             const source = data?.source === 'system' ? 'system' : 'mic';
-            if (source !== 'system') return;
+            const isHost = source === 'system' || !window.__synapseIsSystemAudioActive?.();
+            if (!isHost) return;
 
             const text = String(data?.text || '').trim();
             if (!text || text === earlyFiredText) return;
@@ -374,7 +379,7 @@ function initAutoAnswer() {
                 // the detected text directly and clear that buffer so the
                 // real final, arriving moments later for this same
                 // utterance, does not flush a second, duplicate chat line.
-                window.__synapseCommitEarlyHostTranscript?.(text);
+                window.__synapseCommitEarlyHostTranscript?.(text, source);
 
                 // Phase 3: this path previously never called resolveQuestion
                 // at all, which meant a fast, unambiguous follow-up — the
@@ -408,6 +413,7 @@ function initAutoAnswer() {
                 console.log(`[AutoAnswer] Early-fired from partial (score ${score.toFixed(2)}): "${text.slice(0, 80)}"`);
                 enqueueQuestion({
                     id: questionId,
+                    source,
                     text,
                     resolvedAnnotation: wasResolved ? resolved : null,
                     activeContext: formatActiveContextBlock(questionResult),
@@ -426,14 +432,12 @@ function initAutoAnswer() {
         if (!text) return;
 
         /*
-         * Speaker separation invariant: this app must never auto-answer the
-         * user's own voice. That's already true here (mic hits this branch
-         * and never reaches the queueing code below) — but user speech is
-         * discarded entirely today, which throws away the richest source of
-         * "what are we actually talking about" in the whole pipeline. Record
-         * it as context only. It is never eligible to trigger an answer.
+         * When system audio is capturing from call, mic is user context only.
+         * When system audio is NOT active (mic-only session / testing / in-person),
+         * mic is the host channel and questions are detected & answered!
          */
-        if (source !== 'system') {
+        const isHost = source === 'system' || !window.__synapseIsSystemAudioActive?.();
+        if (!isHost) {
             conversationTracker.recordUserTurn(text);
             return;
         }
@@ -509,6 +513,7 @@ function initAutoAnswer() {
             // the flush is what actually fixes the ordering.
             enqueueQuestion({
                 id: questionId,
+                source,
                 text: resolved,
                 resolvedAnnotation: wasResolved ? resolved : null,
                 activeContext: formatActiveContextBlock(questionResult),

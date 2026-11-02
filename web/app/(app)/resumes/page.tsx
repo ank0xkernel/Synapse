@@ -8,7 +8,7 @@ import PostButton from '@/components/PostButton';
 import ConfirmButton from '@/components/ConfirmButton';
 import Icon from '@/components/Icon';
 import DocSheet from '@/components/resume/DocSheet';
-import { ANALYSED_BY, PARSE, READ_SHORT, docKind } from '@/components/resume/labels';
+import { ANALYSED_BY, READ_SHORT, docKind, getProcessingOutcome } from '@/components/resume/labels';
 import s from './resumes.module.css';
 
 export const metadata: Metadata = { title: 'Resumes' };
@@ -16,13 +16,13 @@ export const metadata: Metadata = { title: 'Resumes' };
 const DELETE_BODY = 'The file, extracted text and profile are permanently removed. Sessions that used it keep their other settings.';
 
 function Facts({ r }: { r: ResumeSummary }) {
-  const parse = PARSE[r.parse_status];
+  const outcome = getProcessingOutcome(r);
   return (
     <dl className={s.facts}>
       <div><dt>Read as</dt><dd>{READ_SHORT[r.extraction_method] ?? 'Text'}</dd></div>
       <div><dt>Profile built by</dt><dd>{ANALYSED_BY[r.analysis_method]}</dd></div>
       <div><dt>Extracted</dt><dd className="num">{r.text_chars.toLocaleString('en-US')} characters</dd></div>
-      <div><dt>Status</dt><dd><span className="status" data-tone={parse.tone}>{parse.text}</span></dd></div>
+      <div><dt>Status</dt><dd><span className="status" data-tone={outcome.tone}>{outcome.text}</span></dd></div>
       <div><dt>Size</dt><dd className="num">{fmtBytes(r.size_bytes)}</dd></div>
       <div><dt>Added</dt><dd className="num">{fmtDate(r.created_at)}</dd></div>
       <div><dt>Updated</dt><dd className="num">{fmtDate(r.updated_at)}</dd></div>

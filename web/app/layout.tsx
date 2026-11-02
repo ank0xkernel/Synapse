@@ -8,7 +8,10 @@ const display = Red_Hat_Display({ subsets: ['latin'], weight: ['300', '400', '50
 const text = Red_Hat_Text({ subsets: ['latin'], weight: ['400', '500', '600'], variable: '--font-rh-text', display: 'swap' });
 const mono = Red_Hat_Mono({ subsets: ['latin'], weight: ['400'], variable: '--font-rh-mono', display: 'swap' });
 
+const siteUrl = process.env.NEXT_PUBLIC_APP_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
+
 export const metadata: Metadata = {
+  metadataBase: new URL(siteUrl),
   title: { default: 'Synapse', template: '%s - Synapse' },
   description: 'Your resume, job descriptions and interview context, prepared once and ready for the Synapse desktop app.'
 };

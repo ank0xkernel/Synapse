@@ -1,6 +1,6 @@
 import 'server-only';
 import crypto from 'node:crypto';
-import { del, get, issueSignedToken, presignUrl } from '@vercel/blob';
+import { del, get, issueSignedToken, presignUrl, put } from '@vercel/blob';
 import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
 import { isOwnKey, newKey, uploadConstraints } from './storage-core';
 
@@ -9,9 +9,10 @@ export type Driver = 'blob' | 'db';
 /** Private Vercel Blob when its token is configured, otherwise the resumes.file_bytes column (local dev, tests). */
 export const driver = (): Driver => (process.env.BLOB_READ_WRITE_TOKEN ? 'blob' : 'db');
 
-/** The three Blob operations this app needs. Tests swap in a fake. */
+/** The Blob operations this app needs. Tests swap in a fake. */
 export interface BlobClient {
   read(key: string): Promise<Buffer | null>;
+  write?(key: string, buf: Buffer): Promise<void>;
   remove(key: string): Promise<void>;
   /** Short-lived URL the browser or desktop can fetch without credentials. */
   signedUrl(key: string, ttlMs: number): Promise<string>;
@@ -22,6 +23,9 @@ const real: BlobClient = {
     const r = await get(key, { access: 'private', useCache: false });
     if (!r || r.statusCode !== 200 || !r.stream) return null;
     return Buffer.from(await new Response(r.stream).arrayBuffer());
+  },
+  async write(key, buf) {
+    await put(key, buf, { access: 'private', addRandomSuffix: false });
   },
   async remove(key) {
     await del(key);

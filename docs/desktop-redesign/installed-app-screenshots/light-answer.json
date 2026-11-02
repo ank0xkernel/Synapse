@@ -1,0 +1,11 @@
+{
+  "theme": "light",
+  "viewport": [
+    821,
+    511
+  ],
+  "horizontalOverflow": false,
+  "context": "Add your resume",
+  "font": "\"Red Hat Text\", \"Red Hat Text\", system-ui, sans-serif",
+  "controlsOutsideWindow": []
+}

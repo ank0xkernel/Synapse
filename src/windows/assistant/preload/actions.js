@@ -344,6 +344,24 @@ function createInvokeActions(ipcRenderer) {
       fallback: (error) => ({ success: false, error: error.message })
     }),
 
+    getSecondBrainStatus: invokeWithFallback(ipcRenderer, {
+      channel: 'second-brain:get-status',
+      label: 'getSecondBrainStatus',
+      fallback: (error) => ({ ok: false, error: error.message })
+    }),
+
+    querySecondBrain: invokeWithFallback(ipcRenderer, {
+      channel: 'second-brain:query',
+      label: 'querySecondBrain',
+      fallback: (error) => ({ ok: false, error: error.message })
+    }),
+
+    reindexSecondBrain: invokeWithFallback(ipcRenderer, {
+      channel: 'second-brain:reindex',
+      label: 'reindexSecondBrain',
+      fallback: (error) => ({ ok: false, error: error.message })
+    }),
+
     reportQuestionQueue: (payload) => {
       ipcRenderer.send('report-question-queue', payload);
     }

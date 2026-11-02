@@ -19,6 +19,7 @@ export const POST = api(async (req) => {
 
   const file = form.get('file');
   const pasted = form.get('text');
+  const isFallback = form.get('fallback') === '1' || form.get('fallback') === 'true';
   const nameInput = String(form.get('name') ?? '').trim().slice(0, 120);
 
   let fileName: string;
@@ -28,7 +29,9 @@ export const POST = api(async (req) => {
     if (file.size > MAX_FILE_BYTES) throw new ApiError(413, 'File is larger than 8 MB');
     const buf = Buffer.from(await file.arrayBuffer());
     fileName = file.name.slice(0, 200) || 'resume';
-    if (driver() === 'blob' && /\.pdf$/i.test(fileName)) throw new ApiError(400, 'PDFs are uploaded directly to storage. Use the direct upload flow.');
+    if (!isFallback && driver() === 'blob' && /\.pdf$/i.test(fileName)) {
+      throw new ApiError(400, 'PDFs are uploaded directly to storage. Use the direct upload flow.');
+    }
     ex = await extractResume(buf, fileName);
     if (ex.keepBytes) bytes = buf;
   } else if (typeof pasted === 'string' && pasted.trim()) {
@@ -40,7 +43,27 @@ export const POST = api(async (req) => {
   }
 
   const name = nameInput || fileName.replace(/\.(pdf|docx|txt|md)$/i, '') || 'Resume';
-  const stored = { mime: ex.mime, size: bytes ? bytes.length : Buffer.byteLength(ex.text), bytes, key: null, sha256: bytes ? sha256(bytes) : null };
-  const { id } = await createResume(user.id, { name, fileName, text: ex.text, method: ex.method, file: stored });
-  return { id };
+  let storageKey: string | null = null;
+  const originalBytesLength = bytes ? bytes.length : Buffer.byteLength(ex.text);
+  const fileHash = bytes ? sha256(bytes) : null;
+  if (driver() === 'blob' && bytes && /\.pdf$/i.test(fileName)) {
+    const { randomKey, blob } = await import('@/lib/storage');
+    storageKey = randomKey(user.id);
+    const bStore = blob();
+    if (bStore.write) {
+      await bStore.write(storageKey, bytes);
+      bytes = null;
+    }
+  }
+  const stored = { mime: ex.mime, size: originalBytesLength, bytes, key: storageKey, sha256: fileHash };
+  try {
+    const { id } = await createResume(user.id, { name, fileName, text: ex.text, method: ex.method, file: stored });
+    return { id };
+  } catch (err) {
+    if (storageKey) {
+      const { blob } = await import('@/lib/storage');
+      await blob().remove(storageKey).catch(() => {});
+    }
+    throw err;
+  }
 });

@@ -1876,8 +1876,9 @@ window.__synapseAnnotateActiveContext = (activeContextText) => {
  * still sitting unflushed, and the click answered whatever the *previous*
  * turn had left in chat instead.
  */
-window.__synapseFlushHostTranscript = (source) => {
-    transcriptBufferManager.flushFinalTranscript(source || 'system', 'auto-answer-dispatch');
+window.__synapseFlushHostTranscript = (source = 'system') => {
+    transcriptBufferManager.flushFinalTranscript(source, 'auto-answer-dispatch');
+    if (typeof updateUI === 'function') updateUI();
 };
 
 // Early-fire (auto-answer.js) acts on a partial, before AssemblyAI has even
@@ -1885,11 +1886,16 @@ window.__synapseFlushHostTranscript = (source) => {
 // Commit the detected text directly, then clear the buffer so the real final
 // (which will arrive moments later for the same utterance) does not also
 // flush it as a second, duplicate chat line.
-window.__synapseCommitEarlyHostTranscript = (text) => {
+window.__synapseCommitEarlyHostTranscript = (text, source = 'system') => {
     const trimmed = String(text || '').trim();
     if (!trimmed) return;
-    addChatMessage('voice-system', trimmed);
-    transcriptBufferManager.resetFinalTranscriptBuffer('system');
+    addChatMessage(source === 'mic' ? 'voice-mic' : 'voice-system', trimmed);
+    transcriptBufferManager.resetFinalTranscriptBuffer(source);
+    if (typeof updateUI === 'function') updateUI();
+};
+
+window.__synapseIsSystemAudioActive = () => {
+    return Boolean(transcriptionManager && transcriptionManager.isSourceActive && transcriptionManager.isSourceActive('system'));
 };
 
 // Initialize on load

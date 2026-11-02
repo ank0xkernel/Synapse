@@ -89,9 +89,27 @@ function createGeminiSpeechService({
   // Last closed utterance per source, kept only long enough to re-transcribe if
   // the English engine turns out to have garbled it.
   const retained = { mic: null, system: null };
+  let fallbackMode = false;
+
+  function setFallbackMode(enabled) {
+    fallbackMode = !!enabled;
+  }
+
+  function isFallbackMode() {
+    return fallbackMode;
+  }
+
+  function hasApiKey() {
+    try {
+      const key = typeof getApiKey === 'function' ? getApiKey() : '';
+      return typeof key === 'string' && key.trim().length > 0;
+    } catch (_) {
+      return false;
+    }
+  }
 
   function shouldTranscribeEagerly() {
-    return getMode() === 'multilingual';
+    return fallbackMode || getMode() === 'multilingual';
   }
 
   /**
@@ -339,6 +357,9 @@ function createGeminiSpeechService({
     escalate,
     flushAll,
     handleAudioChunk,
+    setFallbackMode,
+    isFallbackMode,
+    hasApiKey,
     resetSource: reset,
     setTranscriptHandler,
     // exported for tests

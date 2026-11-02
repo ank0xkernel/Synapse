@@ -6,8 +6,12 @@ import { profileTechnologies, profileText, type Profile } from './profile';
 import type { ParsedJd } from './jd';
 
 export const DEFAULT_MODEL = 'gemini-3.5-flash-lite';
-export const aiConfigured = () => !!process.env.GEMINI_API_KEY;
-export const aiModel = () => process.env.GEMINI_MODEL || DEFAULT_MODEL;
+export const aiConfigured = () => {
+  const k = process.env.GEMINI_API_KEY?.trim();
+  if (!k || k === '""' || k === "''" || k === 'your_key_here' || k === 'dummy') return false;
+  return k.length > 5;
+};
+export const aiModel = () => (process.env.GEMINI_MODEL?.trim() ? process.env.GEMINI_MODEL.trim() : DEFAULT_MODEL);
 
 export interface Comparison {
   matched: string[];
@@ -104,12 +108,14 @@ ${fence('job_description', input.jdText)}`;
   try {
     raw = (await Promise.race([m.generateContent(prompt), timeout])).response.text();
   } catch (e) {
-    console.error('[gemini] request failed:', e instanceof Error ? e.message.replace(key, '***') : 'unknown');
+    const errText = e instanceof Error ? (key ? e.message.replaceAll(key, '***') : e.message) : 'unknown';
+    console.error('[gemini] request failed:', errText);
     throw new AiUnavailable('The AI provider did not return a result. Try again in a moment.');
   }
   let parsed: AiPrep;
   try {
-    parsed = aiPrepSchema.parse(JSON.parse(raw));
+    const cleanJson = raw.replace(/^```[a-z]*\n?|\n?```$/g, '').trim();
+    parsed = aiPrepSchema.parse(JSON.parse(cleanJson));
   } catch {
     throw new AiUnavailable('The AI response was not in the expected format. Try again.');
   }

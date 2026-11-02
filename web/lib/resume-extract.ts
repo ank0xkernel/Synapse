@@ -54,7 +54,10 @@ export async function extractPdfText(buf: Buffer): Promise<{ text: string; metho
   } catch (error) {
     // The parser's own reason, for diagnosing real files; never the file contents.
     console.warn(JSON.stringify({ level: 'warn', event: 'pdf_parse_failed', reason: error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200) }));
-    throw new ApiError(422, 'This PDF could not be read. It may be encrypted, password protected or damaged.');
+    if (!aiConfigured()) {
+      throw new ApiError(422, 'This PDF could not be read. It may be encrypted, password protected or damaged.');
+    }
+    text = '';
   }
   if (letters(text) >= MIN_LETTERS) return { text: limit(text), method: 'pdf' };
 
