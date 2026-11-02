@@ -1248,6 +1248,7 @@ export function createTranscriptionManager({
     return {
         selectedSources,
         sourceStatuses,
+        isSourceActive,
         normalizeSource,
         sourceLabel,
         addMonitorLog,

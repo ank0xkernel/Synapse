@@ -154,6 +154,25 @@ function createAssemblyAiService({
     sttHistoryManager.flushSttHistoryBuffer(source, `failure-${failure.kind}`);
     resetSourceState(source);
     cleanupAssemblyWs(ws);
+
+    // Seamless fallback to Gemini Speech if AssemblyAI credentials fail and Gemini is available
+    if ((failure.kind === 'auth' || failure.kind === 'billing') && geminiSpeech && typeof geminiSpeech.hasApiKey === 'function' && geminiSpeech.hasApiKey()) {
+      console.log(`[STT] AssemblyAI ${failure.kind} error; activating Gemini Speech fallback for ${source}`);
+      geminiSpeech.setFallbackMode(true);
+      emitSttDebug({
+        source,
+        level: 'info',
+        event: 'gemini-stt-fallback-activated',
+        message: `AssemblyAI ${failure.kind} error — falling back to Gemini Speech`
+      });
+      sendToRenderer('vosk-status', {
+        source,
+        status: 'listening',
+        message: `Listening (${source === 'system' ? 'Host' : 'You'}) via Gemini STT...`
+      });
+      return;
+    }
+
     sendToRenderer('vosk-error', {
       source,
       error: failure.message,
@@ -170,6 +189,16 @@ function createAssemblyAiService({
     const apiKey = getAssemblyApiKey();
 
     if (!apiKey) {
+      if (geminiSpeech && typeof geminiSpeech.hasApiKey === 'function' && geminiSpeech.hasApiKey()) {
+        console.log(`AssemblyAI key not configured; activating Gemini Speech fallback for ${resolvedSource}`);
+        geminiSpeech.setFallbackMode(true);
+        sendToRenderer('vosk-status', {
+          source: resolvedSource,
+          status: 'listening',
+          message: `Listening (${resolvedSource === 'system' ? 'Host' : 'You'}) via Gemini STT...`
+        });
+        return { success: true, message: 'Using Gemini Speech fallback' };
+      }
       console.error('AssemblyAI API key not configured in app settings');
       emitSttDebug({
         source: resolvedSource,
@@ -448,7 +477,7 @@ function createAssemblyAiService({
     // when AssemblyAI garbles the utterance; in 'multilingual' it is the only
     // engine that reports. Buffering is in-memory and costs nothing until an
     // utterance is actually submitted.
-    if (geminiSpeech && getSttMode() !== 'fast') {
+    if (geminiSpeech && (geminiSpeech.isFallbackMode?.() || getSttMode() !== 'fast')) {
       try {
         geminiSpeech.handleAudioChunk(resolvedSource, Buffer.from(data));
       } catch (error) {

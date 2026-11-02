@@ -26,6 +26,7 @@ export function createChatUiManager({
     chatComposer,
     chatManualInput,
     chatManualSend,
+    jumpLatestBtn = null,
     messageStore,
     maxChatInputHeight,
     escapeHtml,
@@ -42,6 +43,31 @@ export function createChatUiManager({
     // animation frame keeps streaming smooth on long answers.
     const pendingRenders = new Map();
     let renderFrame = 0;
+    let userScrolledUp = false;
+
+    const jumpBtn = jumpLatestBtn || document.getElementById('chat-jump-latest');
+
+    function updateJumpToLatestVisibility() {
+        if (!chatMessagesElement) return;
+        const nearBottom = isChatNearBottom(48);
+        userScrolledUp = !nearBottom;
+        if (jumpBtn) {
+            jumpBtn.classList.toggle('hidden', nearBottom);
+        }
+    }
+
+    if (chatMessagesElement) {
+        chatMessagesElement.addEventListener('scroll', updateJumpToLatestVisibility, { passive: true });
+    }
+
+    if (jumpBtn) {
+        jumpBtn.addEventListener('click', () => {
+            if (!chatMessagesElement) return;
+            chatMessagesElement.scrollTo({ top: chatMessagesElement.scrollHeight, behavior: 'smooth' });
+            userScrolledUp = false;
+            jumpBtn.classList.add('hidden');
+        });
+    }
 
     function formatResponse(text) {
         return renderMarkdown(text);
@@ -50,7 +76,7 @@ export function createChatUiManager({
     function flushRenders() {
         renderFrame = 0;
         if (!chatMessagesElement) return;
-        const shouldAutoScroll = isChatNearBottom(48);
+        const shouldAutoScroll = !userScrolledUp && isChatNearBottom(64);
         for (const [messageId, content] of pendingRenders) {
             const contentEl = chatMessagesElement.querySelector(`[data-message-id="${messageId}"] .message-content`);
             if (contentEl) contentEl.innerHTML = formatResponse(content);
@@ -58,6 +84,8 @@ export function createChatUiManager({
         pendingRenders.clear();
         if (shouldAutoScroll && isAutoScrollEnabled()) {
             chatMessagesElement.scrollTop = chatMessagesElement.scrollHeight;
+        } else {
+            updateJumpToLatestVisibility();
         }
     }
 
@@ -95,6 +123,10 @@ export function createChatUiManager({
         if (!messageEl) return;
         if (streaming) {
             messageEl.dataset.streaming = 'true';
+            if (isChatNearBottom(64)) {
+                userScrolledUp = false;
+                if (jumpBtn) jumpBtn.classList.add('hidden');
+            }
         } else {
             delete messageEl.dataset.streaming;
             if (pendingRenders.has(messageId)) flushRenders();
@@ -175,8 +207,10 @@ export function createChatUiManager({
         messageDiv.innerHTML = messageContent;
         chatMessagesElement.appendChild(messageDiv);
 
-        if (shouldAutoScroll && isAutoScrollEnabled()) {
+        if (!userScrolledUp && isAutoScrollEnabled()) {
             chatMessagesElement.scrollTop = chatMessagesElement.scrollHeight;
+        } else {
+            updateJumpToLatestVisibility();
         }
 
         onMessagesChanged?.(messageStore.getMessages());

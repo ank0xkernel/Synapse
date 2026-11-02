@@ -67,7 +67,7 @@
   .btn {
     min-height: var(--touch); padding: 0 var(--sp-5); border: 1px solid transparent; border-radius: var(--r-md);
     background: var(--accent); color: var(--text-on-accent); font-size: var(--fs-body); font-weight: 600;
-    cursor: pointer; transition: background 120ms, border-color 120ms, opacity 120ms;
+    cursor: default; transition: background 120ms, border-color 120ms, opacity 120ms;
     display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-2);
   }
   .btn:hover:not(:disabled) { background: var(--accent-hover); }
@@ -171,7 +171,7 @@
   }
   .tab-btn {
     flex: 1; min-width: 0; min-height: 56px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--sp-1);
-    padding: var(--sp-2) var(--sp-1); border: none; background: none; cursor: pointer;
+    padding: var(--sp-2) var(--sp-1); border: none; background: none; cursor: default;
     color: var(--text-2); font-size: var(--fs-xs); font-weight: 500;
   }
   .tab-btn svg { width: 22px; height: 22px; stroke-width: 1.75; }
@@ -216,7 +216,7 @@
   .icon-btn {
     flex: 0 0 auto; width: var(--touch); height: var(--touch); border-radius: var(--r-md);
     border: 1px solid var(--accent-border); background: var(--accent-soft); color: var(--accent-text);
-    cursor: pointer; display: grid; place-items: center;
+    cursor: default; display: grid; place-items: center;
   }
   .icon-btn:hover { background: rgba(124, 108, 242, 0.22); }
   .recall-note { margin-bottom: var(--sp-3); font-size: var(--fs-sm); color: var(--text-2); }
@@ -265,7 +265,7 @@
   /* ---------- History ---------- */
   .history summary {
     min-height: var(--touch); display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3);
-    font-size: var(--fs-body); font-weight: 600; cursor: pointer; list-style: none;
+    font-size: var(--fs-body); font-weight: 600; cursor: default; list-style: none;
   }
   .history summary::-webkit-details-marker { display: none; }
   .history summary::after { content: '\25BE'; color: var(--text-2); }
@@ -283,7 +283,7 @@
   .composer textarea { flex: 1; min-width: 0; min-height: var(--touch); max-height: 112px; resize: none; line-height: 1.4; padding: 10px var(--sp-3); border-radius: var(--r-lg); }
   .send-btn {
     flex: 0 0 auto; width: var(--touch); height: var(--touch); border-radius: var(--r-md); border: none;
-    background: var(--accent); color: var(--text-on-accent); cursor: pointer; display: grid; place-items: center;
+    background: var(--accent); color: var(--text-on-accent); cursor: default; display: grid; place-items: center;
   }
   .send-btn:hover { background: var(--accent-hover); }
   .send-btn svg { width: 20px; height: 20px; stroke-width: 1.75; }
@@ -293,7 +293,7 @@
     flex: 1; min-width: 0;
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
     padding: var(--sp-1); border: none; background: transparent; color: var(--text-2);
-    border-radius: var(--r-md); cursor: pointer; min-height: 52px;
+    border-radius: var(--r-md); cursor: default; min-height: 52px;
   }
   .tool-btn:hover:not(:disabled) { background: var(--hover); }
   .tool-btn:disabled { opacity: 0.45; cursor: not-allowed; }
@@ -336,7 +336,7 @@
   .mode-toggle { display: flex; gap: var(--sp-2); margin-bottom: var(--sp-3); }
   .mode-toggle button {
     flex: 1; min-width: 0; min-height: var(--touch); padding: 0 var(--sp-3); border-radius: var(--r-md); border: 1px solid var(--border-strong);
-    background: transparent; color: var(--text-2); font-size: var(--fs-sm); font-weight: 500; cursor: pointer;
+    background: transparent; color: var(--text-2); font-size: var(--fs-sm); font-weight: 500; cursor: default;
   }
   .mode-toggle button:hover { background: var(--hover); }
   .mode-toggle button.active { background: var(--accent-soft); border-color: var(--accent-border); color: var(--accent-text); }
