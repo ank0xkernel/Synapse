@@ -71,7 +71,7 @@
     display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-2);
   }
   .btn:hover:not(:disabled) { background: var(--accent-hover); }
-  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn:disabled { opacity: 0.5; cursor: default; }
   .btn.ghost { background: transparent; border-color: var(--border-strong); color: var(--text-1); }
   .btn.ghost:hover:not(:disabled) { background: var(--hover); }
   .btn.small { padding: 0 var(--sp-4); font-size: var(--fs-sm); }
@@ -296,7 +296,7 @@
     border-radius: var(--r-md); cursor: default; min-height: 52px;
   }
   .tool-btn:hover:not(:disabled) { background: var(--hover); }
-  .tool-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .tool-btn:disabled { opacity: 0.45; cursor: default; }
   .tool-btn svg { width: 22px; height: 22px; stroke-width: 1.75; }
   .tool-btn span { font-size: var(--fs-xs); font-weight: 500; white-space: nowrap; }
   .tool-btn.on { color: var(--accent-text); background: var(--accent-soft); }

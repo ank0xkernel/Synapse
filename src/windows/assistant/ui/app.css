@@ -24,12 +24,19 @@ html, body {
   cursor: default !important;
 }
 
-button, input, select, textarea, a, summary, [role="button"], label {
+button, input, select, textarea, a, summary, [role="button"], label, option {
   font: inherit;
   color: inherit;
   cursor: default !important;
 }
-button:disabled { opacity: 0.45; cursor: default !important; }
+button:disabled, input:disabled, select:disabled, textarea:disabled { opacity: 0.45; cursor: default !important; }
+input[type="range"]::-webkit-slider-thumb,
+input[type="range"]::-webkit-slider-runnable-track,
+::-webkit-scrollbar,
+::-webkit-scrollbar-thumb,
+::-webkit-scrollbar-track {
+  cursor: default !important;
+}
 svg { display: block; flex-shrink: 0; }
 
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
