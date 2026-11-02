@@ -15,6 +15,8 @@ const DONE = 'Read and analysed';
 export default function UploadResume({ first = false }: { first?: boolean }) {
   const router = useRouter();
   const input = useRef<HTMLInputElement>(null);
+  const xhrRef = useRef<XMLHttpRequest | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const [over, setOver] = useState(false);
   const [pct, setPct] = useState<number | null>(null);
   const [stage, setStage] = useState('');
@@ -28,22 +30,56 @@ export default function UploadResume({ first = false }: { first?: boolean }) {
     router.refresh();
   }
 
+  function cancel() {
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+    if (xhrRef.current) {
+      xhrRef.current.abort();
+      xhrRef.current = null;
+    }
+    setPct(null);
+    setStage('');
+    setError('Upload cancelled.');
+  }
+
   function send(form: FormData) {
     setRetry(() => () => send(form));
     setError('');
-    setPct(0);
+    setPct(5);
     setStage('Uploading');
     const xhr = new XMLHttpRequest();
+    xhrRef.current = xhr;
     xhr.open('POST', '/api/resumes');
+    xhr.timeout = 60_000;
     xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) setPct(Math.round((e.loaded / e.total) * 100));
+      if (e.lengthComputable) {
+        const percent = Math.max(5, Math.min(99, Math.round((e.loaded / e.total) * 100)));
+        setPct(percent);
+      }
     };
-    xhr.upload.onload = () => setStage(PROCESSING);
+    xhr.upload.onload = () => {
+      setPct(100);
+      setStage(PROCESSING);
+    };
+    xhr.ontimeout = () => {
+      xhrRef.current = null;
+      setPct(null);
+      setError('Upload timed out after 60 seconds. Check your connection and try again.');
+    };
+    xhr.onabort = () => {
+      xhrRef.current = null;
+      setPct(null);
+      setError('Upload cancelled.');
+    };
     xhr.onerror = () => {
+      xhrRef.current = null;
       setPct(null);
       setError('Network error. Check your connection and try again.');
     };
     xhr.onload = () => {
+      xhrRef.current = null;
       let data: { ok?: boolean; id?: string; error?: string } = {};
       try {
         data = JSON.parse(xhr.responseText);
@@ -62,17 +98,41 @@ export default function UploadResume({ first = false }: { first?: boolean }) {
     setRetry(() => () => sendDirect(file));
     setError('');
     setPct(0);
-    setStage('Uploading');
-    const r = await uploadPdfDirect(file, { onProgress: setPct, onStage: setStage });
+    setStage('Connecting');
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    const r = await uploadPdfDirect(file, {
+      onProgress: (p) => setPct(p),
+      onStage: (s) => setStage(s),
+      signal: ctrl.signal
+    });
+    if (abortRef.current === ctrl) {
+      abortRef.current = null;
+    }
+    if (ctrl.signal.aborted || (!r.ok && (r.error === 'Upload cancelled.' || r.error === 'Request cancelled.'))) {
+      setPct(null);
+      setError('Upload cancelled.');
+      return;
+    }
     if (r.ok) {
       opened(r.id);
     } else {
-      setPct(null);
-      setError(r.error);
+      // Vercel serverless request body has a 4.5 MB ceiling
+      if (file.size > 4.5 * 1024 * 1024) {
+        setPct(null);
+        setError(`Direct upload failed (${r.error}). Files larger than 4.5 MB must upload directly to storage.`);
+        return;
+      }
+      console.warn('Direct PDF upload failed, falling back to server upload:', r.error);
+      const f = new FormData();
+      f.set('file', file);
+      f.set('fallback', '1');
+      send(f);
     }
   }
 
   async function pick(file: File | undefined) {
+    if (input.current) input.current.value = '';
     if (!file) return;
     setRetry(null);
     if (/\.doc$/i.test(file.name)) return setError('Older Word .doc files are not supported. Save it as .docx or PDF and upload that.');
@@ -127,16 +187,24 @@ export default function UploadResume({ first = false }: { first?: boolean }) {
               <ol className={s.stages}>
                 <li data-on={sending} data-done={!sending}>
                   <span>Send the file</span>
-                  <span className="num">{sending ? `${pct}%` : 'Sent'}</span>
+                  <span className="num">{sending ? (pct && pct > 0 ? `${pct}%` : 'Connecting') : 'Sent'}</span>
                 </li>
                 <li data-on={!sending && stage !== DONE} data-done={stage === DONE}>
-                  <span>{sending ? PROCESSING : stage}</span>
+                  <span>{stage === DONE ? DONE : 'Read and analyse'}</span>
                   <span>{stage === DONE ? 'Opening' : sending ? '' : 'Working'}</span>
                 </li>
               </ol>
               <div className={s.track} role="progressbar" aria-valuenow={pct ?? 0} aria-valuemin={0} aria-valuemax={100} aria-label="Upload progress">
                 <span style={progress} data-indeterminate={!sending} />
               </div>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                style={{ alignSelf: 'flex-start', marginTop: 'var(--space-1)' }}
+                onClick={cancel}
+              >
+                Cancel upload
+              </button>
             </div>
           )}
 

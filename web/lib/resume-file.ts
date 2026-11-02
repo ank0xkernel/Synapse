@@ -64,6 +64,7 @@ export async function createResume(
   // Outside the transaction: an AI call must not hold a database transaction open.
   const a = await buildProfile(p.text);
   return withTx(async (q) => {
+    await q('SELECT pg_advisory_xact_lock(hashtext($1))', [`resumes:${userId}`]);
     const [row] = await q<{ id: string }>(
       `INSERT INTO resumes (user_id, name, file_name, mime, size_bytes, file_bytes, storage_driver, storage_key, file_sha256,
          extracted_text, is_active, parse_status, parser_version, extracted_at, extraction_method, analysis_method, analysis_note)
@@ -75,9 +76,14 @@ export async function createResume(
     if (!row) {
       const [existing] = await q<{ id: string }>('SELECT id FROM resumes WHERE user_id = $1 AND storage_key = $2', [userId, p.file.key]);
       if (!existing) throw new ApiError(409, 'That upload belongs to another account');
+      await saveMergedProfile(q, userId, existing.id, a.profile);
       return { id: existing.id, created: false };
     }
-    await q('INSERT INTO candidate_profiles (resume_id, user_id, data) VALUES ($1, $2, $3)', [row.id, userId, JSON.stringify(a.profile)]);
+    await q(
+      `INSERT INTO candidate_profiles (resume_id, user_id, data) VALUES ($1, $2, $3)
+       ON CONFLICT (resume_id) DO UPDATE SET data = EXCLUDED.data, updated_at = now()`,
+      [row.id, userId, JSON.stringify(a.profile)]
+    );
     return { id: row.id, created: true };
   });
 }
@@ -90,6 +96,7 @@ export async function replaceResumeFile(
 ): Promise<{ oldKey: string | null }> {
   const a = await buildProfile(p.text);
   const oldKey = await withTx(async (q) => {
+    await q('SELECT pg_advisory_xact_lock(hashtext($1))', [`resumes:${userId}`]);
     const [cur] = await q<{ storage_key: string | null }>('SELECT storage_key FROM resumes WHERE user_id = $1 AND id = $2 FOR UPDATE', [userId, id]);
     if (!cur) throw notFound();
     if (p.file.key && cur.storage_key === p.file.key) return null; // finalize repeated: already applied
@@ -138,6 +145,7 @@ export async function reprocessResume(userId: string, id: string): Promise<void>
   }
 
   await withTx(async (q) => {
+    await q('SELECT pg_advisory_xact_lock(hashtext($1))', [`resumes:${userId}`]);
     await q(
       `UPDATE resumes SET extracted_text = $3, file_sha256 = COALESCE($4, file_sha256), parse_status = 'ok', parse_error = NULL,
          parser_version = $5, extracted_at = now(), updated_at = now(), extraction_method = $6, analysis_method = $7, analysis_note = $8

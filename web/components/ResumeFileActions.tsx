@@ -3,7 +3,7 @@ import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { call, uploadDriver, uploadPdfDirect } from '@/lib/client';
 import Icon from '@/components/Icon';
-import { PARSE, READ_BY, type ParseStatus } from '@/components/resume/labels';
+import { PARSE, READ_BY, getProcessingOutcome, type ParseStatus } from '@/components/resume/labels';
 import s from '@/components/resume/workspace.module.css';
 
 /** How the resume was read and analysed, plus Replace file and Reprocess. Profile items you edited are kept by both. */
@@ -19,7 +19,7 @@ export default function ResumeFileActions({ id, status, error, extraction, analy
   const input = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const label = PARSE[status];
+  const outcome = getProcessingOutcome({ parse_status: status, analysis_method: analysis, analysis_note: note });
 
   async function finish(r: { ok: true } | { ok: false; error: string }, done: string) {
     setBusy('');
@@ -39,9 +39,17 @@ export default function ResumeFileActions({ id, status, error, extraction, analy
     if (!/\.pdf$/i.test(file.name)) return setMsg({ ok: false, text: 'Choose a PDF file.' });
     if (file.size > 8 * 1024 * 1024) return setMsg({ ok: false, text: 'That file is larger than 8 MB.' });
     setBusy('Uploading...');
-    if ((await uploadDriver()) === 'blob') return finish(await uploadPdfDirect(file, { replaceId: id, onStage: (s) => setBusy(`${s}...`) }), 'File replaced.');
+    if ((await uploadDriver()) === 'blob') {
+      const res = await uploadPdfDirect(file, { replaceId: id, onStage: (s) => setBusy(`${s}...`) });
+      if (res.ok) return finish(res, 'File replaced.');
+      if (file.size > 4.5 * 1024 * 1024) {
+        return finish({ ok: false, error: `Direct replacement failed (${res.error}). Files over 4.5 MB cannot upload via the server.` }, '');
+      }
+      console.warn('Direct replacement failed, falling back to server upload:', res.error);
+    }
     const f = new FormData();
     f.set('file', file);
+    f.set('fallback', '1');
     try {
       const res = await fetch(`/api/resumes/${id}/file`, { method: 'PUT', body: f });
       const data = await res.json().catch(() => null);
@@ -58,7 +66,7 @@ export default function ResumeFileActions({ id, status, error, extraction, analy
       <span className={s.edge} aria-hidden="true" />
       <div className={s.readingHead}>
         <h2 id="reading-h">How it was read</h2>
-        {busy ? <span className="status" data-tone="busy" role="status">{busy}</span> : <span className="status" data-tone={label.tone}>{label.text}</span>}
+        {busy ? <span className="status" data-tone="busy" role="status">{busy}</span> : <span className="status" data-tone={outcome.tone}>{outcome.text}</span>}
       </div>
 
       <ol className={s.pipeline}>
