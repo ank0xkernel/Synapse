@@ -41,6 +41,7 @@ export async function extractPdfText(buf: Buffer): Promise<{ text: string; metho
   if (buf.length > MAX_FILE_BYTES) throw new ApiError(413, 'File is larger than 8 MB');
   if (buf.subarray(0, 5).toString('latin1') !== '%PDF-') throw new ApiError(415, 'That file is not a valid PDF');
   let text = '';
+  let parseError: unknown = null;
   try {
     // The package root runs a debug routine when imported without a parent; the lib entry does not.
     const { default: pdfParse } = await import('pdf-parse/lib/pdf-parse.js');
@@ -52,6 +53,7 @@ export async function extractPdfText(buf: Buffer): Promise<{ text: string; metho
     const parse = async () => tidy(String((await pdfParse(Buffer.from(buf))).text || ''));
     text = await parse().catch(parse);
   } catch (error) {
+    parseError = error;
     // The parser's own reason, for diagnosing real files; never the file contents.
     console.warn(JSON.stringify({ level: 'warn', event: 'pdf_parse_failed', reason: error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200) }));
     if (!aiConfigured()) {
@@ -68,6 +70,9 @@ export async function extractPdfText(buf: Buffer): Promise<{ text: string; metho
   try {
     scanned = tidy(await ocrPdf(buf));
   } catch (e) {
+    if (parseError) {
+      throw new ApiError(422, 'This PDF could not be read. It may be encrypted, password protected or damaged.');
+    }
     if (!(e instanceof AiResumeUnavailable)) throw e;
     throw new ApiError(503, 'This PDF is a scan, and the text reader is not responding right now. Try again in a minute, or paste the text instead.');
   }
