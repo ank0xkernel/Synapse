@@ -36,6 +36,7 @@ const { createScreenshotManager } = require('./features/assistant/screenshot-man
 const { registerAssistantIpc } = require('./features/assistant/ipc');
 const { registerContextIpc } = require('./features/context/context-ipc');
 const { registerWebSyncIpc } = require('./features/context/web-sync-ipc');
+const { registerSecondBrainIpc } = require('./features/second-brain/ipc');
 const { createAssemblyAiService } = require('../services/assembly-ai/service');
 const { createGeminiSpeechService } = require('../services/stt/gemini-speech-service');
 const { createQuestionLatencyTracker } = require('../services/latency/question-latency-tracker');
@@ -463,6 +464,8 @@ async function startApplication() {
     dialog,
     getMainWindow: () => windowController.getMainWindow()
   });
+
+  registerSecondBrainIpc({ ipcMain });
 
   // Website account link and context sync (docs/desktop-web-contract.md).
   // State goes to this window only (baseSendToRenderer), never the phone.
