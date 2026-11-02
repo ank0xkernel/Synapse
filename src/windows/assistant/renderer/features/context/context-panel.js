@@ -67,6 +67,8 @@ export function initContextPanel({ showFeedback = () => {}, openSheet, closeShee
     jobDescription: $('ctx-jd')
   };
   let saved = null;
+  $('context-summary')?.addEventListener('click', () => $('context-btn')?.click());
+  $('session-details')?.addEventListener('click', () => $('status-btn')?.click());
 
   function dirtyPatch() {
     if (!saved) return {};
@@ -208,6 +210,17 @@ export function initContextPanel({ showFeedback = () => {}, openSheet, closeShee
 
   function render(context) {
     saved = context;
+    const summary = $('context-summary');
+    if (summary) {
+      summary.dataset.ready = String(Boolean(context?.background?.trim()));
+      $('context-summary-resume').textContent = context
+        ? (context.background?.trim() ? (context.resumeFileName || 'Resume loaded') : 'Add your resume')
+        : 'Context unavailable';
+      $('context-summary-job').textContent = context
+        ? [context.role, context.company, context.jobDescription?.trim() ? 'Job description loaded' : 'No job description'].filter(Boolean).join(' · ')
+        : 'Open context to retry';
+      summary.title = [ $('context-summary-resume').textContent, $('context-summary-job').textContent ].join(' · ');
+    }
     if (!context) {
       $('ctx-readiness-title').textContent = 'Could not load your saved context';
       return;
@@ -234,8 +247,9 @@ export function initContextPanel({ showFeedback = () => {}, openSheet, closeShee
 
   async function refresh() {
     panel.setAttribute('aria-busy', 'true');
-    render(await api().getContext?.());
-    panel.removeAttribute('aria-busy');
+    try { render(await api().getContext?.()); }
+    catch (_) { render(null); }
+    finally { panel.removeAttribute('aria-busy'); }
   }
 
   Object.values(fields).forEach((input) => input?.addEventListener('input', updateSaveState));
@@ -310,6 +324,8 @@ export function initContextPanel({ showFeedback = () => {}, openSheet, closeShee
     }
   });
   $('close-context').addEventListener('click', () => closeSheet(panel));
+
+  refresh();
 
   return { refresh, open: () => { openSheet(panel); refresh(); webAccount?.refresh(); } };
 }

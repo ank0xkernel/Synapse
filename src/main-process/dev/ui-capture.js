@@ -38,6 +38,57 @@ function js(fn, ...args) {
 const SCENES = {
   async home() {},
 
+  async interactions({ win }) {
+    const run = (fn) => win.webContents.executeJavaScript(js(fn));
+    const assert = (ok, message) => { if (!ok) throw new Error(message); };
+    await run(() => document.getElementById('context-summary').click());
+    await sleep(250);
+    assert(await run(() => !document.getElementById('context-panel').classList.contains('hidden')), 'Context summary did not open editor');
+    await run(() => document.getElementById('close-context').click());
+    await run(() => document.getElementById('session-details').click());
+    assert(await run(() => !document.getElementById('status-panel').classList.contains('hidden')), 'Session details did not open');
+    await run(() => document.getElementById('close-status').click());
+    await run(() => document.getElementById('settings-btn').click());
+    await sleep(250);
+    assert(await run(() => document.getElementById('settings-panel').contains(document.activeElement)), 'Settings did not receive focus');
+    await run(() => { const body = document.querySelector('#settings-panel .sheet-body'); body.scrollTop = body.scrollHeight; });
+    assert(await run(() => document.querySelector('#settings-panel .sheet-body').scrollTop > 0), 'Settings cannot scroll');
+    await run(() => document.getElementById('close-settings').click());
+    win.focus();
+    win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'k', modifiers: [process.platform === 'darwin' ? 'meta' : 'control'] });
+    win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'k', modifiers: [process.platform === 'darwin' ? 'meta' : 'control'] });
+    await sleep(100);
+    assert(await run(() => document.activeElement.id === 'chat-manual-input'), 'Command shortcut did not focus composer');
+    const bounds = win.getBounds();
+    await run(async () => { const b = await window.electronAPI.getWindowBounds(); await window.electronAPI.setWindowBounds({ ...b, x: b.x + 10, width: b.width - 20 }); });
+    assert(win.getBounds().width === bounds.width - 20, 'Resize IPC did not change bounds');
+    win.setBounds(bounds);
+    assert(win.isAlwaysOnTop(), 'Always-on-top was lost');
+    await run(() => document.getElementById('compact-mode-btn').click());
+    await sleep(200);
+    assert(await run(() => document.getElementById('app').classList.contains('compact-mode')), 'Compact mode failed');
+    await run(() => document.getElementById('compact-mode-btn').click());
+    await sleep(200);
+    assert(await run(() => !document.getElementById('app').classList.contains('compact-mode')), 'Compact restore failed');
+    console.log('[ui-capture] interaction assertions passed: context, session, focus, scroll, command shortcut, bounds IPC, always-on-top, compact restore');
+  },
+
+  async 'light-home'({ win }) {
+    await win.webContents.executeJavaScript(js(() => { document.documentElement.dataset.theme = 'light'; }));
+  },
+  async 'light-answer'(args) {
+    await SCENES.answer(args);
+    await args.win.webContents.executeJavaScript(js(() => { document.documentElement.dataset.theme = 'light'; }));
+  },
+  async 'light-settings'(args) {
+    await SCENES.settings(args);
+    await args.win.webContents.executeJavaScript(js(() => { document.documentElement.dataset.theme = 'light'; }));
+  },
+  async appearance({ win }) {
+    await SCENES.settings({ win });
+    await win.webContents.executeJavaScript(js(() => document.getElementById('theme-toggle-btn')?.scrollIntoView({ block: 'center' })));
+  },
+
   async answer({ win, send }) {
     await disableAutoAnswer(win);
     send('vosk-final', { source: 'system', text: 'How would you design a rate limiter for a public API with bursty traffic?' });
@@ -49,6 +100,7 @@ const SCENES = {
     }
     await win.webContents.executeJavaScript(js(() => window.__synapseEndDemoStream?.(true)));
     await sleep(400);
+    await win.webContents.executeJavaScript(js(() => { document.getElementById('chat-messages').scrollTop = 0; }));
   },
 
   async streaming({ win, send }) {
@@ -164,6 +216,11 @@ async function runUiCapture({ app, getMainWindow, baseSendToRenderer, outDir, sc
     // feed through the app's own Clear action. Scenes other than setup start
     // from a finished setup, as a returning user would.
     await win.webContents.executeJavaScript(js((sceneName) => {
+      window.__synapseEndDemoStream?.(true);
+      if (document.getElementById('app').classList.contains('compact-mode')) document.getElementById('compact-mode-btn')?.click();
+      document.documentElement.dataset.theme = 'dark';
+      document.documentElement.style.setProperty('--shell-veil', '1');
+      document.documentElement.removeAttribute('data-brightness-adjusted');
       if (sceneName !== 'onboarding') window.__synapseCloseOnboarding?.();
       document.querySelectorAll('.sheet').forEach((sheet) => sheet.classList.add('hidden'));
       document.getElementById('close-settings')?.click();
@@ -177,9 +234,23 @@ async function runUiCapture({ app, getMainWindow, baseSendToRenderer, outDir, sc
       await scene({ win, send: baseSendToRenderer });
     } catch (error) {
       console.error(`[ui-capture] scene ${name} failed:`, error.message);
+      throw error;
     }
     await sleep(700);
 
+    await win.webContents.executeJavaScript(js(() => document.fonts.ready.then(() => true)));
+    const layout = await win.webContents.executeJavaScript(js(() => ({
+      theme: document.documentElement.dataset.theme,
+      viewport: [innerWidth, innerHeight],
+      horizontalOverflow: document.documentElement.scrollWidth > innerWidth,
+      context: document.getElementById('context-summary-resume')?.textContent,
+      font: getComputedStyle(document.body).fontFamily,
+      controlsOutsideWindow: [...document.querySelectorAll('.topbar button, .topbar select')].filter(e => {
+        const r = e.getBoundingClientRect(); return r.width && r.height && (r.left < 0 || r.right > innerWidth || r.bottom > innerHeight);
+      }).map(e => e.id)
+    })));
+    fs.writeFileSync(path.join(outDir, `${name}.json`), JSON.stringify(layout, null, 2));
+    if (layout.horizontalOverflow || layout.controlsOutsideWindow.length) throw new Error(`Layout overflow in ${name}`);
     const image = await win.webContents.capturePage();
     const file = path.join(outDir, `${name}.png`);
     fs.writeFileSync(file, image.toPNG());
