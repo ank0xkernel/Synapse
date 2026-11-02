@@ -121,7 +121,11 @@ function detectResumeJdDomain(query, history = '') {
     // items that don't actually match.
     'implement', 'implemented', 'deployed', 'developed', 'utilized',
     'have you', 'did you', 'do you', 'your ', 'you mentioned',
-    'give me an example', 'example of', 'have you ever'
+    'give me an example', 'example of', 'have you ever',
+    // Second Brain project keywords:
+    'jumpstart', 'novaris', 'evox', 'gemslord', 'gems lord', 'shuttle tracker',
+    'manisha wires', 'mwpl', 'chhota vyapar', 'chotavyapar', 'campusconnect',
+    'kundli', 'astrology'
   ];
 
   const jdKeywords = [
@@ -863,7 +867,16 @@ function buildContextAndEvidenceBlock(query = '', contextString = '', { activeCo
   // to know whether tier 5 is populated) see the same answer, and so
   // retrieval only runs once per prompt build (unchanged from Phase 6/7).
   const retrievedContextBlock = buildRetrievedContextBlock(query, classification, activeContext);
-  const hasCandidateEvidence = Boolean(retrievedContextBlock);
+  let secondBrainContext = '';
+  try {
+    const { secondBrainService } = require('../second-brain/second-brain-service');
+    secondBrainContext = secondBrainService.retrieveContext(query, { activeContext, classification });
+  } catch {
+    // Non-fatal fallback
+  }
+
+  const combinedContextBlock = [retrievedContextBlock, secondBrainContext].filter(Boolean).join('\n\n');
+  const hasCandidateEvidence = Boolean(combinedContextBlock);
 
   return `${buildActiveContextBlock(activeContext)}
 
@@ -871,7 +884,7 @@ ${interviewBrief}
 
 ${buildEvidenceDirectives(hasCandidateEvidence)}
 
-${retrievedContextBlock}
+${combinedContextBlock}
 
 ${buildEvidenceHierarchyBlock({ relation, hasCandidateEvidence })}`.trim();
 }
