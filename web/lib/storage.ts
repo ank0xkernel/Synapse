@@ -22,7 +22,14 @@ const real: BlobClient = {
   async read(key) {
     const r = await get(key, { access: 'private', useCache: false });
     if (!r || r.statusCode !== 200 || !r.stream) return null;
-    return Buffer.from(await new Response(r.stream).arrayBuffer());
+    const chunks: Uint8Array[] = [];
+    const reader = r.stream.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) chunks.push(value);
+    }
+    return Buffer.concat(chunks);
   },
   async write(key, buf) {
     await put(key, buf, { access: 'private', addRandomSuffix: false });

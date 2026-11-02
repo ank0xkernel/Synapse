@@ -38,8 +38,8 @@ async function generate(parts: string | Part[], opts: { json: boolean; timeoutMs
   const key = process.env.GEMINI_API_KEY?.trim();
   if (!key || key === '""' || key === "''" || key.length < 5) throw new AiResumeUnavailable('GEMINI_API_KEY is not configured');
 
-  // Hard cap to ensure execution finishes comfortably within serverless function budget
-  const overallDeadline = Date.now() + Math.min(opts.timeoutMs, 14_000);
+  // Bounded deadline to ensure execution finishes comfortably within serverless function budget (maxDuration = 60s)
+  const overallDeadline = Date.now() + Math.min(opts.timeoutMs, 45_000);
   const preferredModel = aiModel();
   const modelsToTry = [
     preferredModel,
