@@ -75,3 +75,5 @@ bin/
 web/.next/
 web/.shots/
 
+.vercel
+.env*

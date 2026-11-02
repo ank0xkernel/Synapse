@@ -146,8 +146,9 @@ export default function UploadResume({ first = false }: { first?: boolean }) {
   }
 
   const busy = pct !== null;
-  const sending = busy && stage === 'Uploading';
-  const state = error ? 'failed' : stage === DONE ? 'done' : sending ? 'uploading' : busy ? 'processing' : over ? 'over' : 'idle';
+  const isTransferring = busy && (stage === 'Connecting' || stage === 'Uploading');
+  const isProcessing = busy && !isTransferring && stage !== DONE;
+  const state = error ? 'failed' : stage === DONE ? 'done' : isTransferring ? 'uploading' : busy ? 'processing' : over ? 'over' : 'idle';
   const progress = { '--p': (pct ?? 0) / 100 } as CSSProperties;
 
   return (
@@ -185,17 +186,17 @@ export default function UploadResume({ first = false }: { first?: boolean }) {
           {busy && (
             <div className={s.progressBlock} role="status">
               <ol className={s.stages}>
-                <li data-on={sending} data-done={!sending}>
+                <li data-on={isTransferring} data-done={!isTransferring}>
                   <span>Send the file</span>
-                  <span className="num">{sending ? (pct && pct > 0 ? `${pct}%` : 'Connecting') : 'Sent'}</span>
+                  <span className="num">{isTransferring ? (stage === 'Connecting' ? 'Connecting' : `${pct ?? 0}%`) : 'Sent'}</span>
                 </li>
-                <li data-on={!sending && stage !== DONE} data-done={stage === DONE}>
+                <li data-on={isProcessing} data-done={stage === DONE}>
                   <span>{stage === DONE ? DONE : 'Read and analyse'}</span>
-                  <span>{stage === DONE ? 'Opening' : sending ? '' : 'Working'}</span>
+                  <span>{stage === DONE ? 'Opening' : isProcessing ? 'Working' : ''}</span>
                 </li>
               </ol>
               <div className={s.track} role="progressbar" aria-valuenow={pct ?? 0} aria-valuemin={0} aria-valuemax={100} aria-label="Upload progress">
-                <span style={progress} data-indeterminate={!sending} />
+                <span style={progress} data-indeterminate={!isTransferring} />
               </div>
               <button
                 type="button"

@@ -2,6 +2,7 @@ const isDev = process.env.NODE_ENV !== 'production';
 
 // Private Blob objects are reached only through short-lived signed URLs on this host family; uploads go to the Blob API.
 const BLOB_FILES = 'https://*.private.blob.vercel-storage.com';
+const BLOB_STORE = 'https://blob.vercel-storage.com';
 const BLOB_API = 'https://vercel.com/api/blob';
 
 const csp = [
@@ -11,7 +12,7 @@ const csp = [
   "style-src 'self' 'unsafe-inline'",
   `img-src 'self' data: blob: ${BLOB_FILES}`,
   "font-src 'self'",
-  `connect-src 'self' ${BLOB_API}${isDev ? ' ws: wss:' : ''}`,
+  `connect-src 'self' ${BLOB_API} ${BLOB_STORE} ${BLOB_FILES}${isDev ? ' ws: wss:' : ''}`,
   `frame-src 'self' ${BLOB_FILES}`,
   "object-src 'self'",
   "base-uri 'self'",
