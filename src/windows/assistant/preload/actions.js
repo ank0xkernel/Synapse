@@ -26,6 +26,18 @@ function createInvokeActions(ipcRenderer) {
       fallback: (error) => ({ error: error.message })
     }),
 
+    analyzeScreen: invokeWithFallback(ipcRenderer, {
+      channel: 'analyze-screen',
+      label: 'analyzeScreen',
+      fallback: (error) => ({ success: false, error: error.message })
+    }),
+
+    checkScreenRecordingPermission: invokeWithFallback(ipcRenderer, {
+      channel: 'check-screen-recording-permission',
+      label: 'checkScreenRecordingPermission',
+      fallback: () => ({ status: 'unknown', authorized: true })
+    }),
+
     analyzeStealth: invokeWithFallback(ipcRenderer, {
       channel: 'analyze-stealth',
       label: 'analyzeStealth',

@@ -83,6 +83,12 @@
             </select>
           </label>
 
+          <button id="analyze-screen-btn" class="btn btn-sm analyze-screen-btn" type="button" aria-label="Analyze Screen" data-tip="Analyze Screen  ⌥⇧D">
+            <svg class="analyze-screen-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="7" y1="10" x2="17" y2="10"/></svg>
+            <span class="spinner analyze-screen-spinner" hidden aria-hidden="true"></span>
+            <span class="analyze-screen-label">Analyze Screen</span>
+          </button>
+
           <button id="screenshot-btn" class="icon-btn screenshot-btn" type="button" aria-label="Capture screen" data-tip="Capture screen  ⌥⇧S">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8V6a2 2 0 0 1 2-2h2"/><path d="M16 4h2a2 2 0 0 1 2 2v2"/><path d="M20 16v2a2 2 0 0 1-2 2h-2"/><path d="M8 20H6a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3"/></svg>
             <span id="screenshot-count" class="count-badge screenshot-count" aria-label="Screenshots captured" hidden>0</span>

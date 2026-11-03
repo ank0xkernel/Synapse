@@ -34,6 +34,15 @@ const COMMANDS = [
         key: '⌥⇧E'
     },
     {
+        id: 'analyze-screen',
+        name: 'Analyze Screen',
+        aliases: ['analyzescreen', 'scan', 'screenintel', 'intel'],
+        icon: '🖥',
+        description: 'Capture screen and analyze visible coding problem or question',
+        target: 'analyze-screen-btn',
+        key: '⌥⇧D'
+    },
+    {
         id: 'suggest',
         name: 'Suggest',
         aliases: ['suggest', 'next', 'g'],
@@ -441,6 +450,7 @@ function applyTooltips() {
         'transcription-toggle': ['Transcription', 'Start or stop listening'],
         'source-system-toggle': ['Host audio', 'Transcribe the other person on the call'],
         'source-mic-toggle': ['Your microphone', 'Transcribe your own voice'],
+        'analyze-screen-btn': ['Analyze Screen', 'Capture screen and analyze visible problem or question'],
         'screenshot-btn': ['Capture', 'Capture the screen for the AI to read'],
         'mobile-server-pill': ['Phone companion', 'Pair a phone to see answers on it'],
         'theme-toggle-btn': ['Theme', 'Switch between light and dark'],

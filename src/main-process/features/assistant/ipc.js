@@ -196,6 +196,91 @@ function registerAssistantIpc({
     return screenshotManager.takeStealthScreenshot();
   });
 
+  ipcMain.handle('check-screen-recording-permission', () => {
+    return screenshotManager.checkScreenRecordingPermission?.() || { status: 'granted', authorized: true };
+  });
+
+  ipcMain.handle('analyze-screen', async (_event, payload = {}) => {
+    const perm = screenshotManager.checkScreenRecordingPermission?.() || { status: 'granted', authorized: true };
+    if (perm.status === 'denied' || perm.status === 'restricted') {
+      const errorMsg = 'Screen Recording permission is not granted. Enable Synapse in System Settings → Privacy & Security → Screen & System Audio Recording.';
+      sendToRenderer('ai-stream-end', { actionId: 'screenIntelligence' });
+      sendToRenderer('analysis-result', { error: errorMsg, actionId: 'screenIntelligence' });
+      return { error: errorMsg, code: 'PERMISSION_DENIED' };
+    }
+
+    const isOllama = geminiRuntime.getActiveAiProvider() === 'ollama';
+    if (!isOllama && !geminiRuntime.hasApiKeys()) {
+      const errorMsg = 'No Gemini API key configured. Add it in Settings.';
+      sendToRenderer('ai-stream-end', { actionId: 'screenIntelligence' });
+      sendToRenderer('analysis-result', { error: errorMsg, actionId: 'screenIntelligence' });
+      return { error: errorMsg };
+    }
+
+    try {
+      sendToRenderer('analysis-start');
+      sendToRenderer('ai-stream-start', { actionId: 'screenIntelligence' });
+
+      // In-memory screen capture — zero disk persistence
+      const capture = await screenshotManager.captureScreenInMemory({
+        displayId: payload?.displayId
+      });
+
+      const imageParts = [
+        {
+          inlineData: {
+            data: capture.data,
+            mimeType: capture.mimeType
+          }
+        }
+      ];
+
+      const onChunk = ({ text, index }) => {
+        sendToRenderer('ai-stream-chunk', { actionId: 'screenIntelligence', text, index });
+      };
+
+      const responseMode = resolveResponseModeId(payload?.responseMode);
+      const text = await geminiRuntime.executeWithKeyFailover((aiService) => {
+        if (!aiService || !aiService.model) {
+          throw new Error('AI model not initialized. Please check your settings.');
+        }
+
+        return aiService.analyzeScreenshots(
+          imageParts,
+          payload?.additionalContext || '',
+          {
+            contextStringOverride: payload?.contextString || '',
+            responseMode,
+            onChunk
+          }
+        );
+      });
+
+      chatContext.push({
+        type: 'screen-intelligence',
+        content: text,
+        timestamp: new Date().toISOString()
+      });
+
+      sendToRenderer('ai-stream-end', { actionId: 'screenIntelligence' });
+      sendToRenderer('analysis-result', { text, actionId: 'screenIntelligence' });
+      return { success: true, text };
+    } catch (error) {
+      console.error('[analyze-screen] Error details:', error);
+      sendToRenderer('ai-stream-end', { actionId: 'screenIntelligence' });
+      const isPerm = error?.code === 'SCREEN_RECORDING_DENIED' || error?.code === 'PERMISSION_DENIED';
+      const userMessage = isPerm
+        ? 'Screen Recording permission is not granted. Enable Synapse in System Settings → Privacy & Security → Screen & System Audio Recording.'
+        : mapGeminiErrorMessage(error, 'Screen analysis failed');
+
+      sendToRenderer('analysis-result', {
+        error: userMessage,
+        actionId: 'screenIntelligence'
+      });
+      return { error: userMessage, code: error?.code };
+    }
+  });
+
   ipcMain.handle('analyze-stealth', async () => {
     return analyzeForMeeting();
   });

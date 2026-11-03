@@ -1128,12 +1128,13 @@ ${buildContextAndEvidenceBlock(latestQuery, contextString, { activeContext, rela
 ${buildContextBlock('RELEVANT RECENT CONVERSATION', contextString)}${generalInstructions}`.trim();
 }
 
-// ─── SCREEN AI ────────────────────────────────────────────────────────────────
+// ─── SCREEN AI & SCREEN INTELLIGENCE ──────────────────────────────────────────
 // Analyzes screenshots (the screen) plus optional context.
 function buildScreenshotAnalysisPrompt({
   contextString = '',
   additionalContext = '',
   programmingLanguage,
+  responseMode = 'professional',
   screenshotCount = 1
 } = {}) {
   const resolvedLanguage = resolveProgrammingLanguage(programmingLanguage);
@@ -1149,11 +1150,27 @@ ${buildProgrammingLanguagePreference(resolvedLanguage)}
 === SCREEN INPUT ===
 ${screenshotDirective}
 
-- Identify content type: coding problem, error/stack trace, terminal, code editor, UI, diagram,
-  documentation, slide, chat thread, or other.
-- Read every visible token: constraints, sample I/O, error messages, function signatures,
-  platform indicators.
-- Match the platform's required I/O exactly (LeetCode signature vs. stdin/stdout, etc.).
+=== QUESTION UNDERSTANDING ===
+1. Carefully inspect the captured screen to detect readable text, code, diagrams, formulas, or UI elements.
+2. Identify the primary question, problem, challenge, or discussion visible on the screen.
+   - For coding questions / DSA: extract problem statement, input format, output format, explicit constraints, examples, expected function signature, and required programming language. Never invent missing constraints; clearly distinguish visible facts from assumptions.
+   - For debugging / errors: identify the root cause, stack trace, and specific fix.
+   - For multiple-choice questions: state the correct option clearly and provide a concise, rigorous explanation.
+   - For technical theory / system design / math / reasoning: address the core concept directly and clearly with rigorous accuracy.
+   - If the screen appears to be part of an active interview or hiring assessment, provide practice-oriented guidance, hints, and structured explanations.
+
+=== ANSWER GENERATION ===
+Follow the active answer style preference: ${String(responseMode).toUpperCase()}.
+
+If the screen contains a coding problem or programming challenge, structure your response as follows:
+1. **Problem Summary & Constraints:** Concise explanation of the problem, input/output requirements, and verified constraints extracted directly from the screen.
+2. **Recommended Approach & Algorithm:** Rationale for the chosen optimal method (e.g., dynamic programming, sliding window, graph BFS/DFS).
+3. **Implementation:** Clean, syntactically correct, and well-commented code in ${resolvedLanguage} (or the language specified on screen).
+4. **Complexity Analysis:** Time and Space complexity in Big-O notation with brief justification.
+5. **Edge Cases & Walkthrough:** Critical edge cases handled and a concise walkthrough when useful.
+
+For all other questions (conceptual, multiple-choice, architectural, debugging, mathematical):
+Provide a direct, accurate, and cleanly structured response formatted in standard Markdown.
 
 === LANGUAGE FOR CODE ===
 If — and only if — the domain is coding, prefer ${resolvedLanguage} unless the screen clearly

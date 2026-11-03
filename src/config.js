@@ -88,6 +88,12 @@ const KEYBOARD_SHORTCUTS = [
     accelerator: 'Alt+Shift+E'
   },
   {
+    id: 'analyzeScreen',
+    buttonLabel: 'Analyze Screen',
+    description: 'Captures screen and analyzes visible problem, code, or question',
+    accelerator: 'Alt+Shift+D'
+  },
+  {
     id: 'suggest',
     buttonLabel: 'Suggest',
     description: 'Uses only enabled transcript context to suggest what to say next',
