@@ -47,8 +47,12 @@ export function setupIpcListeners({
         const stream = typeof getActiveScreenAiStream === 'function' ? getActiveScreenAiStream() : null;
         console.log('[onAnalysisResult] stream active:', !!stream, 'has error:', !!data.error);
         if (data.error) {
-            addChatMessage('system', `Error: ${data.error}`);
-            showFeedback('Analysis failed', 'error');
+            if (stream) {
+                stream.finalize(`**[Screen Analysis]**\n\n⚠️ ${data.error}`);
+            } else {
+                addChatMessage('system', `Error: ${data.error}`);
+            }
+            showFeedback(data.error.length < 60 ? data.error : 'Analysis failed', 'error');
         } else if (stream) {
             stream.finalize(data.text);
             showFeedback('Analysis complete', 'success');

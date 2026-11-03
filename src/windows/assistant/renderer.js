@@ -249,6 +249,7 @@ const monitorLiveMic = document.getElementById('monitor-live-mic');
 const monitorLogList = document.getElementById('monitor-log-list');
 const windowResizeHandles = document.querySelectorAll('[data-resize-handle]');
 
+const analyzeScreenBtn = document.getElementById('analyze-screen-btn');
 const screenshotBtn = document.getElementById('screenshot-btn');
 const analyzeBtn = document.getElementById('analyze-btn');
 const screenAiBtn = document.getElementById('screen-ai-btn');
@@ -311,6 +312,7 @@ let hasJdContext = true;
 const aiActionInFlightState = {
     askAi: false,
     screenAi: false,
+    screenIntelligence: false,
     suggest: false,
     notes: false,
     insights: false
@@ -1153,6 +1155,58 @@ function getAnswerSize() {
     });
 })();
 
+async function analyzeScreenAction() {
+    if (!hasGeminiApiKeysConfigured) {
+        showFeedback('Gemini API key missing. Add it in Settings.', 'error');
+        return;
+    }
+
+    if (isAiActionInFlight('screenIntelligence') || isAnalyzing) {
+        return;
+    }
+
+    const bundle = buildFilteredAiContextBundle({ charBudget: AI_CONTEXT_CHAR_BUDGET, emitTruncationLog: false });
+    const responseMode = responseModeSelect ? responseModeSelect.value : 'professional';
+
+    await runAiActionWithLock('screenIntelligence', async () => {
+        const stream = createStreamHandler('screenIntelligence');
+        activeScreenAiStream = stream;
+        if (analyzeScreenBtn) {
+            analyzeScreenBtn.classList.add('analyzing');
+            analyzeScreenBtn.disabled = true;
+            analyzeScreenBtn.setAttribute('aria-busy', 'true');
+        }
+
+        try {
+            setAnalyzing(true);
+            showLoadingOverlay('Analyzing screen...');
+            stream.start('**[Screen Analysis]**\n\n');
+
+            const result = await window.electronAPI.analyzeScreen({
+                contextString: bundle.contextString,
+                responseMode
+            });
+
+            if (result?.error) {
+                showFeedback(result.error, 'error');
+            }
+        } catch (error) {
+            console.error('Screen intelligence error:', error);
+            showFeedback(error.message || 'Screen analysis failed', 'error');
+            setAnalyzing(false);
+            hideLoadingOverlay();
+            stream.cleanup();
+            activeScreenAiStream = null;
+        } finally {
+            if (analyzeScreenBtn) {
+                analyzeScreenBtn.classList.remove('analyzing');
+                analyzeScreenBtn.disabled = false;
+                analyzeScreenBtn.removeAttribute('aria-busy');
+            }
+        }
+    });
+}
+
 async function analyzeScreenshotsOnly() {
     if (!hasGeminiApiKeysConfigured) {
         showFeedback('Gemini API key missing. Add it in Settings.', 'error');
@@ -1461,9 +1515,14 @@ function updateUI() {
     const canRunTranscription = hasAssemblyAiApiKeyConfigured;
     const askAiInFlight = isAiActionInFlight('askAi');
     const screenAiInFlight = isAiActionInFlight('screenAi');
+    const screenIntelInFlight = isAiActionInFlight('screenIntelligence');
     const suggestInFlight = isAiActionInFlight('suggest');
     const notesInFlight = isAiActionInFlight('notes');
     const insightsInFlight = isAiActionInFlight('insights');
+
+    if (analyzeScreenBtn) {
+        analyzeScreenBtn.disabled = isAnalyzing || screenIntelInFlight || !canRunAiActions;
+    }
 
     if (analyzeBtn) {
         analyzeBtn.disabled = isAnalyzing || askAiInFlight || !canRunAiActions || !hasAiContext;
@@ -1554,6 +1613,10 @@ function applyDisabledReasons(state) {
         const reason = reasons.find(Boolean);
         button.setAttribute('title', reason || button.dataset.defaultTitle);
     };
+
+    reasonFor(analyzeScreenBtn, [
+        !state.canRunAiActions && missingAiKey
+    ]);
 
     reasonFor(analyzeBtn, [
         !state.canRunAiActions && missingAiKey,
@@ -1740,6 +1803,7 @@ function startTimer() {
 function setupEventListeners() {
     setupEventListenersModule({
         windowApi: window.electronAPI,
+        analyzeScreenBtn,
         screenshotBtn,
         analyzeBtn,
         screenAiBtn,
@@ -1770,6 +1834,7 @@ function setupEventListeners() {
         isShortcutPressed,
         updateWindowOpacityValueLabel,
         takeStealthScreenshot,
+        analyzeScreenAction,
         askAiWithSessionContext,
         analyzeScreenshotsOnly,
         clearStealthData,
