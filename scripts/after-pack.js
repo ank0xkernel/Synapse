@@ -17,6 +17,7 @@
 const { execFileSync } = require('child_process');
 const path = require('path');
 const os = require('os');
+const fs = require('fs');
 
 module.exports = async function afterPack(context) {
   if (context.electronPlatformName !== 'darwin' || os.platform() !== 'darwin') {
@@ -25,10 +26,60 @@ module.exports = async function afterPack(context) {
 
   const appName = `${context.packager.appInfo.productFilename}.app`;
   const appPath = path.join(context.appOutDir, appName);
+  const bundleId = context.packager.appInfo.id || 'com.synapse.interviewcoach';
+  const rootDir = path.join(__dirname, '..');
+  const entitlementsPath = path.join(rootDir, 'assets', 'entitlements.mac.plist');
+  const inheritEntitlementsPath = path.join(rootDir, 'assets', 'entitlements.mac.inherit.plist');
 
   try {
-    execFileSync('codesign', ['--deep', '--force', '--sign', '-', appPath], { stdio: 'inherit' });
-    console.log(`[after-pack] Ad-hoc signed ${appPath}`);
+    // 1. Sign embedded native helper binaries with stable identifier & requirement
+    const helperBinary = path.join(appPath, 'Contents', 'Resources', 'native', 'synapse-audio-capture');
+    if (fs.existsSync(helperBinary)) {
+      execFileSync('codesign', [
+        '--force',
+        '--sign', '-',
+        '--identifier', 'com.synapse.synapse-audio-capture',
+        '-r=designated => identifier "com.synapse.synapse-audio-capture"',
+        helperBinary
+      ], { stdio: 'inherit' });
+      console.log(`[after-pack] Signed native helper: ${helperBinary}`);
+    }
+
+    // 2. Sign frameworks and nested helpers inside Contents/Frameworks
+    const frameworksDir = path.join(appPath, 'Contents', 'Frameworks');
+    if (fs.existsSync(frameworksDir)) {
+      const entries = fs.readdirSync(frameworksDir);
+      for (const entry of entries) {
+        const fullEntryPath = path.join(frameworksDir, entry);
+        if (entry.endsWith('.app')) {
+          const helperArgs = ['--force', '--sign', '-'];
+          if (fs.existsSync(inheritEntitlementsPath)) {
+            helperArgs.push('--entitlements', inheritEntitlementsPath);
+          }
+          helperArgs.push(fullEntryPath);
+          execFileSync('codesign', helperArgs, { stdio: 'inherit' });
+        } else if (entry.endsWith('.framework') || entry.endsWith('.dylib')) {
+          execFileSync('codesign', ['--force', '--sign', '-', fullEntryPath], { stdio: 'inherit' });
+        }
+      }
+    }
+
+    // 3. Deep-sign entire app bundle with stable designated requirement and entitlements
+    const signArgs = [
+      '--deep',
+      '--force',
+      '--sign', '-',
+      '--identifier', bundleId,
+      `-r=designated => identifier "${bundleId}"`
+    ];
+
+    if (fs.existsSync(entitlementsPath)) {
+      signArgs.push('--entitlements', entitlementsPath);
+    }
+    signArgs.push(appPath);
+
+    execFileSync('codesign', signArgs, { stdio: 'inherit' });
+    console.log(`[after-pack] Stable ad-hoc signed ${appPath} with requirement: designated => identifier "${bundleId}"`);
   } catch (error) {
     console.warn(`[after-pack] codesign failed (non-fatal, app still runs unsigned): ${error.message}`);
   }
