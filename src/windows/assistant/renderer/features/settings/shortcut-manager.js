@@ -145,6 +145,7 @@ const shortcutIconById = {
     takeScreenshot: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 2 7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z"/></svg>',
     askAi: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a8 8 0 0 0-8 8v2a4 4 0 0 0 4 4h1v3l3-3h3a8 8 0 0 0 8-8 8 8 0 0 0-8-8zm-1 6h2v2h-2V8zm0 3h2v5h-2v-5z"/></svg>',
     screenAi: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 5h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-6v2h3v1H7v-1h3v-2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zm0 2v10h16V7H4z"/></svg>',
+    analyzeScreen: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="7" y1="10" x2="17" y2="10"/></svg>',
     suggest: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 21h6v-1H9v1zm3-19a7 7 0 0 0-4 12.74V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.26A7 7 0 0 0 12 2zm2 11.6V16h-4v-2.4A5 5 0 1 1 14 13.6z"/></svg>',
     notes: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 2h9l5 5v15a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm8 1v5h5"/><path d="M8 13h8v1H8zm0 3h8v1H8zm0-6h5v1H8z"/></svg>',
     insights: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 20h16v1H3V4h1v16z"/><path d="M7 16h2v-5H7v5zm4 0h2V8h-2v8zm4 0h2v-3h-2v3z"/></svg>',

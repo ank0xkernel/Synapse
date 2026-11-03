@@ -282,6 +282,49 @@ option { background: var(--surface-2); color: var(--text-1); }
 }
 .btn:hover:not(:disabled) { background: var(--surface-3); border-color: var(--border-strong); }
 .btn-sm { height: var(--control-h); padding: 0 var(--space-3); font-size: var(--text-sm); }
+.analyze-screen-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--control-h);
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--text-1);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.analyze-screen-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+.analyze-screen-btn:active:not(:disabled) {
+  background: var(--surface-active);
+}
+.analyze-screen-btn.analyzing {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+  color: var(--accent-text);
+}
+.analyze-screen-icon {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+.analyze-screen-spinner {
+  width: 13px;
+  height: 13px;
+  border-width: 2px;
+  flex-shrink: 0;
+}
+.analyze-screen-btn.analyzing .analyze-screen-icon {
+  display: none;
+}
+.analyze-screen-btn.analyzing .analyze-screen-spinner {
+  display: inline-block !important;
+}
 .btn-primary { background: var(--accent); border-color: transparent; color: var(--text-on-accent); }
 .btn-primary:hover:not(:disabled) { background: var(--accent-hover); border-color: transparent; }
 .btn-ghost { background: transparent; border-color: transparent; color: var(--text-2); }
@@ -921,6 +964,7 @@ select.input {
 .app.compact-mode .sheet { display: none !important; }
 .app.compact-mode .topbar { height: 100%; border-bottom: 0; }
 .app.compact-mode .mode-select,
+.app.compact-mode #analyze-screen-btn,
 .app.compact-mode #screenshot-btn,
 .app.compact-mode #status-btn,
 .app.compact-mode #mobile-server-pill,
@@ -931,8 +975,9 @@ select.input {
 /* ── Responsive: 600px minimum window width ───────────────────────────── */
 @media (max-width: 820px) {
   .session-sep, .timer { display: none; }
-  .listen-label { display: none; }
+  .listen-label, .analyze-screen-label { display: none; }
   .listen-btn { padding: 0 6px; }
+  .analyze-screen-btn { padding: 0 6px; }
   .sheet { width: 100%; border-left: 0; }
 }
 @media (max-width: 720px) {
