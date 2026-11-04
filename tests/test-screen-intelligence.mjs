@@ -377,6 +377,25 @@ async function runTests() {
     assert(actionsSrc.includes('relaunchApplication'), 'Missing relaunchApplication');
   });
 
+  // 33. Environment bootstrap: loadApplicationEnvironment initializes in packaged and dev modes without nodeOptionsBefore error
+  await test('33. Environment bootstrap: loadApplicationEnvironment initializes in packaged and dev modes without nodeOptionsBefore error', () => {
+    const { loadApplicationEnvironment } = require('../src/bootstrap/environment');
+    const mockPackagedApp = {
+      isPackaged: true,
+      getPath: (name) => name === 'userData' ? path.join(__dirname, '../cache') : '/tmp'
+    };
+    const envPackaged = loadApplicationEnvironment(mockPackagedApp);
+    assert(typeof envPackaged === 'object' && envPackaged !== null, 'Packaged environment must load without error');
+    assert(typeof envPackaged.nodeOptions === 'string', 'nodeOptions must be defined in loaded environment');
+
+    const mockDevApp = {
+      isPackaged: false,
+      getPath: (name) => name === 'userData' ? path.join(__dirname, '../cache') : '/tmp'
+    };
+    const envDev = loadApplicationEnvironment(mockDevApp);
+    assert(typeof envDev === 'object' && envDev !== null, 'Dev environment must load without error');
+  });
+
   console.log(`\nScreen Intelligence & Permission Tests: ${passed} passed, ${failed} failed (${passed + failed} total)`);
   if (failed > 0) {
     process.exit(1);

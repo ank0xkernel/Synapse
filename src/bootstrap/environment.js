@@ -120,6 +120,13 @@ function loadApplicationEnvironment(app) {
   const envPath = getEnvPath(app);
   let parsed = null;
 
+  // dotenv writes every key it finds straight into process.env, including
+  // NODE_OPTIONS. Electron re-reads that variable and rejects it once the
+  // process is already running, printing an ERROR on every launch. The value is
+  // still parsed and reported below; it is just applied via the js-flags switch
+  // in start-application.js instead of through the environment.
+  const nodeOptionsBefore = process.env.NODE_OPTIONS;
+
   // In packaged mode, if the user config does not exist yet in userData,
   // check if a read-only template was shipped in resourcesPath.
   if (fs.existsSync(envPath)) {
