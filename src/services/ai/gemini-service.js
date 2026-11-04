@@ -242,13 +242,16 @@ class GeminiService {
   }
 
   isRetryableError(error) {
-    const message = String(error?.message || '');
+    const message = String(error?.message || '').toLowerCase();
 
     return (
       message.includes('429') ||
       message.includes('500') ||
       message.includes('503') ||
-      message.includes('RATE_LIMIT')
+      message.includes('rate_limit') ||
+      message.includes('fetch failed') ||
+      message.includes('econnreset') ||
+      message.includes('etimedout')
     );
   }
 
