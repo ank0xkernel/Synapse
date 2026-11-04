@@ -210,6 +210,7 @@
       </header>
       <div class="sheet-body">
         <ul class="checklist" aria-label="Readiness">
+          <li class="check-row" data-check="screen" data-tone="idle"><span class="check-dot" aria-hidden="true"></span><span class="check-text"><span class="check-title">Screen recording</span><span class="check-detail">Checking…</span></span><span class="check-value"></span></li>
           <li class="check-row" data-check="system-audio" data-tone="idle"><span class="check-dot" aria-hidden="true"></span><span class="check-text"><span class="check-title">System audio</span><span class="check-detail">Checking…</span></span><span class="check-value"></span></li>
           <li class="check-row" data-check="playback" data-tone="idle"><span class="check-dot" aria-hidden="true"></span><span class="check-text"><span class="check-title">Playback</span><span class="check-detail">Checking…</span></span><span class="check-value"></span></li>
           <li class="check-row" data-check="microphone" data-tone="idle"><span class="check-dot" aria-hidden="true"></span><span class="check-text"><span class="check-title">Microphone</span><span class="check-detail">Checking…</span></span><span class="check-value"></span></li>
@@ -494,8 +495,13 @@
 
         <section class="setup-step" data-step="permissions" hidden>
           <p class="setup-eyebrow">Step 1 of 5 · Permissions</p>
-          <h2 tabindex="-1">Let Synapse hear your call</h2>
-          <p>macOS asks once for permission to record system audio. Synapse only listens while Listen is on, and macOS shows its recording indicator in the menu bar whenever it does.</p>
+          <h2 tabindex="-1">Let Synapse hear and see your session</h2>
+          <p>macOS asks once for permission to record system audio and capture your screen. Synapse only captures when requested, and never interrupts active sessions.</p>
+          <div class="setup-row">
+            <div><strong>Screen recording</strong><span>Required for Screen Analysis and coding question detection.</span></div>
+            <button class="btn btn-sm" type="button" data-setup="request-screen">Check screen</button>
+          </div>
+          <p class="setup-result" data-result="permissions-screen" hidden></p>
           <p class="setup-result" data-result="permissions-audio" hidden></p>
           <div class="setup-row">
             <div><strong>Microphone</strong><span>Optional. Lets Synapse transcribe your own answers.</span></div>

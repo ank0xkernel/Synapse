@@ -67,6 +67,16 @@ export function initPanels({
       api().getMediaAccessStatus?.()
     ].map((promise) => Promise.resolve(promise).catch(() => null)));
 
+    // Screen recording permission status
+    const screenPerm = media?.screenAuthorized !== false && (media?.screenState === 'GRANTED' || media?.screen === 'granted');
+    if (screenPerm) {
+      setRow(statusPanel, 'screen', { tone: 'ok', detail: 'Screen capture verified and ready', value: 'Ready' });
+    } else if (media?.screenRestartRequired || media?.screenState === 'RESTART_REQUIRED') {
+      setRow(statusPanel, 'screen', { tone: 'warn', detail: 'Permission enabled in Settings; restart required to activate capture', value: 'Restart needed' });
+    } else {
+      setRow(statusPanel, 'screen', { tone: 'error', detail: 'Allow Synapse under Screen & System Audio Recording in System Settings', value: 'Not granted' });
+    }
+
     // System audio: what the native helper supports, plus whether it is live.
     if (sources.system === 'listening') {
       setRow(statusPanel, 'system-audio', { tone: 'ok', detail: `Capturing via ${describeBackend(probe?.recommendedBackend)}`, value: 'Live' });
@@ -223,6 +233,16 @@ export function initPanels({
     if (name === 'permissions') {
       const media = await api().getMediaAccessStatus?.();
       const probe = await api().probeNativeSystemAudio?.();
+
+      const screenOk = media?.screenAuthorized !== false && (media?.screenState === 'GRANTED' || media?.screen === 'granted');
+      if (screenOk) {
+        setResult('permissions-screen', 'ok', 'Screen recording permission is granted.');
+      } else if (media?.screenRestartRequired || media?.screenState === 'RESTART_REQUIRED') {
+        setResult('permissions-screen', 'warn', 'Screen recording enabled in macOS Settings. Restart Synapse to apply.');
+      } else {
+        setResult('permissions-screen', 'warn', 'Screen recording permission is needed. Click "Check screen" to configure.');
+      }
+
       setResult('permissions-audio', probe?.available ? 'ready' : 'error', probe?.available
         ? `Direct capture available (${describeBackend(probe.recommendedBackend)}). macOS asks for permission during the audio test.`
         : friendlyCaptureError(probe?.reason));
@@ -263,6 +283,19 @@ export function initPanels({
       showStep(stepIndex - 1);
     } else if (action === 'skip') {
       finishOnboarding();
+    } else if (action === 'request-screen') {
+      const button = event.target.closest('button');
+      if (button) button.disabled = true;
+      const cap = await api().validateScreenCaptureCapability?.();
+      if (button) button.disabled = false;
+      if (cap?.authorized) {
+        setResult('permissions-screen', 'ok', 'Screen recording permission is verified and active.');
+      } else if (cap?.restartRequired || cap?.state === 'RESTART_REQUIRED') {
+        setResult('permissions-screen', 'warn', 'Permission enabled in System Settings. Restart Synapse to apply.');
+      } else {
+        await api().openScreenRecordingSettings?.();
+        setResult('permissions-screen', 'warn', 'Opened System Settings. Turn on Synapse under Screen & System Audio Recording, then restart.');
+      }
     } else if (action === 'request-mic') {
       const result = await api().requestMicrophoneAccess?.();
       setResult('permissions-mic', result?.granted ? 'ok' : 'warn', result?.granted
@@ -319,7 +352,20 @@ export function initPanels({
 
   let onboarded = false;
   try { onboarded = localStorage.getItem(ONBOARDED_KEY) === '1'; } catch (_) { /* treat as first run */ }
-  if (!onboarded) openOnboarding();
+
+  // Startup permission verification:
+  // If user already granted all required permissions, proceed to main assistant overlay without prompting.
+  // If required permissions are missing or need authorization, guide through the startup onboarding flow.
+  if (!onboarded) {
+    openOnboarding();
+  } else if (process.platform === 'darwin') {
+    api().getMediaAccessStatus?.().then((media) => {
+      const screenOk = media?.screenAuthorized !== false && (media?.screenState === 'GRANTED' || media?.screen === 'granted');
+      if (!screenOk) {
+        openOnboarding();
+      }
+    }).catch(() => {});
+  }
 
   const contextPanel = initContextPanel({ showFeedback, openSheet, closeSheet });
 

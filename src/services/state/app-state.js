@@ -149,6 +149,12 @@ function loadAppState(app) {
       }
 
       const defaultState = getDefaultAppState();
+      if (process.env.GEMINI_API_KEY) {
+        defaultState.geminiApiKey = process.env.GEMINI_API_KEY.trim();
+      }
+      if (process.env.ASSEMBLY_AI_API_KEY) {
+        defaultState.assemblyAiApiKey = process.env.ASSEMBLY_AI_API_KEY.trim();
+      }
       writeAppStateFile(app, defaultState);
       return defaultState;
     }
@@ -170,6 +176,13 @@ function loadAppState(app) {
           }
         } catch (_) {}
       }
+      if (!sanitizedState.geminiApiKey && process.env.GEMINI_API_KEY) {
+        sanitizedState.geminiApiKey = process.env.GEMINI_API_KEY.trim();
+      }
+    }
+
+    if (!sanitizedState.assemblyAiApiKey && process.env.ASSEMBLY_AI_API_KEY) {
+      sanitizedState.assemblyAiApiKey = process.env.ASSEMBLY_AI_API_KEY.trim();
     }
 
     writeAppStateFile(app, sanitizedState);

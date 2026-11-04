@@ -396,6 +396,27 @@ async function runTests() {
     assert(typeof envDev === 'object' && envDev !== null, 'Dev environment must load without error');
   });
 
+  // 34. Readiness & Onboarding UI: verify screen recording readiness check and onboarding action exist
+  await test('34. Readiness & Onboarding UI: verify screen recording readiness check and onboarding action exist', () => {
+    const htmlSrc = fs.readFileSync(path.join(__dirname, '../src/windows/assistant/renderer.html'), 'utf8');
+    assert(htmlSrc.includes('data-check="screen"'), 'Missing data-check="screen" in status panel checklist');
+    assert(htmlSrc.includes('data-setup="request-screen"'), 'Missing data-setup="request-screen" in onboarding permissions step');
+
+    const panelsSrc = fs.readFileSync(path.join(__dirname, '../src/windows/assistant/renderer/features/panels/panels.js'), 'utf8');
+    assert(panelsSrc.includes("setRow(statusPanel, 'screen'"), 'Missing screen row update in refreshStatus');
+    assert(panelsSrc.includes("action === 'request-screen'"), 'Missing request-screen onboarding action handler');
+  });
+
+  // 35. Credential resilience: get-settings falls back to appEnvironment or process.env when appState key is empty
+  await test('35. Credential resilience: get-settings falls back to appEnvironment or process.env when appState key is empty', () => {
+    const settingsIpcSrc = fs.readFileSync(path.join(__dirname, '../src/main-process/features/settings/ipc.js'), 'utf8');
+    assert(settingsIpcSrc.includes('appEnvironment.geminiApiKey || process.env.GEMINI_API_KEY'), 'Missing Gemini fallback in get-settings');
+    assert(settingsIpcSrc.includes('appEnvironment.assemblyAiApiKey || process.env.ASSEMBLY_AI_API_KEY'), 'Missing AssemblyAI fallback in get-settings');
+
+    const startAppSrc = fs.readFileSync(path.join(__dirname, '../src/main-process/start-application.js'), 'utf8');
+    assert(startAppSrc.includes('appEnvironment?.geminiApiKey || process.env.GEMINI_API_KEY'), 'Missing Gemini fallback in start-application.js');
+  });
+
   console.log(`\nScreen Intelligence & Permission Tests: ${passed} passed, ${failed} failed (${passed + failed} total)`);
   if (failed > 0) {
     process.exit(1);

@@ -238,7 +238,7 @@ async function startApplication() {
   const assemblyAiService = createAssemblyAiService({
     WebSocket,
     desktopCapturer,
-    getAssemblyApiKey: () => appState?.assemblyAiApiKey || '',
+    getAssemblyApiKey: () => appState?.assemblyAiApiKey || appEnvironment?.assemblyAiApiKey || process.env.ASSEMBLY_AI_API_KEY || '',
     getSpeechModel: () => activeAssemblyAiSpeechModel,
     getGeminiService: () => geminiRuntime.getService(),
     sendToRenderer,
@@ -285,7 +285,7 @@ async function startApplication() {
 
     const activeAiProvider = geminiRuntime.setActiveAiProvider(appState.aiProvider);
     const keyState = geminiRuntime.setKeys(
-      normalizeGeminiApiKeys(appState?.geminiApiKey),
+      normalizeGeminiApiKeys(appState?.geminiApiKey || appEnvironment?.geminiApiKey || process.env.GEMINI_API_KEY),
       appState.geminiApiKeyIndex
     );
     const activeGeminiModel = geminiRuntime.setActiveGeminiModel(appState.geminiModel);
