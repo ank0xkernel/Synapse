@@ -393,9 +393,16 @@ async function startApplication() {
    * cross the IPC boundary just to answer "is anything loaded at all".
    */
   // Real permission state for the onboarding and status screens.
-  ipcMain.handle('get-media-access-status', () => ({
-    microphone: process.platform === 'darwin' ? systemPreferences.getMediaAccessStatus('microphone') : 'granted'
-  }));
+  ipcMain.handle('get-media-access-status', () => {
+    const screenPerm = screenshotManager?.checkScreenRecordingPermission?.();
+    return {
+      microphone: process.platform === 'darwin' ? systemPreferences.getMediaAccessStatus('microphone') : 'granted',
+      screen: screenPerm?.status || 'granted',
+      screenAuthorized: screenPerm?.authorized ?? true,
+      screenState: screenPerm?.state || 'GRANTED',
+      screenRestartRequired: screenPerm?.restartRequired || false
+    };
+  });
   ipcMain.handle('request-microphone-access', async () => ({ granted: await ensureMicrophoneAccess() }));
 
   /**

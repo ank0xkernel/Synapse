@@ -1179,7 +1179,7 @@ async function analyzeScreenAction() {
 
         try {
             setAnalyzing(true);
-            showLoadingOverlay('Analyzing screen...');
+            showLoadingOverlay('Capturing screen...');
             stream.start('**[Screen Analysis]**\n\n');
 
             const result = await window.electronAPI.analyzeScreen({
@@ -1188,21 +1188,41 @@ async function analyzeScreenAction() {
             });
 
             if (result?.error) {
-                showFeedback(result.error, 'error');
+                if (result?.restartRequired) {
+                    showFeedback('Screen recording enabled. Restart Synapse to apply changes.', 'warn');
+                } else {
+                    showFeedback(result.error, 'error');
+                }
+                if (activeScreenAiStream) {
+                    const extra = result?.restartRequired
+                        ? '\n\n*(macOS requires Synapse to restart before screen capture permissions take effect.)*'
+                        : '';
+                    activeScreenAiStream.finalize(`**[Screen Analysis]**\n\n⚠️ ${result.error}${extra}`);
+                    activeScreenAiStream.cleanup();
+                    activeScreenAiStream = null;
+                }
             }
         } catch (error) {
             console.error('Screen intelligence error:', error);
             showFeedback(error.message || 'Screen analysis failed', 'error');
+            if (activeScreenAiStream) {
+                activeScreenAiStream.finalize(`**[Screen Analysis]**\n\n⚠️ ${error.message || 'Screen analysis failed'}`);
+                activeScreenAiStream.cleanup();
+                activeScreenAiStream = null;
+            }
+        } finally {
             setAnalyzing(false);
             hideLoadingOverlay();
-            stream.cleanup();
-            activeScreenAiStream = null;
-        } finally {
+            if (activeScreenAiStream) {
+                activeScreenAiStream.cleanup();
+                activeScreenAiStream = null;
+            }
             if (analyzeScreenBtn) {
                 analyzeScreenBtn.classList.remove('analyzing');
-                analyzeScreenBtn.disabled = false;
+                analyzeScreenBtn.disabled = isAnalyzing || isAiActionInFlight('screenIntelligence') || !hasGeminiApiKeysConfigured;
                 analyzeScreenBtn.removeAttribute('aria-busy');
             }
+            updateUI();
         }
     });
 }

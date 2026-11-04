@@ -196,35 +196,85 @@ function registerAssistantIpc({
     return screenshotManager.takeStealthScreenshot();
   });
 
-  ipcMain.handle('check-screen-recording-permission', () => {
-    return screenshotManager.checkScreenRecordingPermission?.() || { status: 'granted', authorized: true };
+  ipcMain.handle('check-screen-recording-permission', async () => {
+    return screenshotManager.checkScreenRecordingPermission?.() || { state: 'GRANTED', status: 'granted', authorized: true };
+  });
+
+  ipcMain.handle('validate-screen-capture-capability', async () => {
+    return typeof screenshotManager.validateScreenCaptureCapability === 'function'
+      ? await screenshotManager.validateScreenCaptureCapability()
+      : (screenshotManager.checkScreenRecordingPermission?.() || { state: 'GRANTED', status: 'granted', authorized: true });
+  });
+
+  ipcMain.handle('open-screen-recording-settings', async () => {
+    const permManager = screenshotManager.getPermissionManager?.();
+    if (permManager && typeof permManager.openSystemSettings === 'function') {
+      return permManager.openSystemSettings();
+    }
+    const { shell } = require('electron');
+    if (shell && typeof shell.openExternal === 'function') {
+      await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
+      return { success: true };
+    }
+    return { success: false, error: 'Cannot open System Settings on this platform' };
+  });
+
+  ipcMain.handle('relaunch-application', () => {
+    const permManager = screenshotManager.getPermissionManager?.();
+    if (permManager && typeof permManager.requestRelaunch === 'function') {
+      return permManager.requestRelaunch();
+    }
+    const { app } = require('electron');
+    if (app && typeof app.relaunch === 'function' && typeof app.exit === 'function') {
+      app.relaunch();
+      app.exit(0);
+      return { success: true };
+    }
+    return { success: false, error: 'Relaunch not supported in current environment' };
   });
 
   ipcMain.handle('analyze-screen', async (_event, payload = {}) => {
-    const perm = screenshotManager.checkScreenRecordingPermission?.() || { status: 'granted', authorized: true };
-    if (perm.status === 'denied' || perm.status === 'restricted') {
-      const errorMsg = 'Screen Recording permission is not granted. Enable Synapse in System Settings → Privacy & Security → Screen & System Audio Recording.';
+    const perm = typeof screenshotManager.validateScreenCaptureCapability === 'function'
+      ? await screenshotManager.validateScreenCaptureCapability()
+      : (screenshotManager.checkScreenRecordingPermission?.() || { status: 'granted', authorized: true });
+
+    if (!perm.authorized) {
+      const isRestart = perm.state === 'RESTART_REQUIRED' || perm.restartRequired;
+      const errorMsg = perm.message || (isRestart
+        ? 'Screen recording permission was enabled in System Settings, but macOS requires Synapse to restart before capture can activate.'
+        : 'Screen Recording permission is not granted. Enable Synapse in System Settings → Privacy & Security → Screen & System Audio Recording.');
+
       sendToRenderer('ai-stream-end', { actionId: 'screenIntelligence' });
-      sendToRenderer('analysis-result', { error: errorMsg, actionId: 'screenIntelligence' });
-      return { error: errorMsg, code: 'PERMISSION_DENIED' };
+      sendToRenderer('screen-capture-status', { stage: 'error', message: errorMsg });
+      sendToRenderer('analysis-result', { error: errorMsg, actionId: 'screenIntelligence', code: perm.state || 'PERMISSION_DENIED' });
+      return {
+        error: errorMsg,
+        code: perm.state || (isRestart ? 'RESTART_REQUIRED' : 'PERMISSION_DENIED'),
+        state: perm.state,
+        restartRequired: Boolean(isRestart)
+      };
     }
 
     const isOllama = geminiRuntime.getActiveAiProvider() === 'ollama';
     if (!isOllama && !geminiRuntime.hasApiKeys()) {
       const errorMsg = 'No Gemini API key configured. Add it in Settings.';
       sendToRenderer('ai-stream-end', { actionId: 'screenIntelligence' });
+      sendToRenderer('screen-capture-status', { stage: 'error', message: errorMsg });
       sendToRenderer('analysis-result', { error: errorMsg, actionId: 'screenIntelligence' });
       return { error: errorMsg };
     }
 
     try {
       sendToRenderer('analysis-start');
+      sendToRenderer('screen-capture-status', { stage: 'capturing', message: 'Capturing screen...' });
       sendToRenderer('ai-stream-start', { actionId: 'screenIntelligence' });
 
       // In-memory screen capture — zero disk persistence
       const capture = await screenshotManager.captureScreenInMemory({
         displayId: payload?.displayId
       });
+
+      sendToRenderer('screen-capture-status', { stage: 'processing', message: 'Processing image...' });
 
       const imageParts = [
         {
@@ -234,6 +284,8 @@ function registerAssistantIpc({
           }
         }
       ];
+
+      sendToRenderer('screen-capture-status', { stage: 'analyzing', message: 'Analyzing with AI...' });
 
       const onChunk = ({ text, index }) => {
         sendToRenderer('ai-stream-chunk', { actionId: 'screenIntelligence', text, index });
@@ -262,22 +314,43 @@ function registerAssistantIpc({
         timestamp: new Date().toISOString()
       });
 
+      sendToRenderer('screen-capture-status', { stage: 'complete', message: 'Analysis complete' });
       sendToRenderer('ai-stream-end', { actionId: 'screenIntelligence' });
       sendToRenderer('analysis-result', { text, actionId: 'screenIntelligence' });
       return { success: true, text };
     } catch (error) {
       console.error('[analyze-screen] Error details:', error);
       sendToRenderer('ai-stream-end', { actionId: 'screenIntelligence' });
-      const isPerm = error?.code === 'SCREEN_RECORDING_DENIED' || error?.code === 'PERMISSION_DENIED';
-      const userMessage = isPerm
-        ? 'Screen Recording permission is not granted. Enable Synapse in System Settings → Privacy & Security → Screen & System Audio Recording.'
-        : mapGeminiErrorMessage(error, 'Screen analysis failed');
 
+      const isRestart = error?.code === 'RESTART_REQUIRED' || error?.restartRequired;
+      const isPerm = error?.code === 'SCREEN_RECORDING_DENIED' || error?.code === 'PERMISSION_DENIED' || isRestart;
+      const isInitFailed = error?.code === 'CAPTURE_INITIALIZATION_FAILED';
+      const isUnavailable = error?.code === 'CAPTURE_UNAVAILABLE';
+
+      let userMessage;
+      if (isRestart) {
+        userMessage = 'Screen recording permission was enabled in System Settings, but macOS requires Synapse to restart before capture can activate.';
+      } else if (isPerm) {
+        userMessage = error.message || 'Screen Recording permission is not granted. Enable Synapse in System Settings → Privacy & Security → Screen & System Audio Recording.';
+      } else if (isInitFailed) {
+        userMessage = 'Screen capture could not initialize despite permission being available.';
+      } else if (isUnavailable) {
+        userMessage = 'Screen capture is unavailable. Ensure your display is connected and active.';
+      } else {
+        userMessage = mapGeminiErrorMessage(error, 'Screen analysis failed');
+      }
+
+      sendToRenderer('screen-capture-status', { stage: 'error', message: userMessage });
       sendToRenderer('analysis-result', {
         error: userMessage,
-        actionId: 'screenIntelligence'
+        actionId: 'screenIntelligence',
+        code: error?.code
       });
-      return { error: userMessage, code: error?.code };
+      return {
+        error: userMessage,
+        code: error?.code || 'SCREEN_ANALYSIS_FAILED',
+        restartRequired: Boolean(isRestart)
+      };
     }
   });
 

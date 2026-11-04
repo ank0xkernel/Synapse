@@ -52,21 +52,34 @@ module.exports = async function afterPack(context) {
       for (const entry of entries) {
         const fullEntryPath = path.join(frameworksDir, entry);
         if (entry.endsWith('.app')) {
-          const helperArgs = ['--force', '--sign', '-'];
+          let helperId = `${bundleId}.helper`;
+          const helperPlist = path.join(fullEntryPath, 'Contents', 'Info.plist');
+          if (fs.existsSync(helperPlist)) {
+            try {
+              const readId = execFileSync('/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleIdentifier', helperPlist], { encoding: 'utf8' }).trim();
+              if (readId) helperId = readId;
+            } catch (_) {}
+          }
+          const helperArgs = [
+            '--force',
+            '--sign', '-',
+            '--identifier', helperId,
+            `-r=designated => identifier "${helperId}"`
+          ];
           if (fs.existsSync(inheritEntitlementsPath)) {
             helperArgs.push('--entitlements', inheritEntitlementsPath);
           }
           helperArgs.push(fullEntryPath);
           execFileSync('codesign', helperArgs, { stdio: 'inherit' });
+          console.log(`[after-pack] Signed helper: ${entry} with identifier "${helperId}"`);
         } else if (entry.endsWith('.framework') || entry.endsWith('.dylib')) {
           execFileSync('codesign', ['--force', '--sign', '-', fullEntryPath], { stdio: 'inherit' });
         }
       }
     }
 
-    // 3. Deep-sign entire app bundle with stable designated requirement and entitlements
+    // 3. Seal the top-level app bundle (without --deep to preserve nested helper identities)
     const signArgs = [
-      '--deep',
       '--force',
       '--sign', '-',
       '--identifier', bundleId,

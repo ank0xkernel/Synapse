@@ -35,7 +35,25 @@ function createInvokeActions(ipcRenderer) {
     checkScreenRecordingPermission: invokeWithFallback(ipcRenderer, {
       channel: 'check-screen-recording-permission',
       label: 'checkScreenRecordingPermission',
-      fallback: () => ({ status: 'unknown', authorized: true })
+      fallback: () => ({ status: 'unknown', authorized: true, state: 'GRANTED' })
+    }),
+
+    validateScreenCaptureCapability: invokeWithFallback(ipcRenderer, {
+      channel: 'validate-screen-capture-capability',
+      label: 'validateScreenCaptureCapability',
+      fallback: () => ({ status: 'unknown', authorized: true, state: 'GRANTED' })
+    }),
+
+    openScreenRecordingSettings: invokeWithFallback(ipcRenderer, {
+      channel: 'open-screen-recording-settings',
+      label: 'openScreenRecordingSettings',
+      fallback: (error) => ({ success: false, error: error.message })
+    }),
+
+    relaunchApplication: invokeWithFallback(ipcRenderer, {
+      channel: 'relaunch-application',
+      label: 'relaunchApplication',
+      fallback: (error) => ({ success: false, error: error.message })
     }),
 
     analyzeStealth: invokeWithFallback(ipcRenderer, {

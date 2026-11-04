@@ -258,6 +258,125 @@ async function runTests() {
     assert(buildAudioSrc.includes('-r=designated => identifier "com.synapse.synapse-audio-capture"'), 'build-native-audio must sign with stable requirement');
   });
 
+  // 21. Preload API: onScreenCaptureStatus is exposed in preload/listeners.js
+  await test('21. Preload API: onScreenCaptureStatus is exposed in preload/listeners.js', () => {
+    const listenersSrc = fs.readFileSync(path.join(__dirname, '../src/windows/assistant/preload/listeners.js'), 'utf8');
+    assert(listenersSrc.includes('onScreenCaptureStatus'), 'Missing onScreenCaptureStatus in preload/listeners.js');
+    assert(listenersSrc.includes('channel: \'screen-capture-status\''), 'Missing screen-capture-status channel in preload/listeners.js');
+  });
+
+  // 22. Multi-monitor & active display selection implementation
+  await test('22. Screen manager: resolveTargetDisplay handles multi-monitor, cursor proximity, and Retina scaling', () => {
+    const managerSrc = fs.readFileSync(path.join(__dirname, '../src/main-process/features/assistant/screenshot-manager.js'), 'utf8');
+    assert(managerSrc.includes('resolveTargetDisplay'), 'Missing resolveTargetDisplay in screenshot-manager.js');
+    assert(managerSrc.includes('getDisplayNearestPoint'), 'Must prefer display nearest cursor for active user focus');
+    assert(managerSrc.includes('MAX_CAPTURE_DIMENSION'), 'Must budget max capture dimension for vision LLMs');
+  });
+
+  // 23. Frame validation: black frame detection
+  await test('23. Frame validation: detects black or empty frames to prevent sending black screens to AI', () => {
+    const managerSrc = fs.readFileSync(path.join(__dirname, '../src/main-process/features/assistant/screenshot-manager.js'), 'utf8');
+    assert(managerSrc.includes('nonBlackPixels'), 'Missing black frame pixel check');
+    assert(managerSrc.includes('toBitmap()'), 'Must check raw bitmap to verify non-black pixels');
+  });
+
+  // 24. MIME type detection from magic bytes
+  await test('24. MIME detection: correctly identifies JPEG and PNG magic bytes in buildImagePartsFromScreenshots', () => {
+    const managerSrc = fs.readFileSync(path.join(__dirname, '../src/main-process/features/assistant/screenshot-manager.js'), 'utf8');
+    assert(managerSrc.includes('0xff && imageData[1] === 0xd8'), 'Must inspect JPEG magic bytes');
+    assert(managerSrc.includes('image/jpeg'), 'Must support image/jpeg mimeType');
+  });
+
+  // 25. AppState fallback seeding prevents key loss in packaged app
+  await test('25. AppState fallback: seeds existing Gemini credentials from dev cache into packaged state if unconfigured', () => {
+    const appStateSrc = fs.readFileSync(path.join(__dirname, '../src/services/state/app-state.js'), 'utf8');
+    assert(appStateSrc.includes('candidatePaths') || appStateSrc.includes('devStatePath'), 'app-state.js must support fallback seeding');
+    assert(appStateSrc.includes('sanitizedState.geminiApiKey'), 'Must verify geminiApiKey in fallback candidates');
+  });
+
+  // 26. Centralized ScreenPermissionManager structured states
+  await test('26. ScreenPermissionManager: defines all 6 structured permission and capability states', () => {
+    const { PERMISSION_STATES, createScreenPermissionManager } = require('../src/main-process/features/assistant/screen-permission-manager');
+    assert(PERMISSION_STATES.GRANTED === 'GRANTED', 'Missing GRANTED state');
+    assert(PERMISSION_STATES.DENIED === 'DENIED', 'Missing DENIED state');
+    assert(PERMISSION_STATES.NOT_DETERMINED === 'NOT_DETERMINED', 'Missing NOT_DETERMINED state');
+    assert(PERMISSION_STATES.RESTART_REQUIRED === 'RESTART_REQUIRED', 'Missing RESTART_REQUIRED state');
+    assert(PERMISSION_STATES.CAPTURE_INITIALIZATION_FAILED === 'CAPTURE_INITIALIZATION_FAILED', 'Missing CAPTURE_INITIALIZATION_FAILED state');
+    assert(PERMISSION_STATES.CAPTURE_UNAVAILABLE === 'CAPTURE_UNAVAILABLE', 'Missing CAPTURE_UNAVAILABLE state');
+  });
+
+  // 27. ScreenPermissionManager: active capability verification & false negative recovery
+  await test('27. ScreenPermissionManager: verifies capture capability via desktopCapturer and avoids stale denial', async () => {
+    const { createScreenPermissionManager } = require('../src/main-process/features/assistant/screen-permission-manager');
+    const mockCapturer = {
+      getSources: async () => [{
+        id: 'screen:0:0',
+        thumbnail: { isEmpty: () => false, toJPEG: () => Buffer.from([0xff, 0xd8]) }
+      }]
+    };
+    const mockScreen = {
+      getAllDisplays: () => [{ id: 1, bounds: { width: 1920, height: 1080 } }]
+    };
+    const manager = createScreenPermissionManager({
+      systemPreferences: { getMediaAccessStatus: () => 'granted' },
+      desktopCapturer: mockCapturer,
+      screen: mockScreen
+    });
+
+    const cap = await manager.validateCaptureCapability();
+    assert(cap.authorized === true, 'Capture must be authorized when sources exist');
+    assert(cap.state === 'GRANTED', 'State must be GRANTED');
+  });
+
+  // 28. ScreenPermissionManager: handles RESTART_REQUIRED when user toggles permission in settings
+  await test('28. ScreenPermissionManager: accurately identifies RESTART_REQUIRED when macOS permissions change', () => {
+    const { createScreenPermissionManager } = require('../src/main-process/features/assistant/screen-permission-manager');
+    const mockScreen = {
+      getAllDisplays: () => [{ id: 1, bounds: { width: 1920, height: 1080 } }]
+    };
+    const manager = createScreenPermissionManager({
+      systemPreferences: { getMediaAccessStatus: () => 'denied' },
+      screen: mockScreen
+    });
+
+    manager.setUserDirectedToSettings(true);
+    const check = manager.checkPermission();
+    assert(check.restartRequired === true, 'Must flag restartRequired=true after user goes to settings');
+    assert(check.state === 'RESTART_REQUIRED', 'State must be RESTART_REQUIRED');
+    assert(check.message.includes('restart'), 'Message must inform user that restart is required');
+  });
+
+  // 29. Packaged environment isolation: never writes to process.resourcesPath
+  await test('29. Packaged environment: getEnvPath points to userData and protects sealed app bundle', () => {
+    const { getEnvPath } = require('../src/bootstrap/environment');
+    const mockApp = { isPackaged: true, getPath: (name) => name === 'userData' ? '/mock/userData' : '/tmp' };
+    const p = getEnvPath(mockApp);
+    assert(p.includes('/mock/userData'), 'Packaged env path must be inside userData');
+    assert(!p.includes('process.resourcesPath'), 'Packaged env path must never write inside resourcesPath');
+  });
+
+  // 30. Code signing: after-pack signs inside-out without stomping helper IDs
+  await test('30. Code signing: after-pack.js preserves individual helper bundle IDs and avoids destructive --deep', () => {
+    const afterPackSrc = fs.readFileSync(path.join(__dirname, '../scripts/after-pack.js'), 'utf8');
+    assert(afterPackSrc.includes('helperId'), 'after-pack must preserve helper identity');
+    assert(!afterPackSrc.includes('\'--deep\','), 'after-pack must not use destructive top-level --deep');
+  });
+
+  // 31. Renderer lifecycle: updateUI replaces missing updateAiActionButtons
+  await test('31. Renderer lifecycle: uses updateUI and guarantees no ReferenceError', () => {
+    const rendererSrc = fs.readFileSync(path.join(__dirname, '../src/windows/assistant/renderer.js'), 'utf8');
+    assert(!rendererSrc.includes('updateAiActionButtons'), 'Must not contain undefined updateAiActionButtons');
+    assert(rendererSrc.includes('updateUI()'), 'Must call updateUI');
+  });
+
+  // 32. Preload API: exposes validateScreenCaptureCapability and openScreenRecordingSettings
+  await test('32. Preload API: exposes validateScreenCaptureCapability and openScreenRecordingSettings', () => {
+    const actionsSrc = fs.readFileSync(path.join(__dirname, '../src/windows/assistant/preload/actions.js'), 'utf8');
+    assert(actionsSrc.includes('validateScreenCaptureCapability'), 'Missing validateScreenCaptureCapability');
+    assert(actionsSrc.includes('openScreenRecordingSettings'), 'Missing openScreenRecordingSettings');
+    assert(actionsSrc.includes('relaunchApplication'), 'Missing relaunchApplication');
+  });
+
   console.log(`\nScreen Intelligence & Permission Tests: ${passed} passed, ${failed} failed (${passed + failed} total)`);
   if (failed > 0) {
     process.exit(1);

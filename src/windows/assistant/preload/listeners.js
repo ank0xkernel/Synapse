@@ -102,6 +102,11 @@ function createEventActions(ipcRenderer) {
     label: 'onAiStreamEnd'
   });
 
+  const onScreenCaptureStatus = createEventListener(ipcRenderer, {
+    channel: 'screen-capture-status',
+    label: 'onScreenCaptureStatus'
+  });
+
   const rawOnSttDebug = createEventListener(ipcRenderer, {
     channel: 'stt-debug',
     label: 'onSttDebug'
@@ -166,6 +171,7 @@ function createEventActions(ipcRenderer) {
     onAiStreamStart,
     onAiStreamChunk,
     onAiStreamEnd,
+    onScreenCaptureStatus,
     onToggleVoiceRecognition,
     onTriggerAskAi,
     onTriggerCommand,
