@@ -356,9 +356,10 @@ export function initPanels({
   // Startup permission verification:
   // If user already granted all required permissions, proceed to main assistant overlay without prompting.
   // If required permissions are missing or need authorization, guide through the startup onboarding flow.
+  const isDarwin = window.electronAPI?.platform === 'darwin' || (typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.userAgent || navigator.platform));
   if (!onboarded) {
     openOnboarding();
-  } else if (process.platform === 'darwin') {
+  } else if (isDarwin) {
     api().getMediaAccessStatus?.().then((media) => {
       const screenOk = media?.screenAuthorized !== false && (media?.screenState === 'GRANTED' || media?.screen === 'granted');
       if (!screenOk) {

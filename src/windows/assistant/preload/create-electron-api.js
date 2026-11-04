@@ -1,4 +1,4 @@
-﻿const { createInvokeActions } = require('./actions');
+const { createInvokeActions } = require('./actions');
 const { createEventActions } = require('./listeners');
 
 function createElectronApi(ipcRenderer) {
@@ -11,6 +11,7 @@ function createElectronApi(ipcRenderer) {
     log: (message) => {
       console.log('PreloadAPI log:', message);
     },
+    platform: process.platform,
     isAvailable: () => true
   };
 }
