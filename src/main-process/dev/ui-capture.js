@@ -364,6 +364,128 @@ const SCENES = {
     console.log(`[ui-capture] history-restore: ${texts.length} message(s) restored, title "${title}", status: ${await run(() => document.getElementById('history-sync-status').textContent)}`);
   },
 
+  /**
+   * Layout regression sweep: every size from the 600 x 380 minimum to the
+   * full work area, idle and busy title bar, an empty and a long feed, each
+   * sheet, and compact mode. Fails on any overlap, blocked, clipped, outside,
+   * undersized control or squeezed workspace (see layout-audit.js). Writes
+   * layout-report.json and a screenshot per size.
+   */
+  async layout({ win, send, outDir }) {
+    const { auditLayout, applyState } = require('./layout-audit');
+    const { screen } = require('electron');
+    const run = (fn, ...a) => win.webContents.executeJavaScript(js(fn, ...a));
+    const assert = (ok, message) => { if (!ok) throw new Error(message); };
+    const area = screen.getPrimaryDisplay().workAreaSize;
+    const sizes = [[600, 380], [640, 480], [700, 520], [760, 560], [820, 600], [900, 560], [1024, 700], [1280, 800], [area.width, area.height]];
+    await disableAutoAnswer(win);
+
+    // A long feed: a long question, a long answer with a wide code block, typed notes.
+    send('vosk-final', { source: 'system', text: 'Walk me through how you would design a globally distributed rate limiter, including how you handle clock skew between regions and what happens when the coordination store is partitioned from half of the gateways?' });
+    await sleep(2500);
+    await run(() => window.__synapseBeginDemoStream?.());
+    const longCode = 'const key = `${tenantId}:${routeId}:${Math.floor(Date.now() / windowMs)}`; // a deliberately long single line that must scroll inside the code block instead of widening the feed';
+    send('ai-stream-chunk', { actionId: 'askAi', text: `${ANSWER_CHUNKS.join('')}\n\`\`\`js\n${longCode}\n\`\`\`\n\n${'Each region keeps its own buckets and reconciles asynchronously. '.repeat(12)}`, index: 1 });
+    await sleep(300);
+    await run(() => window.__synapseEndDemoStream?.(true));
+    await run(() => {
+      const input = document.getElementById('chat-manual-input');
+      input.value = 'A long note typed into the composer that wraps across several lines to check the composer grows without pushing the action buttons out of the window or on top of each other. '.repeat(2);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    const report = [];
+    const check = async (label) => {
+      await sleep(250);
+      const { checked, problems, regions } = await run(auditLayout);
+      report.push({ label, checked, problems, regions });
+      return problems.length;
+    };
+    const fileFor = (w, h) => path.join(outDir, `layout-${w}x${h}.png`);
+
+    for (const [w, h] of sizes) {
+      win.setSize(w, h);
+      await sleep(400);
+      for (const state of ['idle', 'busy']) {
+        await run(applyState, state);
+        await check(`${w}x${h} ${state} feed`);
+      }
+      fs.writeFileSync(fileFor(w, h), (await win.webContents.capturePage()).toPNG());
+      for (const sheet of ['history-btn', 'context-btn', 'status-btn', 'settings-btn']) {
+        await run((id) => document.getElementById(id).click(), sheet);
+        await sleep(350);
+        await check(`${w}x${h} busy ${sheet.replace('-btn', '')} sheet`);
+        await run(() => { document.querySelectorAll('.sheet').forEach((s) => s.classList.add('hidden')); document.getElementById('close-settings')?.click(); });
+      }
+      await run(() => document.getElementById('compact-mode-btn').click());
+      await sleep(400);
+      await check(`${w} compact busy`);
+      await run(() => document.getElementById('compact-mode-btn').click());
+      await sleep(400);
+    }
+    // ⌘+ / ⌘- zoom shrinks the CSS viewport. Busy title bar at 100 %, 110 % and 120 % (levels 0, 0.5, 1).
+    const savedZoom = win.webContents.getZoomLevel();
+    for (const level of [0, 0.5, 1]) {
+      win.webContents.setZoomLevel(level);
+      for (const [w, h] of [[600, 380], [900, 560]]) {
+        win.setSize(w, h);
+        await sleep(400);
+        await run(applyState, 'busy');
+        await check(`${w}x${h} busy zoom ${Math.round(1.2 ** level * 100)}%`);
+        if (w === 600) fs.writeFileSync(path.join(outDir, `layout-600x380-zoom${Math.round(1.2 ** level * 100)}.png`), (await win.webContents.capturePage()).toPNG());
+      }
+    }
+    win.webContents.setZoomLevel(savedZoom);
+
+    await run(applyState, 'idle');
+    await run(() => { const b = document.getElementById('clear-btn'); if (b && !b.disabled) b.click(); });
+    await sleep(300);
+    win.setSize(600, 380);
+    await check('600x380 idle empty');
+
+    // Keyboard: Tab from the first title-bar control must visit every visible one, each with a focus ring.
+    win.setSize(900, 560);
+    await sleep(400);
+    await run(applyState, 'busy');
+    const expected = await run(() => [...document.querySelectorAll('.topbar button, .topbar select')]
+      // Disabled controls are skipped by Tab on purpose (Analyze Screen while it is analyzing).
+      .filter((el) => !el.disabled && !el.closest('.hidden, [hidden], .command-targets') && el.getBoundingClientRect().width && getComputedStyle(el).display !== 'none')
+      .map((el) => el.id));
+    // Reach the first control by keyboard, so :focus-visible applies as it does for a real user.
+    win.focus();
+    await run((id) => document.getElementById(id).focus(), expected[0]);
+    for (const modifiers of [['shift'], []]) {
+      win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab', modifiers });
+      win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Tab', modifiers });
+      await sleep(80);
+    }
+    assert(await run(() => document.activeElement.id) === expected[0], 'keyboard start did not land on the first title-bar control');
+    const visited = [];
+    const unringed = [];
+    for (let i = 0; i < expected.length; i += 1) {
+      const info = await run(() => { const el = document.activeElement; const s = getComputedStyle(el); return { id: el.id, ring: parseFloat(s.outlineWidth) > 0 && s.outlineStyle !== 'none' }; });
+      visited.push(info.id);
+      if (!info.ring && expected.includes(info.id)) unringed.push(info.id);
+      win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab' });
+      win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Tab' });
+      await sleep(60);
+    }
+    const missed = expected.filter((id) => !visited.includes(id));
+    report.push({ label: 'keyboard title bar', checked: expected.length, problems: [
+      ...missed.map((id) => ({ kind: 'unreachable', el: `#${id}` })),
+      ...unringed.map((id) => ({ kind: 'no-focus-ring', el: `#${id}` }))
+    ] });
+    await run(applyState, 'idle');
+
+    const failures = report.filter((r) => r.problems.length);
+    fs.writeFileSync(path.join(outDir, 'layout-report.json'), JSON.stringify({ sizes, failures, regions: report.map((r) => ({ label: r.label, ...r.regions })), passed: report.length - failures.length, total: report.length }, null, 2));
+    console.log(`[ui-capture] layout: ${report.length - failures.length}/${report.length} checks clean, ${report.reduce((n, r) => n + r.checked, 0)} control placements measured`);
+    if (failures.length) {
+      for (const f of failures.slice(0, 12)) console.log(`[ui-capture] layout FAIL ${f.label}: ${f.problems.slice(0, 4).map((p) => `${p.kind} ${p.el}${p.with ? ` x ${p.with}` : ''}${p.by && !p.with ? ` by ${p.by}` : ''}`).join('; ')}`);
+      throw new Error(`${failures.length} layout check(s) failed; see layout-report.json`);
+    }
+  },
+
   async error({ send }) {
     send('vosk-error', { source: 'system', error: 'AssemblyAI rejected the API key: it has been disabled or deleted.', unexpected: false });
   }
@@ -407,7 +529,7 @@ async function runUiCapture({ app, getMainWindow, baseSendToRenderer, outDir, sc
     console.log(`[ui-capture] scene ${name}: ready`);
 
     try {
-      await scene({ win, send: baseSendToRenderer });
+      await scene({ win, send: baseSendToRenderer, outDir });
     } catch (error) {
       console.error(`[ui-capture] scene ${name} failed:`, error.message);
       throw error;
