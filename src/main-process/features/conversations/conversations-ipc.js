@@ -51,7 +51,7 @@ function registerConversationsIpc({ ipcMain, app, webSync, sendToWindow, log = (
       // linked() decrypts the stored device token with safeStorage (Keychain). "unlinked" after a rebuild means the Keychain key no longer opens it.
       const linked = webSync.remote.linked();
       const locked = linked ? null : webSync.remote.locked?.();
-      console.log(`[conversations] web link: ${linked ? 'linked' : locked ? 'LOCKED (saved link exists, Keychain refused this build)' : 'unlinked'}; ${store.list().length} saved conversation(s)`);
+      console.log(`[conversations] web link: ${linked ? 'linked' : locked ? `LOCKED (saved link exists, Keychain refused this build: ${webSync.remote.lockedReason?.()})` : 'unlinked'}; secure storage ${webSync.remote.secureStorage?.() ? 'available' : 'UNAVAILABLE'}; ${store.list().length} saved conversation(s)`);
       return sync.start();
     },
     syncNow: () => sync.syncNow(),

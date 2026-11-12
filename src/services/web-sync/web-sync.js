@@ -277,6 +277,9 @@ function createWebSync({
     linked: () => Boolean(credential()),
     /** Non-null when a saved link exists but cannot be opened (see LOCKED_MESSAGE). Call after linked(). */
     locked: () => (credentialStore.locked?.() ? LOCKED_MESSAGE : null),
+    /** The underlying safeStorage error, for the startup log only (never contains the token). */
+    lockedReason: () => credentialStore.locked?.() || null,
+    secureStorage: () => credentialStore.available(),
     accountId: () => credential()?.account?.id || null,
     fetch: (path, options) => request(path, options)
   };
