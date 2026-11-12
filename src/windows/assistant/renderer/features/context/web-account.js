@@ -17,6 +17,7 @@ const LABELS = {
   'no-context': ['Nothing to sync yet', 'warn'],
   offline: ['Offline', 'warn'],
   'auth-expired': ['Sign-in expired', 'error'],
+  locked: ['Keychain access needed', 'error'],
   error: ['Sync failed', 'error']
 };
 
@@ -75,9 +76,10 @@ export function initWebAccount({ onApplied = () => {}, showFeedback = () => {} }
 
     const busy = state.status === 'linking' || state.status === 'checking';
     const linkButton = $('ctx-web-link');
-    $('ctx-web-url-field').hidden = linked && state.status !== 'auth-expired';
-    linkButton.hidden = linked && state.status !== 'auth-expired';
-    linkButton.textContent = state.status === 'linking' ? 'Cancel' : (state.status === 'auth-expired' ? 'Link again' : 'Link with browser');
+    const relink = state.status === 'auth-expired' || state.status === 'locked';
+    $('ctx-web-url-field').hidden = linked && !relink;
+    linkButton.hidden = linked && !relink;
+    linkButton.textContent = state.status === 'linking' ? 'Cancel' : (relink ? 'Link again' : 'Link with browser');
     linkButton.disabled = !state.secureStorage || state.status === 'checking';
     $('ctx-web-apply').hidden = !pending;
     $('ctx-web-check').hidden = !linked || state.status === 'auth-expired';

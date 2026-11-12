@@ -52,6 +52,7 @@ const STATUS_TEXT = {
   synced: 'Synced with the website.',
   offline: null,
   'auth-expired': null,
+  locked: null,
   error: null
 };
 

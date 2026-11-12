@@ -98,7 +98,10 @@ function createConversationSync({
   }
 
   async function run() {
-    if (!remote.linked()) return emit({ state: 'unlinked', error: null });
+    if (!remote.linked()) {
+      const locked = remote.locked?.();
+      return emit(locked ? { state: 'locked', error: locked } : { state: 'unlinked', error: null });
+    }
     store.bindAccount(remote.accountId());
     emit({ state: 'syncing', error: null });
     try {

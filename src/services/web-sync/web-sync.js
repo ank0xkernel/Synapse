@@ -27,8 +27,12 @@ const STATUS = Object.freeze({
   NO_CONTEXT: 'no-context',
   OFFLINE: 'offline',
   AUTH_EXPIRED: 'auth-expired',
+  LOCKED: 'locked',
   ERROR: 'error'
 });
+
+const LOCKED_MESSAGE = 'This Mac has a saved website sign-in, but macOS Keychain did not let this build of Synapse open it. '
+  + 'This happens after Synapse is rebuilt. Quit and reopen Synapse and choose "Always Allow" when macOS asks about "synapse Safe Storage", or link again.';
 
 /** Only https, or http to this machine for local development. */
 function normalizeBaseUrl(value) {
@@ -71,7 +75,15 @@ function createWebSync({
   function snapshot() {
     const cred = credential();
     const cached = cache();
-    if (!cred && status !== STATUS.LINKING) status = STATUS.UNLINKED;
+    if (!cred && status !== STATUS.LINKING) {
+      // A saved link this build cannot open is not "unlinked": say so, and keep the file.
+      if (credentialStore.locked?.()) {
+        status = STATUS.LOCKED;
+        error = LOCKED_MESSAGE;
+      } else {
+        status = STATUS.UNLINKED;
+      }
+    }
     // Linked, but nothing checked yet this run: never claim "up to date".
     if (cred && status === STATUS.UNLINKED) status = STATUS.NOT_CHECKED;
     return {
@@ -183,7 +195,7 @@ function createWebSync({
 
   /** One conditional request; stores a newer bundle as pending, never applies it. */
   async function check() {
-    if (!credential()) return set(STATUS.UNLINKED);
+    if (!credential()) return credentialStore.locked?.() ? set(STATUS.LOCKED, LOCKED_MESSAGE) : set(STATUS.UNLINKED);
     const cached = cache();
     set(STATUS.CHECKING);
     let response;
@@ -263,6 +275,8 @@ function createWebSync({
   /** For other main-process services that call the website as this device (conversation sync). The token never leaves this module. */
   const remote = {
     linked: () => Boolean(credential()),
+    /** Non-null when a saved link exists but cannot be opened (see LOCKED_MESSAGE). Call after linked(). */
+    locked: () => (credentialStore.locked?.() ? LOCKED_MESSAGE : null),
     accountId: () => credential()?.account?.id || null,
     fetch: (path, options) => request(path, options)
   };

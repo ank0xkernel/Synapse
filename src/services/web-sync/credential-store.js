@@ -33,21 +33,38 @@ function createCredentialStore({ safeStorage, filePath }) {
     fs.writeFileSync(filePath, encrypted, { mode: 0o600 });
   }
 
-  /** @returns {object|null} null when nothing is stored or it cannot be decrypted */
+  let lockedReason = null;
+
+  /**
+   * @returns {object|null} null when nothing is stored or it cannot be decrypted.
+   * A stored file that cannot be decrypted sets locked() instead of looking unlinked:
+   * on macOS that is the Keychain refusing this build the key (ad-hoc builds get a new
+   * code hash on every rebuild). The file is kept, so approving Keychain access restores it.
+   */
   function load() {
-    if (!fs.existsSync(filePath) || !available()) return null;
+    if (!fs.existsSync(filePath)) { lockedReason = null; return null; }
+    if (!available()) { lockedReason = 'Secure storage (macOS Keychain) is not available.'; return null; }
     try {
-      return JSON.parse(safeStorage.decryptString(fs.readFileSync(filePath)));
-    } catch (_) {
+      const value = JSON.parse(safeStorage.decryptString(fs.readFileSync(filePath)));
+      lockedReason = null;
+      return value;
+    } catch (error) {
+      lockedReason = error.message || 'decrypt failed';
       return null;
     }
   }
 
-  function clear() {
-    fs.rmSync(filePath, { force: true });
+  /** Why a stored credential could not be opened, or null. Call after load(). */
+  function locked() {
+    return lockedReason;
   }
 
-  return { available, save, load, clear };
+  function clear() {
+    fs.rmSync(filePath, { force: true });
+    lockedReason = null;
+  }
+
+  return { available, save, load, clear, locked };
 }
 
 module.exports = { createCredentialStore };
