@@ -15,7 +15,10 @@ concurrency:
 jobs:
   desktop:
     name: Desktop tests and native helper build
-    runs-on: macos-15
+    # Mode C OCR tests run the real Apple Vision model, whose output differs by
+    # macOS version (macOS 15 reads "!pip" as "Ipip" and drops edge lines).
+    # They are validated on macOS 26, so CI runs there.
+    runs-on: macos-26
     timeout-minutes: 20
     env:
       # Tests drive the services directly; the Electron binary is not needed.
