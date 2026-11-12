@@ -197,6 +197,23 @@ function createInvokeActions(ipcRenderer) {
       fallback: (error) => ({ success: false, error: error.message })
     }),
 
+    conversationsAppend: invokeWithFallback(ipcRenderer, { channel: 'conversations:append', label: 'conversationsAppend', fallback: () => null }),
+    conversationsNew: invokeWithFallback(ipcRenderer, { channel: 'conversations:new', label: 'conversationsNew', fallback: () => null }),
+    conversationsList: invokeWithFallback(ipcRenderer, { channel: 'conversations:list', label: 'conversationsList', fallback: () => [] }),
+    conversationsCurrent: invokeWithFallback(ipcRenderer, { channel: 'conversations:current', label: 'conversationsCurrent', fallback: () => null }),
+    conversationsOpen: invokeWithFallback(ipcRenderer, { channel: 'conversations:open', label: 'conversationsOpen', fallback: () => null }),
+    conversationsRename: invokeWithFallback(ipcRenderer, {
+      channel: 'conversations:rename',
+      label: 'conversationsRename',
+      transformArgs: (args) => [{ id: String(args[0] || ''), title: String(args[1] || '') }],
+      fallback: () => null
+    }),
+    conversationsDelete: invokeWithFallback(ipcRenderer, { channel: 'conversations:delete', label: 'conversationsDelete', fallback: () => false }),
+    conversationsSync: invokeWithFallback(ipcRenderer, { channel: 'conversations:sync', label: 'conversationsSync', fallback: () => null }),
+    conversationsStatus: invokeWithFallback(ipcRenderer, { channel: 'conversations:status', label: 'conversationsStatus', fallback: () => null }),
+    conversationsSettings: invokeWithFallback(ipcRenderer, { channel: 'conversations:settings', label: 'conversationsSettings', fallback: () => null }),
+    conversationsSetResponseMode: invokeWithFallback(ipcRenderer, { channel: 'conversations:set-response-mode', label: 'conversationsSetResponseMode', fallback: () => null }),
+
     getContext: invokeWithFallback(ipcRenderer, {
       channel: 'context:get',
       label: 'getContext',

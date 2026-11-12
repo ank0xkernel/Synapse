@@ -12,6 +12,7 @@ import { createSettingsPanelManager } from './renderer/features/settings/setting
 import { createTranscriptionManager } from './renderer/features/transcription/transcription-manager.js';
 import { deriveSessionState, applySessionState } from './renderer/features/session/session-state.js';
 import { initPanels } from './renderer/features/panels/panels.js';
+import { initConversationHistory, persistMessage, toChatType } from './renderer/features/conversations/conversation-history.js';
 
 const sessionStateEl = document.getElementById('session-state');
 const sessionStateLabelEl = document.getElementById('session-state-label');
@@ -506,11 +507,7 @@ async function init() {
     }
     if (window.electronAPI?.onClearFromMobile) {
         window.electronAPI.onClearFromMobile(() => {
-            screenshotsCount = 0;
-            messageStore.clear();
-            chatMessagesArray = messageStore.getMessages();
-            chatMessagesElement.innerHTML = '';
-            updateUI();
+            clearChatView();
             showFeedback('Cleared from mobile', 'info');
         });
     }
@@ -695,6 +692,8 @@ let rerunScreenAnalysisAfterCancel = false;
 function createStreamHandler(actionId) {
     let accumulatedText = '';
     let messageRecord = null;
+    let interrupted = false;
+    let persisted = false;
     let removeChunkListener = null;
     let loadingHidden = false;
 
@@ -770,6 +769,7 @@ function createStreamHandler(actionId) {
             console.log(`[AI] interrupted id=${questionId || 'manual'} +${Date.now() - requestStartAt}ms — ${customNote ? 'screen problem changed' : 'question updated'}`);
         }
         if (!messageRecord) return;
+        interrupted = true;
         const note = customNote
             ? `${accumulatedText.trim() ? `${accumulatedText}\n\n` : ''}${customNote}`
             : accumulatedText.trim()
@@ -785,6 +785,11 @@ function createStreamHandler(actionId) {
         }
         if (messageRecord) {
             chatUiManager.setMessageStreaming(messageRecord.id, false, { regenerable: actionId === 'askAi' });
+            // Saved once, when the stream ends: finished, interrupted or failed with partial text.
+            if (!persisted) {
+                persisted = true;
+                persistMessage(messageRecord, interrupted ? { interrupted: true } : {});
+            }
         }
         if (actionId === 'askAi') {
             sessionAnswerState.pending = false;
@@ -1040,6 +1045,8 @@ if (responseModeSelect) {
         try {
             localStorage.setItem(RESPONSE_MODE_STORAGE_KEY, getResponseMode());
         } catch (_) { /* not persisted this session */ }
+        // Shared with the website through the account settings.
+        window.electronAPI?.conversationsSetResponseMode?.(getResponseMode());
     });
 }
 
@@ -1341,11 +1348,7 @@ async function clearStealthData() {
         if (window.electronAPI.clearConversationHistory) {
             await window.electronAPI.clearConversationHistory();
         }
-        screenshotsCount = 0;
-        messageStore.clear();
-        chatMessagesArray = messageStore.getMessages();
-        chatMessagesElement.innerHTML = '';
-        updateUI();
+        clearChatView();
         showFeedback('Cleared', 'success');
     } catch (error) {
         console.error('Clear error:', error);
@@ -1864,6 +1867,27 @@ function addChatMessage(type, content, options = {}) {
     return chatUiManager.addChatMessage(type, content, options);
 }
 
+/**
+ * Empties the chat. The saved conversation stays in History; unless
+ * `keepConversation` (opening another one), the next message starts a new one.
+ */
+function clearChatView({ keepConversation = false } = {}) {
+    screenshotsCount = 0;
+    messageStore.clear();
+    chatMessagesArray = messageStore.getMessages();
+    chatMessagesElement.innerHTML = '';
+    if (!keepConversation) window.electronAPI?.conversationsNew?.();
+    updateUI();
+}
+
+/** Shows saved messages (restored after a restart, reopened, or synced from the website) without saving them again. */
+function renderSavedMessages(messages) {
+    for (const m of messages || []) {
+        if (messageStore.findById(m.id)) continue;
+        addChatMessage(toChatType(m), m.content, { id: m.id, persist: false, timestamp: new Date(m.createdAt) });
+    }
+}
+
 function autoResizeManualInput() {
     chatUiManager.autoResizeManualInput();
 }
@@ -2064,3 +2088,14 @@ if (document.readyState === 'loading') {
 
 
 
+
+initConversationHistory({
+    renderMessages: renderSavedMessages,
+    clearChatView,
+    setResponseMode: (mode) => {
+        if (!responseModeSelect || !RESPONSE_MODE_IDS.includes(mode) || responseModeSelect.value === mode) return;
+        responseModeSelect.value = mode;
+        try { localStorage.setItem(RESPONSE_MODE_STORAGE_KEY, mode); } catch (_) { /* not persisted this session */ }
+    },
+    showFeedback: (message, type) => showFeedback(message, type)
+});

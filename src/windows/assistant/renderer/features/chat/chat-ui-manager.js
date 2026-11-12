@@ -1,3 +1,4 @@
+import { persistMessage } from '../conversations/conversation-history.js';
 import { renderMarkdown } from './markdown.js';
 
 const ICONS = {
@@ -151,7 +152,7 @@ export function createChatUiManager({
 
         const shouldAutoScroll = isChatNearBottom();
 
-        const timestampDate = new Date();
+        const timestampDate = options.timestamp instanceof Date ? options.timestamp : new Date();
         const record = messageStore.add(type, content, {
             id: options.id,
             timestamp: timestampDate,
@@ -212,6 +213,9 @@ export function createChatUiManager({
         } else {
             updateJumpToLatestVisibility();
         }
+
+        // Answers are saved when their stream ends (renderer.js), restored messages are already saved.
+        if (options.persist !== false && type !== 'ai-response') persistMessage(record);
 
         onMessagesChanged?.(messageStore.getMessages());
         updateUi?.();

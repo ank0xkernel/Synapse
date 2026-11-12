@@ -39,6 +39,7 @@ const { createScreenIntelController } = require('./features/screen-intel/control
 const { registerAssistantIpc } = require('./features/assistant/ipc');
 const { registerContextIpc } = require('./features/context/context-ipc');
 const { registerWebSyncIpc } = require('./features/context/web-sync-ipc');
+const { registerConversationsIpc } = require('./features/conversations/conversations-ipc');
 const { registerSecondBrainIpc } = require('./features/second-brain/ipc');
 const { createAssemblyAiService } = require('../services/assembly-ai/service');
 const { createGeminiSpeechService } = require('../services/stt/gemini-speech-service');
@@ -167,6 +168,7 @@ async function startApplication() {
   let screenshotManager = null;
   let screenIntel = null;
   let webSyncControl = null;
+  let conversationsControl = null;
   let windowController = null;
 
   const baseSendToRenderer = createSafeSender(() => {
@@ -346,6 +348,7 @@ async function startApplication() {
   function cleanupTransientResources() {
     nativeSystemAudio.stop().catch(() => {});
     webSyncControl?.cleanup();
+    conversationsControl?.cleanup();
     assemblyAiService.dispose();
     screenIntel?.dispose();
     screenshotManager.cleanupTransientResources();
@@ -488,6 +491,17 @@ async function startApplication() {
     safeStorage,
     sendToWindow: baseSendToRenderer
   });
+
+  // Conversation history: saved locally, synced to the website when linked.
+  conversationsControl = registerConversationsIpc({
+    ipcMain,
+    app,
+    webSync: webSyncControl.webSync,
+    sendToWindow: baseSendToRenderer,
+    log: (level, message) => console[level === 'error' ? 'error' : 'warn'](`[conversations] ${message}`)
+  });
+  conversationsControl.start();
+  app.on('browser-window-focus', () => conversationsControl?.syncNow());
 
   const assistantIpc = registerAssistantIpc({
     ipcMain,

@@ -260,7 +260,14 @@ function createWebSync({
     return Buffer.from(await response.arrayBuffer());
   }
 
-  return { snapshot, link, cancelLink, check, applyPending, unlink, fetchResumePdf, STATUS };
+  /** For other main-process services that call the website as this device (conversation sync). The token never leaves this module. */
+  const remote = {
+    linked: () => Boolean(credential()),
+    accountId: () => credential()?.account?.id || null,
+    fetch: (path, options) => request(path, options)
+  };
+
+  return { snapshot, link, cancelLink, check, applyPending, unlink, fetchResumePdf, remote, STATUS };
 }
 
 module.exports = { createWebSync, normalizeBaseUrl, STATUS };
