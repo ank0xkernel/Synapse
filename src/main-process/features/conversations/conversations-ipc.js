@@ -14,12 +14,17 @@ const { createConversationSync } = require('../../../services/conversations/conv
 const ID = /^[0-9a-f-]{36}$/i;
 
 function registerConversationsIpc({ ipcMain, app, webSync, sendToWindow, log = () => {} }) {
+  let lastState = null;
   const store = createConversationStore({ filePath: path.join(app.getPath('userData'), 'conversations', 'history.json'), log });
   const sync = createConversationSync({
     store,
     remote: webSync.remote,
     log,
-    onStatus: (status) => sendToWindow('conversations:status', status),
+    onStatus: (status) => {
+      if (status.state !== lastState) console.log(`[conversations] sync ${status.state} pending=${status.pending}${status.error ? ` (${status.error})` : ''}`);
+      lastState = status.state;
+      sendToWindow('conversations:status', status);
+    },
     onRemoteChange: (change) => sendToWindow('conversations:remote', change),
     onSettings: (settings) => sendToWindow('conversations:settings', settings)
   });
@@ -42,7 +47,11 @@ function registerConversationsIpc({ ipcMain, app, webSync, sendToWindow, log = (
   });
 
   return {
-    start: () => sync.start(),
+    start: () => {
+      // linked() decrypts the stored device token with safeStorage (Keychain). "unlinked" after a rebuild means the Keychain key no longer opens it.
+      console.log(`[conversations] web link: ${webSync.remote.linked() ? 'linked' : 'unlinked'}; ${store.list().length} saved conversation(s)`);
+      return sync.start();
+    },
     syncNow: () => sync.syncNow(),
     cleanup: () => {
       sync.stop();
