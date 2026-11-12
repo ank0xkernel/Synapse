@@ -5,7 +5,8 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 
 const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'db', 'migrations');
-const url = process.env.DATABASE_URL;
+// DDL and the advisory lock need a direct connection; Neon's pooled endpoint (PgBouncer) breaks session locks.
+const url = process.env.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL;
 if (!url) {
   console.error('DATABASE_URL is not set');
   process.exit(1);
