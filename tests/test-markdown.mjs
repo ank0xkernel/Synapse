@@ -62,6 +62,23 @@ test('Snake_case identifiers are not italicised', () => {
   assert(!html.includes('<em>'), html);
 });
 
+test('Inline LaTeX the model emits renders as readable text (seen live: $O(N \\cdot D + N \\log N)$)', () => {
+  const html = renderMarkdown('Time Complexity: $O(N \\cdot D + N \\log N)$ where $N$ is the count; Space: $O(N \\cdot D)$.');
+  assert(html.includes('O(N · D + N log N)') && html.includes('O(N · D)'), html);
+  assert(!html.includes('\\cdot') && !html.includes('$O'), html);
+});
+
+test('Math powers, fractions and comparisons become Unicode', () => {
+  const html = renderMarkdown('Runs in $O(n^2)$ when $\\frac{n}{2} \\le k$ and $x_{i} \\neq 0$.');
+  assert(html.includes('O(n²)') && html.includes('(n)/(2) ≤ k') && html.includes('x_i ≠ 0'), html);
+});
+
+test('Dollar amounts and code spans are never treated as math', () => {
+  const html = renderMarkdown('It costs $5 and $10 per month. Use `echo $HOME_DIR^2` here.');
+  assert(html.includes('$5 and $10'), html);
+  assert(html.includes('<code>echo $HOME_DIR^2</code>'), html);
+});
+
 test('escapeHtml covers quotes and ampersands', () => {
   assert(escapeHtml(`a&b "c" 'd'`) === 'a&amp;b &quot;c&quot; &#39;d&#39;');
 });

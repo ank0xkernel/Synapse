@@ -1,0 +1,76 @@
+{
+  "note": "Ground truth read by eye from the two screenshots. Panel rect is in 1512x982 analysis pixels (fixtures are 2x). Each cell lists anchor lines that must land in a block of that kind; anchors of different cells must never share a block. The panel runs to the bottom edge of the screenshot (y 290..981) so the last visible row is inside it.",
+  "panel": {
+    "x": 420,
+    "y": 290,
+    "w": 1080,
+    "h": 691
+  },
+  "frames": [
+    {
+      "file": "frame-1-top.png",
+      "cells": [
+        {
+          "id": "in1",
+          "kind": "code",
+          "anchors": [
+            "!pip install openai"
+          ]
+        },
+        {
+          "id": "in1-out",
+          "kind": "output",
+          "anchors": [
+            "Defaulting to user installation because normal site-packages is not writeable"
+          ]
+        },
+        {
+          "id": "in2",
+          "kind": "code",
+          "anchors": [
+            "from openai import OpenAI",
+            "import math"
+          ]
+        }
+      ],
+      "reference": [
+        "!pip install openai",
+        "Defaulting to user installation because normal site-packages is not writeable",
+        "from openai import OpenAI",
+        "import math"
+      ]
+    },
+    {
+      "file": "frame-2-scrolled.png",
+      "cells": [
+        {
+          "id": "rag",
+          "kind": "code",
+          "anchors": [
+            "def retrieve_passages(query, passages, top_k=3):",
+            "def answer_question(query, passages, top_k=3):",
+            "return response.choices[0].message.content.strip()"
+          ]
+        },
+        {
+          "id": "test-embedding",
+          "kind": "code",
+          "anchors": [
+            "# This is not editable - Test get_embedding",
+            "import os"
+          ]
+        }
+      ],
+      "reference": [
+        "def retrieve_passages(query, passages, top_k=3):",
+        "query_embedding = get_embedding(query)",
+        "results = []",
+        "passage_embedding = get_embedding(passage)",
+        "results.sort(key=lambda item: item[1], reverse=True)",
+        "return results[:top_k]",
+        "def answer_question(query, passages, top_k=3):",
+        "return response.choices[0].message.content.strip()"
+      ]
+    }
+  ]
+}

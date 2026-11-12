@@ -73,6 +73,126 @@ const SCENES = {
     console.log('[ui-capture] interaction assertions passed: context, session, focus, scroll, command shortcut, bounds IPC, always-on-top, compact restore');
   },
 
+  // Mode C in the real renderer: session snapshots arrive on the same
+  // screen-intel:state channel the controller uses. Checks the bar renders,
+  // and that switching problems excludes the earlier answer from AI context.
+  async 'screen-intel'({ win, send }) {
+    const run = (fn) => win.webContents.executeJavaScript(js(fn));
+    const assert = (ok, message) => { if (!ok) throw new Error(message); };
+    const t = Date.now();
+    const snap = (problem, message) => ({
+      sessionId: 'ss-demo', state: 'VIEW_FULLY_ANALYSED', monitoring: 'active', view: 'analysed', message,
+      startedAt: t - 60000, lastCaptureAt: t - 2000, lastAnalysisAt: t - 1500, analysingSince: null, lastAnalysisDurationMs: 140,
+      counts: { analysed: 9, analysing: 0, captured: 0, new: 0, pending: 1, failed: 0, inaccessible: 1, stale: 0, superseded: 2, cancelled: 0, gaps: 0 },
+      containers: [
+        { id: 'c2', label: 'Panel 2 (left, x=0..400)', gaps: 0, segments: [{ id: 0, cells: [{ start: 0, end: 800, status: 'analysed', regionId: 'r1' }, { start: 800, end: 1100, status: 'pending', regionId: 'r2' }] }] },
+        { id: 'c1', label: 'Panel 3 (right, x=432..1440)', gaps: 0, segments: [{ id: 0, cells: [{ start: 0, end: 2400, status: 'analysed', regionId: 'r3' }, { start: 2400, end: 2600, status: 'inaccessible', regionId: null }] }] }
+      ],
+      regions: [], metrics: {}, error: null, problem
+    });
+    await disableAutoAnswer(win);
+    send('screen-intel:state', snap({ id: 'p1', title: 'Campus FAQ Bot', status: 'identified', changedAt: t - 60000 },
+      { code: 'VIEW_ANALYSED_FIRST', text: 'Current screen fully analysed.', hint: 'Scroll to analyse more content.' }));
+    await sleep(200);
+    assert(await run(() => !document.getElementById('screen-intel').hidden), 'Screen intelligence bar stayed hidden');
+    assert(await run(() => document.getElementById('screen-intel-primary').textContent === 'Current screen fully analysed.'), 'Bar message not rendered');
+    await win.webContents.executeJavaScript(js(() => window.__synapseBeginDemoStream?.()));
+    send('ai-stream-chunk', { actionId: 'askAi', text: 'Answer about the Campus FAQ Bot: rank passages by cosine similarity.', index: 1 });
+    await win.webContents.executeJavaScript(js(() => window.__synapseEndDemoStream?.(true)));
+    await sleep(200);
+    send('screen-intel:state', snap({ id: 'p2', title: 'Matrix Spiral Order', status: 'identified', changedAt: t },
+      { code: 'NEW_ANALYSED', text: 'New content analysed.', hint: 'Scroll to continue.' }));
+    await sleep(300);
+    await run(() => document.getElementById('screen-intel-toggle').click());
+    await sleep(200);
+    assert(await run(() => document.getElementById('screen-intel-problem').textContent.includes('Matrix Spiral Order')), 'Active problem not shown');
+    assert(await run(() => document.querySelectorAll('.screen-intel-map').length === 2), 'Coverage maps not rendered per panel');
+    assert(await run(() => [...document.querySelectorAll('.system-message')].some((el) => /Screen moved to “Matrix Spiral Order”/.test(el.textContent))), 'No problem-change notice');
+    assert(await run(() => {
+      const answer = [...document.querySelectorAll('.ai-response-message')].find((el) => /Campus FAQ Bot/.test(el.textContent));
+      return Boolean(answer && answer.classList.contains('ai-excluded'));
+    }), 'Earlier answer still included in AI context after the switch');
+    console.log('[ui-capture] screen-intel assertions passed: bar renders, problem shown, per-panel maps, switch notice, earlier answer excluded');
+  },
+
+  // Real end-to-end Analyze: real capture, Vision OCR and provider call. A
+  // known image (the Newton fixture) is shown full screen first so only that
+  // reaches the provider. Opt-in: needs Screen Recording and a provider key.
+  async 'real-analyze'({ win }) {
+    const { BrowserWindow, screen } = require('electron');
+    const run = (fn) => win.webContents.executeJavaScript(js(fn));
+    const assert = (ok, message) => { if (!ok) throw new Error(message); };
+    const display = screen.getPrimaryDisplay();
+    const fixture = path.join(__dirname, '..', '..', '..', 'tests', 'fixtures', 'newton-campus-faq', 'frame-2-scrolled.png');
+    const cover = new BrowserWindow({ ...display.bounds, frame: false, show: true, backgroundColor: '#000', webPreferences: { sandbox: true } });
+    cover.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    cover.setAlwaysOnTop(true, 'floating');
+    // Loaded as a file: a data: page may not reference file:// images.
+    await cover.loadFile(fixture);
+    win.setAlwaysOnTop(true, 'screen-saver');
+    win.moveTop();
+    await sleep(2500);
+    await disableAutoAnswer(win);
+    const t0 = Date.now();
+    await run(() => document.getElementById('analyze-screen-btn').click());
+    let answer = '';
+    for (let i = 0; i < 90 && !answer; i += 1) {
+      await sleep(500);
+      answer = await run(() => {
+        const cards = [...document.querySelectorAll('.ai-response-message')];
+        const last = cards[cards.length - 1];
+        return last && !last.classList.contains('streaming') && /\S{20,}/.test(last.textContent) && !document.getElementById('analyze-screen-btn').disabled ? last.textContent : '';
+      });
+    }
+    const elapsed = Date.now() - t0;
+    const bar = await run(() => ({ hidden: document.getElementById('screen-intel').hidden, primary: document.getElementById('screen-intel-primary').textContent }));
+    console.log(`[ui-capture] real-analyze: answer after ${elapsed} ms, ${answer.length} chars, mentions retrieve_passages=${/retrieve_passages/.test(answer)}; bar=${JSON.stringify(bar)}`);
+    assert(answer, 'no answer arrived within 45 s');
+    assert(!bar.hidden, 'monitoring bar did not appear after Analyze');
+    await run(() => document.getElementById('screen-intel-stop').click());
+    await sleep(800);
+    const stopped = await run(() => document.getElementById('screen-intel-pause').hidden);
+    assert(stopped, 'Stop did not stop monitoring');
+    console.log('[ui-capture] real-analyze assertions passed: real capture -> OCR -> provider answer, bar live, Stop works');
+    cover.destroy();
+  },
+
+  // Packaged-app smoke for Mode C: real capture stream and the bundled Vision
+  // helper, started through the real preload API. No provider call.
+  async 'modec-smoke'({ win }) {
+    const run = (fn) => win.webContents.executeJavaScript(js(fn));
+    const assert = (ok, message) => { if (!ok) throw new Error(message); };
+    const started = await run(() => window.electronAPI.screenIntelStart({}));
+    assert(started && started.success, `start failed: ${JSON.stringify(started)}`);
+    let state = null;
+    for (let i = 0; i < 40; i += 1) {
+      await sleep(500);
+      state = await run(() => window.electronAPI.screenIntelGetState());
+      if (state && state.view === 'analysed') break;
+    }
+    const metrics = await run(() => window.electronAPI.screenIntelGetMetrics());
+    console.log(`[ui-capture] modec-smoke: state=${state && state.state} view=${state && state.view} analysed=${state && state.counts.analysed} problem=${JSON.stringify(state && state.problem)} ocrEngine=${metrics && metrics.ocrEngine} ocr=${JSON.stringify(metrics && metrics.ocr)}`);
+    assert(state && state.view === 'analysed' && state.counts.analysed > 0, 'screen was not analysed');
+    assert(metrics && metrics.ocrEngine === 'vision', `OCR engine is ${metrics && metrics.ocrEngine}, expected the bundled Vision helper`);
+    assert(metrics.engine && metrics.engine.streamOpen === true, 'stream not open while monitoring');
+    // Pause must release the screen stream (macOS recording indicator off).
+    await run(() => window.electronAPI.screenIntelPause());
+    await sleep(400);
+    const paused = await run(() => window.electronAPI.screenIntelGetMetrics());
+    assert(paused.engine && paused.engine.streamOpen === false, 'screen stream still open while paused');
+    await run(() => window.electronAPI.screenIntelResume());
+    await sleep(1500);
+    const resumed = await run(() => window.electronAPI.screenIntelGetMetrics());
+    const resumedState = await run(() => window.electronAPI.screenIntelGetState());
+    assert(resumed.engine && resumed.engine.streamOpen === true && resumedState.monitoring === 'active', 'resume did not reopen the stream');
+    console.log(`[ui-capture] modec-smoke: pause released the stream, resume reopened it (state=${resumedState.state})`);
+    await run(() => window.electronAPI.screenIntelStop());
+    await sleep(500);
+    const after = await run(() => window.electronAPI.screenIntelGetState());
+    assert(after.monitoring === 'stopped', 'monitoring did not stop');
+    console.log('[ui-capture] modec-smoke assertions passed: real capture, bundled Vision OCR, analysed, stopped');
+  },
+
   async 'light-home'({ win }) {
     await win.webContents.executeJavaScript(js(() => { document.documentElement.dataset.theme = 'light'; }));
   },

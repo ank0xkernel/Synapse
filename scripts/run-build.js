@@ -26,11 +26,18 @@ const args = [...platformArgs, ...process.argv.slice(2)];
 // so it must exist (and be current) before electron-builder runs.
 if (os.platform() === 'darwin') {
   const { buildNativeAudio } = require('./build-native-audio');
+  const { buildNativeOcr } = require('./build-native-ocr');
   try {
     buildNativeAudio({ force: true });
   } catch (error) {
     console.error('[run-build] Native audio helper build failed:', error.message);
     process.exit(1);
+  }
+  // OCR has a runtime vision-model fallback, so a failed build does not block packaging.
+  try {
+    buildNativeOcr({ force: true });
+  } catch (error) {
+    console.error('[run-build] Native OCR helper build failed:', error.message);
   }
 }
 

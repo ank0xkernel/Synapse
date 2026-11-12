@@ -151,7 +151,14 @@ function createEventActions(ipcRenderer) {
     label: 'onWebSyncState'
   });
 
+  // Continuous screen intelligence snapshots (main window only).
+  const onScreenIntelState = createEventListener(ipcRenderer, {
+    channel: 'screen-intel:state',
+    label: 'onScreenIntelState'
+  });
+
   return {
+    onScreenIntelState,
     onWebSyncState,
     onNativeSystemAudioFrame,
     onNativeSystemAudioStatus,

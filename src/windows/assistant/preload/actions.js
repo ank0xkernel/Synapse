@@ -80,6 +80,31 @@ function createInvokeActions(ipcRenderer) {
       fallback: () => ({ success: false, cancelled: false })
     }),
 
+    cancelAnalyzeScreen: invokeWithFallback(ipcRenderer, {
+      channel: 'cancel-analyze-screen',
+      label: 'cancelAnalyzeScreen',
+      fallback: () => ({ success: false, cancelled: false })
+    }),
+
+    // Continuous screen intelligence (controller.js handlers).
+    ...Object.fromEntries([
+      ['screenIntelStart', 'screen-intel:start'],
+      ['screenIntelPause', 'screen-intel:pause'],
+      ['screenIntelResume', 'screen-intel:resume'],
+      ['screenIntelStop', 'screen-intel:stop'],
+      ['screenIntelRestart', 'screen-intel:restart'],
+      ['screenIntelRetry', 'screen-intel:retry'],
+      ['screenIntelReanalyse', 'screen-intel:reanalyse'],
+      ['screenIntelGetState', 'screen-intel:get-state'],
+      ['screenIntelGetRegion', 'screen-intel:get-region'],
+      ['screenIntelGetLatestFrame', 'screen-intel:get-latest-frame'],
+      ['screenIntelGetMetrics', 'screen-intel:get-metrics']
+    ].map(([label, channel]) => [label, invokeWithFallback(ipcRenderer, {
+      channel,
+      label,
+      fallback: (error) => ({ error: error.message })
+    })])),
+
     clearStealth: invokeWithFallback(ipcRenderer, {
       channel: 'clear-stealth',
       label: 'clearStealth',

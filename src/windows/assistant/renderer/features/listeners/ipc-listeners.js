@@ -58,6 +58,11 @@ export function setupIpcListeners({
             const content = data.text?.startsWith(header) ? data.text : `${header}${data.text || ''}`;
             stream.finalize(content);
             showFeedback('Analysis complete', 'success');
+        } else if (data.actionId === 'screenIntelligence') {
+            // Analyze Screen finalizes its own card from the invoke result; this
+            // event can arrive after that card is closed, and must not add a
+            // second copy of the same answer (UI and AI context).
+            showFeedback('Analysis complete', 'success');
         } else {
             console.log('[onAnalysisResult] No active stream - creating new message');
             const header = '**[Screen Analysis]**\n\n';

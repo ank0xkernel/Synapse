@@ -7,8 +7,11 @@ const path = require('path');
 const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;
 
-const testPath = path.join(__dirname, '..', 'tests', 'verify-pipeline-live.js');
-const child = spawn(electronBinary, [testPath], { stdio: 'inherit', env });
+// First non-flag argument is the test file; flags (e.g. --screen) go to it.
+const args = process.argv.slice(2);
+const fileArg = args.find((arg) => !arg.startsWith('--'));
+const testPath = path.resolve(fileArg || path.join(__dirname, '..', 'tests', 'verify-pipeline-live.js'));
+const child = spawn(electronBinary, [testPath, ...args.filter((arg) => arg !== fileArg)], { stdio: 'inherit', env });
 
 child.on('exit', (code, signal) => {
   if (signal) {

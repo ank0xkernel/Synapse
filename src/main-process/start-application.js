@@ -1,9 +1,11 @@
 const {
   app,
+  BrowserWindow,
   dialog,
   desktopCapturer,
   globalShortcut,
   ipcMain,
+  powerMonitor,
   safeStorage,
   screen,
   shell,
@@ -33,6 +35,7 @@ const { createSafeSender } = require('./shared/safe-send');
 const appProtocol = require('./shared/app-protocol');
 const { createGeminiRuntime } = require('./features/assistant/gemini-runtime');
 const { createScreenshotManager } = require('./features/assistant/screenshot-manager');
+const { createScreenIntelController } = require('./features/screen-intel/controller');
 const { registerAssistantIpc } = require('./features/assistant/ipc');
 const { registerContextIpc } = require('./features/context/context-ipc');
 const { registerWebSyncIpc } = require('./features/context/web-sync-ipc');
@@ -162,6 +165,7 @@ async function startApplication() {
   let activeAssemblyAiSpeechModel = defaultAssemblyAiSpeechModel;
 
   let screenshotManager = null;
+  let screenIntel = null;
   let webSyncControl = null;
   let windowController = null;
 
@@ -343,6 +347,7 @@ async function startApplication() {
     nativeSystemAudio.stop().catch(() => {});
     webSyncControl?.cleanup();
     assemblyAiService.dispose();
+    screenIntel?.dispose();
     screenshotManager.cleanupTransientResources();
     windowController.unregisterShortcuts();
     mobileServer.close();
@@ -484,7 +489,7 @@ async function startApplication() {
     sendToWindow: baseSendToRenderer
   });
 
-  registerAssistantIpc({
+  const assistantIpc = registerAssistantIpc({
     ipcMain,
     screenshotManager,
     windowController,
@@ -493,7 +498,8 @@ async function startApplication() {
     sendToRenderer,
     quitApplication,
     mobileServer,
-    latencyTracker
+    latencyTracker,
+    getScreenIntel: () => screenIntel
   });
 
   registerAssemblyAiIpc({
@@ -572,6 +578,24 @@ async function startApplication() {
     }
 
     loadPersistedAppState();
+
+    // Continuous screen intelligence. Its state goes to this window only
+    // (baseSendToRenderer): screen content is never broadcast to the phone.
+    screenIntel = createScreenIntelController({
+      app,
+      BrowserWindow,
+      desktopCapturer,
+      screen,
+      powerMonitor,
+      ipcMain,
+      getMainWindow: () => windowController.getMainWindow(),
+      sendToWindow: baseSendToRenderer,
+      screenshotManager,
+      geminiRuntime,
+      isAssistantHiddenFromCapture: () => appEnvironment?.hideFromScreenCapture === true,
+      // A different problem on screen makes in-flight answers obsolete.
+      onProblemChange: (problem) => assistantIpc.onScreenProblemChange(problem)
+    });
 
     // Point the brief at userData in packaged builds before anything reads it.
     console.log(`[Startup] Interview brief: ${interviewContext.configure(app)}`);

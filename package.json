@@ -13,8 +13,10 @@
     "build:linux": "node scripts/run-build.js --linux",
     "icons": "node scripts/generate-icons.js",
     "build:native": "node scripts/build-native-audio.js --force",
+    "build:native:ocr": "node scripts/build-native-ocr.js --force",
     "test": "node scripts/run-tests.js",
-    "test:screen:live": "node scripts/run-live-screen-test.js"
+    "test:screen:live": "node scripts/run-live-screen-test.js",
+    "test:modec:live": "node scripts/run-live-screen-test.js tests/verify-mode-c-live.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
@@ -64,6 +66,10 @@
         {
           "from": "native/macos-audio-capture/build/synapse-audio-capture",
           "to": "native/synapse-audio-capture"
+        },
+        {
+          "from": "native/macos-ocr/build/synapse-ocr",
+          "to": "native/synapse-ocr"
         }
       ],
       "extendInfo": {

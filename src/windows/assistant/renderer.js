@@ -37,8 +37,42 @@ const THEME_LIGHT = 'light';
 const THEME_DARK = 'dark';
 let activeTheme = THEME_LIGHT;
 const AI_CONTEXT_CHAR_BUDGET = 12000;
-const messageStore = createMessageStore();
+// The problem continuous screen monitoring says is on screen now (null when
+// not monitoring or not yet identified). New answers are stamped with it.
+let activeScreenProblemId = null;
+let lastIdentifiedProblemId = null;
+const messageStore = createMessageStore({ getActiveProblemId: () => activeScreenProblemId });
 let chatMessagesArray = messageStore.getMessages();
+
+// When the screen moves to a different problem, answers about the previous
+// one stop being sent as context. They stay visible and can be toggled back.
+function onScreenProblemSnapshot(snapshot) {
+    const problem = snapshot && snapshot.monitoring !== 'stopped' ? snapshot.problem : null;
+    const nextId = problem && problem.status === 'identified' ? problem.id : null;
+    if (!nextId) {
+        // Stopped, or still reading / unable to tell: answers started now are
+        // not stamped with the previous problem (they get the real one at the
+        // end via setProblemId). The last identified id is kept for comparison.
+        if (!snapshot || snapshot.monitoring === 'stopped') lastIdentifiedProblemId = null;
+        activeScreenProblemId = null;
+        return;
+    }
+    activeScreenProblemId = nextId;
+    if (nextId === lastIdentifiedProblemId) return;
+    const hadProblem = lastIdentifiedProblemId !== null;
+    lastIdentifiedProblemId = nextId;
+    const excluded = messageStore.excludeOtherProblems(nextId);
+    if (!excluded.length && !excluded.restored.length && !hadProblem) return;
+    chatMessagesArray = messageStore.getMessages();
+    for (const message of [...excluded, ...excluded.restored]) updateMessageAiToggleUi(message);
+    const title = problem.title ? `“${problem.title}”` : 'a different problem';
+    const parts = [`Screen moved to ${title}.`];
+    if (excluded.length) parts.push(`${excluded.length} answer(s) about the previous problem were excluded from AI context.`);
+    if (excluded.restored.length) parts.push(`${excluded.restored.length} earlier answer(s) about this problem are back in context.`);
+    addChatMessage('system', parts.join(' '));
+    updateUI();
+}
+window.electronAPI?.onScreenIntelState?.(onScreenProblemSnapshot);
 const transcriptionSourceState = createTranscriptionSourceState();
 
 // Source selection state (default: host/system on, mic off)
@@ -656,6 +690,7 @@ async function runAiActionWithLock(actionId, action) {
 }
 
 let activeScreenAiStream = null;
+let rerunScreenAnalysisAfterCancel = false;
 
 function createStreamHandler(actionId) {
     let accumulatedText = '';
@@ -730,14 +765,16 @@ function createStreamHandler(actionId) {
     // streaming (see cancel-ask-ai / auto-answer.js's supersede check) —
     // whatever text had rendered so far is genuinely stale, not broken, so
     // it's marked rather than left looking like a silently truncated answer.
-    function markInterrupted() {
+    function markInterrupted(customNote) {
         if (actionId === 'askAi' && requestStartAt) {
-            console.log(`[AI] interrupted id=${questionId || 'manual'} +${Date.now() - requestStartAt}ms — question updated`);
+            console.log(`[AI] interrupted id=${questionId || 'manual'} +${Date.now() - requestStartAt}ms — ${customNote ? 'screen problem changed' : 'question updated'}`);
         }
         if (!messageRecord) return;
-        const note = accumulatedText.trim()
-            ? `${accumulatedText}\n\n_(interrupted — answering the updated question instead)_`
-            : '_(skipped — the question was updated before an answer arrived)_';
+        const note = customNote
+            ? `${accumulatedText.trim() ? `${accumulatedText}\n\n` : ''}${customNote}`
+            : accumulatedText.trim()
+                ? `${accumulatedText}\n\n_(interrupted — answering the updated question instead)_`
+                : '_(skipped — the question was updated before an answer arrived)_';
         chatUiManager.updateChatMessageContent(messageRecord.id, note);
     }
 
@@ -764,7 +801,16 @@ function createStreamHandler(actionId) {
         }
     }
 
-    return { start, finalize, markInterrupted, cleanup, fail };
+    /** The main process reports which screen problem the answer was for. */
+    function setProblemId(problemId) {
+        if (!messageRecord || typeof problemId !== 'string' || !problemId) return;
+        if (messageStore.assignProblem(messageRecord.id, problemId, lastIdentifiedProblemId)) {
+            chatMessagesArray = messageStore.getMessages();
+            updateMessageAiToggleUi(messageRecord);
+        }
+    }
+
+    return { start, finalize, markInterrupted, cleanup, fail, setProblemId };
 }
 
 function hasConfiguredGeminiApiKeys(value) {
@@ -1071,13 +1117,17 @@ async function askAiWithSessionContext() {
             stream.start('');
 
             const result = await window.electronAPI.askAiWithSessionContext(payload);
+            stream.setProblemId(result?.problemId);
 
             if (result?.success && result?.text) {
                 stream.finalize(result.text);
             } else if (result?.cancelled) {
                 // Not a failure — auto-answer.js interrupted this on purpose
-                // because the host updated the question. No error toast.
-                stream.markInterrupted();
+                // because the host updated the question, or the screen moved
+                // to a different problem. No error toast.
+                stream.markInterrupted(result.reason === 'problem-changed'
+                    ? '_(stopped — the screen moved to a different problem. Ask again for the new one.)_'
+                    : undefined);
             } else {
                 throw new Error(result?.error || 'Ask AI failed');
             }
@@ -1161,7 +1211,14 @@ async function analyzeScreenAction() {
         return;
     }
 
-    if (isAiActionInFlight('screenIntelligence') || isAnalyzing) {
+    if (isAiActionInFlight('screenIntelligence')) {
+        // A new press means the running answer is for an older screen: stop
+        // it and analyse again once it has unwound (see finally below).
+        rerunScreenAnalysisAfterCancel = true;
+        window.electronAPI?.cancelAnalyzeScreen?.();
+        return;
+    }
+    if (isAnalyzing) {
         return;
     }
 
@@ -1187,7 +1244,15 @@ async function analyzeScreenAction() {
                 responseMode
             });
 
-            if (result?.error) {
+            stream.setProblemId(result?.problemId);
+            if (result?.success && result?.text) {
+                const header = '**[Screen Analysis]**\n\n';
+                stream.finalize(result.text.startsWith(header) ? result.text : `${header}${result.text}`);
+            } else if (result?.cancelled) {
+                stream.markInterrupted(result.reason === 'problem-changed'
+                    ? '_(stopped — the screen moved to a different problem. Press Analyze for the new one.)_'
+                    : '_(stopped)_');
+            } else if (result?.error) {
                 if (result?.restartRequired) {
                     showFeedback('Screen recording enabled. Restart Synapse to apply changes.', 'warn');
                 } else {
@@ -1225,6 +1290,11 @@ async function analyzeScreenAction() {
             updateUI();
         }
     });
+
+    if (rerunScreenAnalysisAfterCancel) {
+        rerunScreenAnalysisAfterCancel = false;
+        await analyzeScreenAction();
+    }
 }
 
 async function analyzeScreenshotsOnly() {
