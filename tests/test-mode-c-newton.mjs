@@ -138,7 +138,14 @@ if (!fs.existsSync(NATIVE_OCR_BINARY)) {
     lines = joinLineFragments(panels[1].lines);
     const text = panels.flatMap((r) => joinLineFragments(r.lines)).map((line) => line.text).join('\n');
     console.log(`      ${panels[0].lines.length} + ${panels[1].lines.length} lines in ${panels[0].durationMs} + ${panels[1].durationMs} ms (${panels[1].engine})`);
-    for (const expected of EXPECTED) assert(text.includes(expected), `missing: ${expected}`);
+    // Vision's whitespace differs between machines on the same macOS (seen on
+    // CI: "retrieve_passages (query" on a macOS 26 runner, exact on a macOS 26
+    // Mac). Criterion: every non-whitespace character exact; the exact-match
+    // count is printed so spacing drift stays visible.
+    const squash = (s) => s.replace(/\s+/g, '');
+    const exact = EXPECTED.filter((e) => text.includes(e)).length;
+    console.log(`      exact (including spaces) ${exact}/${EXPECTED.length}`);
+    for (const expected of EXPECTED) assert(squash(text).includes(squash(expected)), `characters missing: ${expected}`);
   });
 
   // Whole-frame OCR is not a production path, but it shows how much Vision's
