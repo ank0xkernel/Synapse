@@ -2,7 +2,9 @@
 // captured and analysed. Renders only from snapshots pushed by the main
 // process; the single timer rewrites one text node.
 
-import { STATUS_LABELS, buildCoverage, describeProblem, describeStatus, describeTime, formatClock, formatDuration, tickInterval } from './screen-intel-view.js';
+import {
+  STATUS_LABELS, buildCoverage, describeCandidate, describeProblem, describeProblemResult, describeProblems, describeStatus, describeTime, formatClock, formatDuration, tickInterval
+} from './screen-intel-view.js';
 
 const api = window.electronAPI;
 const $ = (id) => document.getElementById(id);
@@ -16,13 +18,59 @@ if (root && api?.onScreenIntelState) {
     lastCapture: $('screen-intel-last-capture'), lastAnalysis: $('screen-intel-last-analysis'), duration: $('screen-intel-duration'), problem: $('screen-intel-problem'),
     maps: $('screen-intel-maps'), regions: $('screen-intel-regions'), error: $('screen-intel-error'),
     inspector: $('screen-intel-inspector'), inspectorTitle: $('screen-intel-inspector-title'), inspectorText: $('screen-intel-inspector-text'),
-    inspectorImage: $('screen-intel-inspector-image'), reanalyse: $('screen-intel-reanalyse'), latest: $('screen-intel-latest'), restart: $('screen-intel-restart')
+    inspectorImage: $('screen-intel-inspector-image'), reanalyse: $('screen-intel-reanalyse'), latest: $('screen-intel-latest'), restart: $('screen-intel-restart'),
+    newProblem: $('screen-intel-new-problem'), candidate: $('screen-intel-candidate'), candidateText: $('screen-intel-candidate-text'),
+    candidateNew: $('screen-intel-candidate-new'), candidateSame: $('screen-intel-candidate-same'), problems: $('screen-intel-problems')
   };
 
   let snapshot = null;
   let timer = null;
   let timerPeriod = 0;
   let selectedRegion = null;
+  // One problem action at a time: a second click while one runs does nothing.
+  let problemBusy = false;
+  let notice = null;
+  let noticeTimer = null;
+
+  function showNotice(next) {
+    clearTimeout(noticeTimer);
+    notice = next;
+    if (notice) noticeTimer = setTimeout(() => { notice = null; if (snapshot) render(snapshot); }, 4000);
+    if (snapshot) render(snapshot);
+  }
+
+  async function problemAction(run, action) {
+    if (problemBusy) return;
+    problemBusy = true;
+    for (const button of [el.newProblem, el.candidateNew, el.candidateSame]) { button.disabled = true; button.setAttribute('aria-busy', 'true'); }
+    try {
+      showNotice(describeProblemResult(await run(), action));
+    } catch (error) {
+      showNotice({ tone: 'danger', text: error.message || 'The problem could not be changed.' });
+    } finally {
+      problemBusy = false;
+      for (const button of [el.newProblem, el.candidateNew, el.candidateSame]) { button.disabled = false; button.removeAttribute('aria-busy'); }
+    }
+  }
+
+  function paintProblems() {
+    el.problems.replaceChildren(...describeProblems(snapshot.problems).map((item) => {
+      const row = node('li', 'screen-intel-problem');
+      row.dataset.active = String(item.active);
+      if (item.active) row.setAttribute('aria-current', 'true');
+      const text = node('div', 'screen-intel-problem-text');
+      text.append(node('span', 'screen-intel-problem-label', item.label), node('span', 'screen-intel-problem-meta', item.meta));
+      row.append(text);
+      if (item.canSwitch) {
+        const button = node('button', 'btn btn-ghost btn-sm', 'Switch');
+        button.type = 'button';
+        button.setAttribute('aria-label', `Switch to ${item.label}`);
+        button.addEventListener('click', () => problemAction(() => api.screenIntelActivateProblem(item.id), 'switch'));
+        row.append(button);
+      }
+      return row;
+    }));
+  }
 
   const node = (tag, className, text) => {
     const element = document.createElement(tag);
@@ -120,9 +168,15 @@ if (root && api?.onScreenIntelState) {
     document.body.classList.toggle('screen-intel-active', status.visible && snapshot.monitoring !== 'stopped');
     if (!status.visible) return syncTimer();
 
-    root.dataset.tone = status.tone;
-    el.primary.textContent = status.primary;
-    el.hint.textContent = status.hint;
+    root.dataset.tone = notice ? notice.tone : status.tone;
+    el.primary.textContent = notice ? notice.text : status.primary;
+    el.hint.textContent = notice ? '' : status.hint;
+    const candidate = describeCandidate(snapshot.problem);
+    el.candidate.hidden = !candidate;
+    if (candidate) {
+      el.candidateText.textContent = candidate.text;
+      el.candidate.dataset.cut = candidate.id;
+    }
     el.chips.replaceChildren(...status.chips.map((chip) => {
       const element = node('span', 'screen-intel-chip', chip.text);
       element.dataset.status = chip.status;
@@ -144,6 +198,7 @@ if (root && api?.onScreenIntelState) {
     if (!el.details.hidden) {
       paintMaps();
       paintRegions();
+      paintProblems();
     }
     paintTime();
     return syncTimer();
@@ -155,11 +210,21 @@ if (root && api?.onScreenIntelState) {
     if (!el.details.hidden && snapshot) {
       paintMaps();
       paintRegions();
+      paintProblems();
     } else {
       el.inspector.hidden = true;
     }
   });
   el.retry.addEventListener('click', () => api.screenIntelRetry());
+  el.newProblem.addEventListener('click', () => problemAction(() => api.screenIntelNewProblem(), 'new'));
+  el.candidateNew.addEventListener('click', () => {
+    const cutId = el.candidate.dataset.cut;
+    if (cutId) problemAction(() => api.screenIntelResolveCandidate({ cutId, choice: 'new' }), 'new');
+  });
+  el.candidateSame.addEventListener('click', () => {
+    const cutId = el.candidate.dataset.cut;
+    if (cutId) problemAction(() => api.screenIntelResolveCandidate({ cutId, choice: 'same' }), 'same');
+  });
   el.pause.addEventListener('click', () => (snapshot?.monitoring === 'paused' ? api.screenIntelResume() : api.screenIntelPause()));
   el.stop.addEventListener('click', () => api.screenIntelStop());
   el.restart.addEventListener('click', () => {

@@ -1,6 +1,6 @@
 'use strict';
 
-const { STATES, createStateMachine } = require('./mode-c-state');
+const { STATES, createStateMachine, deriveState } = require('./mode-c-state');
 const { createRegionLedger, spanOf } = require('./region-ledger');
 const { createAnalysisQueue } = require('./analysis-queue');
 const { buildContext } = require('./context-builder');
@@ -10,26 +10,13 @@ const { createEventHandlers } = require('./session-events');
 const { MESSAGES, messageFor } = require('./session-messages');
 const { buildSnapshot } = require('./session-snapshot');
 const { createProblemIdentity, attachProblemState } = require('./session-problem');
+const { createProblemTracker } = require('./problem-tracker');
+const { createExplicitProblems } = require('./session-explicit');
+const { createManualActions } = require('./session-actions');
 
 const AUTO_RETRY_CODES = new Set(['NETWORK', 'QUOTA_EXHAUSTED']);
 
-/** The only place the state is decided. Pure function of live facts. */
-function deriveState(f) {
-  if (!f.started) return STATES.IDLE;
-  if (f.stopped) return STATES.STOPPED;
-  if (f.paused) return STATES.PAUSED;
-  if (f.engineError || f.quotaWait) return STATES.ANALYSIS_FAILED;
-  if (!f.frameCaptured) return STATES.INITIAL_CAPTURE;
-  if (f.busy) return f.initialSettled ? STATES.PROCESSING_NEW_CONTENT : STATES.INITIAL_ANALYSIS;
-  if (f.capturing) return STATES.CAPTURING_NEW_CONTENT;
-  if (f.motion) return STATES.SCROLL_DETECTED;
-  if (f.failed > 0) return STATES.ANALYSIS_FAILED;
-  if (f.pending > 0) return STATES.ANALYSIS_PENDING;
-  if (f.viewAnalysed) return STATES.VIEW_FULLY_ANALYSED;
-  return f.initialSettled ? STATES.MONITORING : STATES.INITIAL_ANALYSIS;
-}
-
-function createScreenSession({ ocr, engineControl, now = Date.now, emitState, onProblemChange, limits = {}, log = () => {}, timers } = {}) {
+function createScreenSession({ ocr, engineControl, now = Date.now, emitState, onProblemChange, problemStore = null, limits = {}, log = () => {}, timers } = {}) {
   if (!ocr || typeof ocr.recognize !== 'function') throw new TypeError('ocr.recognize required');
   if (!engineControl) throw new TypeError('engineControl required');
   const L = {
@@ -45,6 +32,18 @@ function createScreenSession({ ocr, engineControl, now = Date.now, emitState, on
   let emitTimer = null;
   let lastEmitAt = -Infinity;
   let lastJson = null;
+  let saveTimer = null;
+  // Problems outlive a monitoring run and, through problemStore, the app.
+  const tracker = createProblemTracker({ now, onChange: () => scheduleSave() });
+  try { if (problemStore) tracker.importState(problemStore.load()); } catch (error) { log('problem-load-failed', error); }
+  function scheduleSave() {
+    if (!problemStore || saveTimer || disposed) return;
+    saveTimer = T.setTimeout(() => { saveTimer = null; saveProblems(); }, 500);
+  }
+  function saveProblems() {
+    if (saveTimer) { T.clearTimeout(saveTimer); saveTimer = null; }
+    try { if (problemStore) problemStore.save(tracker.exportState()); } catch (error) { log('problem-save-failed', error); }
+  }
 
   // ---- run (one per session id) -------------------------------------------------
   function freshRun(sessionId, displayId) {
@@ -57,7 +56,8 @@ function createScreenSession({ ocr, engineControl, now = Date.now, emitState, on
       metrics: { staleEventsDropped: 0, duplicatesSkipped: 0, lateResultsDropped: 0, rejectedTransitions: 0, recaptureErrors: 0, oldEpochDropped: 0, pausedDropped: 0 },
     };
     run.ledger = createRegionLedger({ now, imageBudgetBytes: L.imageBudgetBytes });
-    attachProblemState(run, now);
+    attachProblemState(run, tracker);
+    run.bindNextEpoch = sessionId && explicit ? explicit.takePendingBind() : null;
     run.queue = createAnalysisQueue({
       maxQueued: L.maxQueued, now,
       runner: (job) => runJob(run, job),
@@ -146,7 +146,7 @@ function createScreenSession({ ocr, engineControl, now = Date.now, emitState, on
 
   function getSnapshot() {
     const { state, message, view } = current();
-    return { ...buildSnapshot(R, { state, message, view, now, maxRegions: L.maxSnapshotRegions }), problem: describeProblem() };
+    return { ...buildSnapshot(R, { state, message, view, now, maxRegions: L.maxSnapshotRegions }), problem: describeProblem(), problems: tracker.list() };
   }
 
   function emitNow() {
@@ -280,11 +280,31 @@ function createScreenSession({ ocr, engineControl, now = Date.now, emitState, on
     enqueueRecord(run, rec, rec.attempts + 1);
   }
 
-  const { evaluateProblem, describeProblem, problemContextOptions, pruneLedger } = createProblemIdentity({ getRun: () => R, isVisible, now, log, onProblemChange });
-  const { tryMerge, normalise, supersede } = createContinuity({ getRun: () => R, cancelJobs, toPending });
+  const identity = createProblemIdentity({
+    getRun: () => R, tracker, isVisible, now, log, onProblemChange,
+    onReplaced: (containerId) => engineControl.forgetOutsideView && engineControl.forgetOutsideView({ containerId }),
+    digestOf: (id) => {
+      const t = buildSessionContext({ charBudget: 9000, ...identity.problemContextOptions(id), savedDigest: '' }).text;
+      const read = t.slice(t.indexOf('\n') + 1, t.lastIndexOf('=== COVERAGE ===')).trim().split('\n');
+      // Lines read before a restart stay in the digest after what this run has read.
+      return [...read, ...String(tracker.get(id)?.restoredDigest || '').split('\n').filter((l) => !read.includes(l))].join('\n');
+    },
+  });
+  const { evaluateProblem, describeProblem, problemContextOptions, pruneLedger } = identity;
+  const { tryMerge, normalise, supersede } = createContinuity({ getRun: () => R, cancelJobs, toPending, remapCuts: identity.remapCuts });
   const { adoptEpoch, handleEngineEvent } = createEventHandlers({
     run: () => R, isDisposed: () => disposed, T, now, log, refresh, enqueueRecord, enforceBudget, recoverPending, supersede, normalise, cancelJobs,
-    notifySystem: (...a) => notifySystem(...a),
+    notifySystem: (...a) => notifySystem(...a), stampFor: identity.stampFor, onMotionSettled: identity.onMotionSettled,
+    onEpochAdopted: (run, epoch) => {
+      if (!run.bindNextEpoch) return;
+      run.explicitEpochs.set(epoch, run.bindNextEpoch);
+      tracker.setEpochProblem(epoch, run.bindNextEpoch);
+      run.bindNextEpoch = null;
+    },
+  });
+  const explicit = createExplicitProblems({
+    getRun: () => R, tracker, identity, now, log, refresh, adoptEpoch,
+    engineControl: { beginEpoch: async (a) => (engineControl.beginEpoch ? engineControl.beginEpoch(a) : null) },
   });
   // ---- recapture ----------------------------------------------------------------
   function recapture(run, rec, force) {
@@ -430,42 +450,7 @@ function createScreenSession({ ocr, engineControl, now = Date.now, emitState, on
     }
   }
 
-  // ---- manual actions -----------------------------------------------------------
-  function retry(regionId) {
-    const targets = regionId ? [R.ledger.get(regionId)].filter(Boolean)
-      : R.ledger.list({ status: ['failed', 'pending'], epoch: R.epoch });
-    let acted = 0;
-    for (const rec of targets) {
-      if (rec.status === 'failed') {
-        const timer = R.retryTimers.get(rec.id);
-        if (timer) { T.clearTimeout(timer); R.timers.delete(timer); R.retryTimers.delete(rec.id); }
-        rec.autoRetries = 0;
-        if (rec.imageRef) enqueueRecord(R, rec, rec.attempts + 1);
-        else { toPending(R, rec, rec.error.code, 'Image released; needs recapture.'); recapture(R, rec, true); }
-        acted += 1;
-      } else if (rec.status === 'pending' && rec.kind !== 'inaccessible') {
-        recapture(R, rec, true);
-        acted += 1;
-      }
-    }
-    if (acted && R.queue.paused) {
-      if (R.quotaTimer) { T.clearTimeout(R.quotaTimer); R.timers.delete(R.quotaTimer); R.quotaTimer = null; }
-      R.quotaUntil = 0;
-      R.queue.resume();
-    }
-    refresh();
-    return acted;
-  }
-
-  function reanalyse(regionId) {
-    const rec = R.ledger.get(regionId);
-    if (!rec || R.stopped || !['analysed', 'failed', 'pending'].includes(rec.status) || rec.kind === 'stale' || rec.kind === 'inaccessible') return false;
-    Object.assign(rec, { lines: [], text: '', fingerprint: null, duplicateOf: null, confidence: null, autoRetries: 0 });
-    if (rec.imageRef) enqueueRecord(R, rec, rec.attempts + 1);
-    else { toPending(R, rec, 'IMAGE_MISSING', 'Image released; needs recapture.'); recapture(R, rec, true); }
-    refresh();
-    return true;
-  }
+  const { retry, reanalyse } = createManualActions({ getRun: () => R, T, refresh, enqueueRecord, toPending, recapture: (...a) => recapture(...a) });
 
   function getRegion(regionId) {
     const rec = R.ledger.get(regionId);
@@ -476,13 +461,14 @@ function createScreenSession({ ocr, engineControl, now = Date.now, emitState, on
   }
 
   function buildSessionContext(opts = {}) {
-    const result = buildContext({ ledger: R.ledger, containers: Array.from(R.containers.values()), currentEpoch: R.epoch, ...problemContextOptions(), ...opts });
+    const result = buildContext({ ledger: R.ledger, containers: Array.from(R.containers.values()), currentEpoch: R.epoch, ...(opts.activeProblemId ? {} : problemContextOptions()), ...opts });
     for (const id of result.imageRegionIds) R.ledger.touch(id);
     return result;
   }
 
   async function dispose() {
     await stop();
+    saveProblems();
     disposed = true;
     if (emitTimer) { T.clearTimeout(emitTimer); emitTimer = null; }
     clearTimersOf(R);
@@ -494,6 +480,20 @@ function createScreenSession({ ocr, engineControl, now = Date.now, emitState, on
     resume: () => setEnginePaused(R, 'user', false),
     buildContext: buildSessionContext,
     getProblem: describeProblem,
+    newProblem: explicit.newProblem,
+    activateProblem: explicit.activateProblem,
+    resolveCandidate: explicit.resolveCandidate,
+    listProblems: () => tracker.list(),
+    /** Replaces the problem registry (another conversation was opened, or a new one started). */
+    loadProblems(saved) {
+      tracker.importState(saved);
+      R.ledger.prune((r) => r.status !== 'retired'); // retired text of the old registry's problems goes; the screen is identified again
+      for (const r of R.ledger.all()) { r.problemId = null; r.cutEntry = null; }
+      attachProblemState(R, tracker);
+      identity.reevaluate();
+      refresh();
+    },
+    saveProblems,
   };
 }
 

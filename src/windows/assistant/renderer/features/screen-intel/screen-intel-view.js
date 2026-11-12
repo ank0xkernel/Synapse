@@ -90,8 +90,54 @@ export function describeProblem(problem) {
   if (!problem) return 'Not monitoring';
   if (problem.status === 'detecting') return 'Reading the new screen…';
   if (problem.status === 'undetermined') return 'Not enough instructions on screen to tell';
-  const title = problem.title ? `“${problem.title}”` : problem.id;
+  const title = problem.title ? `“${problem.title}”` : problem.origin === 'explicit' ? 'New problem' : problem.id;
   return problem.changedAt ? `${title} · since ${formatClock(problem.changedAt)}` : title;
+}
+
+/** Name of a problem in lists: its heading, or what kind of problem it is. */
+export function problemLabel(problem) {
+  if (problem?.title) return problem.title;
+  return problem?.origin === 'explicit' ? 'New problem' : 'Untitled problem';
+}
+
+/**
+ * The prompt for a heading that may start a different problem. Its text is
+ * held out of the answer context until the user decides (or the screen does).
+ */
+export function describeCandidate(problem) {
+  const candidate = problem?.candidate;
+  if (!candidate) return null;
+  const title = candidate.title ? `“${candidate.title}”` : 'this heading';
+  return {
+    id: candidate.id,
+    text: candidate.status === 'possible'
+      ? `${title} may be a different problem. It is not used in answers until you choose.`
+      : `Checking whether ${title} starts a different problem. Its text is held back for now.`
+  };
+}
+
+/** Rows of the Problems list: newest activity first, the active one marked, others switchable. */
+export function describeProblems(problems) {
+  return (problems || []).map((p) => ({
+    id: p.id,
+    label: problemLabel(p),
+    meta: [p.active ? 'Active' : null, p.origin === 'explicit' ? 'Started by you' : 'Detected', `last active ${formatClock(p.lastActiveAt)}`].filter(Boolean).join(' · '),
+    active: Boolean(p.active),
+    canSwitch: !p.active
+  }));
+}
+
+/** What the bar says after New Problem (or a switch). Null when nothing needs saying. */
+export function describeProblemResult(result, action = 'new') {
+  if (!result || result.code === 'BUSY') return null;
+  if (result.error && !result.code) return { tone: 'danger', text: result.error };
+  if (!result.success) return { tone: 'warning', text: result.code === 'ALREADY_NEW' ? 'A new problem was just started. Scroll or switch screens to fill it.' : (result.message || 'The problem could not be changed.') };
+  if (action === 'same') return { tone: 'positive', text: `Kept in ${problemLabel(result.problem)}. That text is now part of it.` };
+  if (result.unchanged) return { tone: 'neutral', text: 'That problem is already active.' };
+  if (result.pending === 'next-start') return { tone: 'neutral', text: 'New problem ready. It begins when monitoring starts.' };
+  if (result.pending === 'next-screen') return { tone: 'neutral', text: 'New problem started. Waiting for the next screen.' };
+  if (action === 'switch') return { tone: 'positive', text: `Switched to ${problemLabel(result.problem)}. Its earlier context is back.` };
+  return { tone: 'positive', text: `${problemLabel(result.problem)} started. Earlier problems are kept under Details.` };
 }
 
 /**

@@ -98,7 +98,11 @@ function createInvokeActions(ipcRenderer) {
       ['screenIntelGetState', 'screen-intel:get-state'],
       ['screenIntelGetRegion', 'screen-intel:get-region'],
       ['screenIntelGetLatestFrame', 'screen-intel:get-latest-frame'],
-      ['screenIntelGetMetrics', 'screen-intel:get-metrics']
+      ['screenIntelGetMetrics', 'screen-intel:get-metrics'],
+      ['screenIntelNewProblem', 'screen-intel:new-problem'],
+      ['screenIntelActivateProblem', 'screen-intel:activate-problem'],
+      ['screenIntelResolveCandidate', 'screen-intel:resolve-candidate'],
+      ['screenIntelListProblems', 'screen-intel:list-problems']
     ].map(([label, channel]) => [label, invokeWithFallback(ipcRenderer, {
       channel,
       label,

@@ -480,6 +480,26 @@ function createCaptureEngine({ sessionId, display, cropFrame, emit, now = Date.n
     return captureBand(c, contentRect, 'recapture', S.latest, c.scroll, false);
   }
 
+  // New Problem: a new epoch read from scratch on the next frame. No scene-change
+  // event, so the session lets work on the previous screen finish.
+  function beginEpoch(target) {
+    S.epoch = Math.max(S.epoch + 1, Number.isFinite(target) ? target : 0);
+    S.dirty = [];
+    S.scene = null;
+    createRoot();
+    return S.epoch;
+  }
+
+  // Panel content replaced in place: coverage outside the view is no longer true.
+  function forgetOutsideView(containerId) {
+    const c = S.containers.get(containerId);
+    if (!c || c === S.root) return false;
+    const seg = ct.currentSegment(c);
+    seg.covered.rects = seg.covered.clipped(ct.viewport(c));
+    seg.stale.rects = seg.stale.clipped(ct.viewport(c));
+    return true;
+  }
+
   function nextIntervalMs() {
     const busy = S.scene || S.dirty.length || containerList().some((c) => c.moving || c.lost || c.retry);
     if (busy || S.lastT - S.lastActivityT < opt.activeWindowMs) return opt.fastIntervalMs;
@@ -506,6 +526,8 @@ function createCaptureEngine({ sessionId, display, cropFrame, emit, now = Date.n
       S.masks = (rects || []).map((r) => ({ ...r }));
     },
     requestRecapture,
+    beginEpoch,
+    forgetOutsideView,
     getContainers: () => [...S.containers.values()].map(ct.snapshot),
     getMetrics: () => ({ ...metrics, containers: containerList().length, pendingDirty: S.dirty.length, epoch: S.epoch }),
     nextIntervalMs,

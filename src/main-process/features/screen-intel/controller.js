@@ -63,6 +63,7 @@ function createScreenIntelController({
   geminiRuntime,
   isAssistantHiddenFromCapture = () => false,
   onProblemChange = () => {},
+  problemStore = null,
   log = console.log
 }) {
   let captureWindow = null;
@@ -219,6 +220,12 @@ function createScreenIntelController({
       activeDisplay = null;
     },
     requestRecapture: async (request) => Boolean(await ask('mc:recapture', request)),
+    // New Problem: the engine starts a new screen epoch and answers with its number (null when not capturing).
+    beginEpoch: async ({ epoch }) => {
+      const value = await ask('mc:begin-epoch', { epoch });
+      return Number.isFinite(value) ? value : null;
+    },
+    forgetOutsideView: ({ containerId }) => ask('mc:forget-outside', { containerId }),
     getLatestFrame: () => ask('mc:latest')
   };
 
@@ -235,6 +242,7 @@ function createScreenIntelController({
   const session = createScreenSession({
     ocr,
     engineControl,
+    problemStore,
     log,
     emitState: (snapshot) => {
       sendToWindow('screen-intel:state', snapshot);
@@ -377,6 +385,17 @@ function createScreenIntelController({
       return { ...rest, imageDataUrl: imageToDataUrl(imageRef) };
     },
     'screen-intel:get-latest-frame': async () => imageToDataUrl(await engineControl.getLatestFrame()),
+    'screen-intel:new-problem': () => session.newProblem(),
+    'screen-intel:activate-problem': (_event, id) => (typeof id === 'string' && /^p\d{1,6}$/.test(id)
+      ? session.activateProblem(id) : { success: false, code: 'BAD_REQUEST', message: 'Unknown problem.' }),
+    'screen-intel:resolve-candidate': (_event, request) => {
+      const { cutId, choice } = request || {};
+      if (typeof cutId !== 'string' || !/^k\d{1,6}$/.test(cutId) || !['new', 'same'].includes(choice)) {
+        return { success: false, code: 'BAD_REQUEST', message: 'Invalid boundary decision.' };
+      }
+      return session.resolveCandidate(cutId, choice);
+    },
+    'screen-intel:list-problems': () => session.listProblems(),
     'screen-intel:get-metrics': async () => ({ engine: await ask('mc:metrics'), ocr: ocrService.getStats(), ocrEngine: ocrService.getEngine() })
   };
   // These return screen pixels and text: only the assistant window may call them.
@@ -430,6 +449,7 @@ function createScreenIntelController({
 
   return {
     start, isActive, getPromptContext, waitForCurrentView, getProblem: session.getProblem,
+    loadProblems: session.loadProblems, saveProblems: session.saveProblems,
     getLatestFrame: engineControl.getLatestFrame, getSnapshot: session.getSnapshot, session, dispose
   };
 }

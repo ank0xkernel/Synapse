@@ -30,14 +30,25 @@ function registerConversationsIpc({ ipcMain, app, webSync, sendToWindow, log = (
   });
 
   const changed = (value) => { sync.notifyLocalChange(); return value; };
+  // Screen problems belong to the open conversation; listeners reload them when it changes.
+  const currentListeners = new Set();
+  const currentChanged = (value) => {
+    for (const fn of currentListeners) { try { fn(store.getProblems()); } catch (error) { log('error', `problem reload failed: ${error.message}`); } }
+    return value;
+  };
 
   ipcMain.handle('conversations:append', (_e, message) => changed(store.appendMessage(message)));
-  ipcMain.handle('conversations:new', () => changed(store.startNew()));
+  ipcMain.handle('conversations:new', () => currentChanged(changed(store.startNew())));
   ipcMain.handle('conversations:list', () => store.list());
   ipcMain.handle('conversations:current', () => store.current());
-  ipcMain.handle('conversations:open', (_e, id) => (ID.test(String(id)) ? store.open(String(id)) : null));
+  ipcMain.handle('conversations:open', (_e, id) => (ID.test(String(id)) ? currentChanged(store.open(String(id))) : null));
   ipcMain.handle('conversations:rename', (_e, { id, title } = {}) => (ID.test(String(id)) ? changed(store.rename(String(id), title)) : null));
-  ipcMain.handle('conversations:delete', (_e, id) => (ID.test(String(id)) ? changed(store.remove(String(id))) : false));
+  ipcMain.handle('conversations:delete', (_e, id) => {
+    if (!ID.test(String(id))) return false;
+    const wasCurrent = store.current()?.id === String(id).toLowerCase();
+    const removed = changed(store.remove(String(id)));
+    return wasCurrent ? currentChanged(removed) : removed;
+  });
   ipcMain.handle('conversations:sync', () => sync.syncNow());
   ipcMain.handle('conversations:status', () => sync.status());
   ipcMain.handle('conversations:settings', () => store.getSettings());
@@ -55,6 +66,11 @@ function registerConversationsIpc({ ipcMain, app, webSync, sendToWindow, log = (
       return sync.start();
     },
     syncNow: () => sync.syncNow(),
+    problems: {
+      load: () => store.getProblems(),
+      save: (problems) => store.setProblems(problems),
+      onCurrentChange: (fn) => { currentListeners.add(fn); return () => currentListeners.delete(fn); }
+    },
     cleanup: () => {
       sync.stop();
       try { store.flush(); } catch (error) { log('error', `conversation store flush failed: ${error.message}`); }

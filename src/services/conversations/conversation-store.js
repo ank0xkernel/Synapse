@@ -123,6 +123,8 @@ function createConversationStore({ filePath, now = () => Date.now(), writeDelayM
     if (!conv) {
       conv = createConversation(role === 'assistant' ? '' : titleFrom(content));
       state.currentId = conv.id;
+      // Problems identified before the first message belong to this conversation.
+      if (state.draftProblems) { conv.problems = state.draftProblems; state.draftProblems = null; }
     }
     const id = typeof input.id === 'string' && /^[0-9a-f-]{36}$/i.test(input.id) ? input.id.toLowerCase() : crypto.randomUUID();
     if (conv.messages.some((m) => m.id === id)) return null;
@@ -143,6 +145,25 @@ function createConversationStore({ filePath, now = () => Date.now(), writeDelayM
   /** The next message starts a new conversation; the old one stays in history. */
   function startNew() {
     state.currentId = null;
+    state.draftProblems = null;
+    save();
+  }
+
+  /**
+   * Screen problems (Mode C) of the open conversation: identity, titles,
+   * timestamps and a bounded text digest. Desktop only: buildPush never sends
+   * them, so the website and its database are unchanged. Before the first
+   * message there is no conversation yet; they wait in draftProblems.
+   */
+  function getProblems() {
+    const c = state.currentId && state.conversations[state.currentId];
+    return (c ? c.problems : state.draftProblems) || null;
+  }
+
+  function setProblems(problems) {
+    const c = state.currentId && state.conversations[state.currentId];
+    if (c) c.problems = problems || null;
+    else state.draftProblems = problems || null;
     save();
   }
 
@@ -308,7 +329,7 @@ function createConversationStore({ filePath, now = () => Date.now(), writeDelayM
   }
 
   return {
-    appendMessage, startNew, open, rename, remove, list, get, current,
+    appendMessage, startNew, open, rename, remove, list, get, current, getProblems, setProblems,
     buildPush, ackPush, applyPull, pendingCount,
     getCursor, setCursor, bindAccount, getSettings, setSettings, queueSettings, flush
   };

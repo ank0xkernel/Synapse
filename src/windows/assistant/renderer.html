@@ -161,9 +161,18 @@
         </div>
         <div id="screen-intel-chips" class="screen-intel-chips"></div>
         <button id="screen-intel-retry" class="btn btn-ghost btn-sm" type="button" hidden>Retry</button>
+        <button id="screen-intel-new-problem" class="btn btn-ghost btn-sm screen-intel-new-problem" type="button" aria-label="New problem" title="Start a new problem. Earlier problems and answers are kept.">
+          <svg class="screen-intel-new-problem-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false"><rect x="2" y="2" width="12" height="12" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 5v6M5 8h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          <span class="screen-intel-new-problem-label">New problem</span>
+        </button>
         <button id="screen-intel-pause" class="btn btn-ghost btn-sm" type="button">Pause</button>
         <button id="screen-intel-stop" class="btn btn-ghost btn-sm" type="button">Stop</button>
         <button id="screen-intel-toggle" class="btn btn-ghost btn-sm" type="button" aria-expanded="false" aria-controls="screen-intel-details">Details</button>
+      </div>
+      <div id="screen-intel-candidate" class="screen-intel-candidate" hidden>
+        <span id="screen-intel-candidate-text" class="screen-intel-candidate-text" role="status" aria-live="polite"></span>
+        <button id="screen-intel-candidate-new" class="btn btn-ghost btn-sm" type="button">Start new problem</button>
+        <button id="screen-intel-candidate-same" class="btn btn-ghost btn-sm" type="button">Same problem</button>
       </div>
       <div id="screen-intel-details" class="screen-intel-details" hidden>
         <dl class="screen-intel-facts">
@@ -175,6 +184,10 @@
           <div><dt>Analysis took</dt><dd id="screen-intel-duration"></dd></div>
         </dl>
         <p id="screen-intel-error" class="screen-intel-error" hidden></p>
+        <div class="screen-intel-problems-block">
+          <h3 class="screen-intel-subhead" id="screen-intel-problems-title">Problems</h3>
+          <ul id="screen-intel-problems" class="screen-intel-problems" aria-labelledby="screen-intel-problems-title"></ul>
+        </div>
         <div id="screen-intel-maps" class="screen-intel-maps"></div>
         <ul id="screen-intel-regions" class="screen-intel-regions"></ul>
         <div class="screen-intel-actions">

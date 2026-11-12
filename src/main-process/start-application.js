@@ -348,6 +348,8 @@ async function startApplication() {
   function cleanupTransientResources() {
     nativeSystemAudio.stop().catch(() => {});
     webSyncControl?.cleanup();
+    // Screen problems are saved in the conversation store: write them before it flushes.
+    screenIntel?.saveProblems();
     conversationsControl?.cleanup();
     assemblyAiService.dispose();
     screenIntel?.dispose();
@@ -608,8 +610,11 @@ async function startApplication() {
       geminiRuntime,
       isAssistantHiddenFromCapture: () => appEnvironment?.hideFromScreenCapture === true,
       // A different problem on screen makes in-flight answers obsolete.
-      onProblemChange: (problem) => assistantIpc.onScreenProblemChange(problem)
+      onProblemChange: (problem) => assistantIpc.onScreenProblemChange(problem),
+      // Problems persist with the open conversation (desktop only, never synced).
+      problemStore: conversationsControl.problems
     });
+    conversationsControl.problems.onCurrentChange((saved) => screenIntel?.loadProblems(saved));
 
     // Point the brief at userData in packaged builds before anything reads it.
     console.log(`[Startup] Interview brief: ${interviewContext.configure(app)}`);
