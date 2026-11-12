@@ -18,6 +18,42 @@ export function escapeHtml(text) {
     .replace(/'/g, '&#39;');
 }
 
+const LATEX_SYMBOLS = {
+  cdot: '·', times: '×', div: '÷', pm: '±', le: '≤', leq: '≤', ge: '≥', geq: '≥', neq: '≠', ne: '≠', approx: '≈',
+  infty: '∞', sum: '∑', prod: '∏', in: '∈', notin: '∉', to: '→', rightarrow: '→', leftarrow: '←', Rightarrow: '⇒',
+  log: 'log', ln: 'ln', min: 'min', max: 'max', alpha: 'α', beta: 'β', theta: 'θ', lambda: 'λ', mu: 'μ', sigma: 'σ', pi: 'π',
+  dots: '…', ldots: '…', cdots: '⋯', lfloor: '⌊', rfloor: '⌋', lceil: '⌈', rceil: '⌉',
+};
+const SUPERSCRIPT = { 0: '⁰', 1: '¹', 2: '²', 3: '³', 4: '⁴', 5: '⁵', 6: '⁶', 7: '⁷', 8: '⁸', 9: '⁹', n: 'ⁿ', '+': '⁺', '-': '⁻' };
+
+/**
+ * The model is told not to use LaTeX, but when it does, $…$ math is shown as
+ * readable text instead of raw markup. Only a $…$ pair on one line that
+ * contains a LaTeX command, ^ or _ is touched, so "$5 and $10" stays as is.
+ */
+function renderMath(text) {
+  return text.replace(/\$\$?([^$\n]+?)\$\$?/g, (match, body) => {
+    if (!/\\[a-zA-Z]+|[\^_]/.test(body)) return match;
+    let out = body
+      .replace(/\\(?:left|right|displaystyle|,|;|!|quad|qquad)/g, ' ')
+      .replace(/\\text\{([^}]*)\}/g, '$1')
+      .replace(/\\mathrm\{([^}]*)\}/g, '$1')
+      .replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, '($1)/($2)')
+      .replace(/\\sqrt\{([^{}]*)\}/g, '√($1)')
+      .replace(/\\([a-zA-Z]+)/g, (m, name) => (LATEX_SYMBOLS[name] !== undefined ? LATEX_SYMBOLS[name] : name))
+      .replace(/\^\{([0-9n+-]+)\}|\^([0-9n])/g, (m, group, single) => {
+        const digits = group || single;
+        return [...digits].every((ch) => SUPERSCRIPT[ch]) ? [...digits].map((ch) => SUPERSCRIPT[ch]).join('') : `^${digits}`;
+      })
+      .replace(/_\{([^{}]*)\}/g, '_$1')
+      .replace(/[{}]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    out = out.replace(/\s+([,.;)])/g, '$1');
+    return out;
+  });
+}
+
 /** Inline formatting on already-escaped text. Code spans are protected first. */
 function renderInline(escaped) {
   const codeSpans = [];
@@ -26,7 +62,7 @@ function renderInline(escaped) {
     return `\u0000${codeSpans.length - 1}\u0000`;
   });
 
-  text = text
+  text = renderMath(text)
     .replace(/\*\*([^*\n]+?)\*\*/g, '<strong>$1</strong>')
     .replace(/__([^_\n]+?)__/g, '<strong>$1</strong>')
     .replace(/(^|[^*\w])\*([^*\n]+?)\*(?!\*)/g, '$1<em>$2</em>')

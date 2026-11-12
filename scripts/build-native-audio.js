@@ -52,10 +52,15 @@ function buildNativeAudio({ force = false, log = console.log } = {}) {
   execFileSync('lipo', ['-create', '-output', OUTPUT, ...slices], { stdio: 'inherit' });
   for (const slice of slices) fs.rmSync(slice, { force: true });
 
-  // Ad-hoc signature so the binary runs under hardened-runtime hosts in
-  // development. electron-builder re-signs it with the real identity when
-  // packaging.
-  execFileSync('codesign', ['--force', '--sign', '-', OUTPUT], { stdio: 'inherit' });
+  // Stable ad-hoc signature with explicit bundle identifier and designated
+  // requirement so macOS TCC recognizes the helper across rebuilds.
+  execFileSync('codesign', [
+    '--force',
+    '--sign', '-',
+    '--identifier', 'com.synapse.synapse-audio-capture',
+    '-r=designated => identifier "com.synapse.synapse-audio-capture"',
+    OUTPUT
+  ], { stdio: 'inherit' });
 
   log(`[native-audio] Built ${OUTPUT}`);
   return { built: true, path: OUTPUT };

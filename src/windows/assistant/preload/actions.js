@@ -26,6 +26,36 @@ function createInvokeActions(ipcRenderer) {
       fallback: (error) => ({ error: error.message })
     }),
 
+    analyzeScreen: invokeWithFallback(ipcRenderer, {
+      channel: 'analyze-screen',
+      label: 'analyzeScreen',
+      fallback: (error) => ({ success: false, error: error.message })
+    }),
+
+    checkScreenRecordingPermission: invokeWithFallback(ipcRenderer, {
+      channel: 'check-screen-recording-permission',
+      label: 'checkScreenRecordingPermission',
+      fallback: () => ({ status: 'unknown', authorized: true, state: 'GRANTED' })
+    }),
+
+    validateScreenCaptureCapability: invokeWithFallback(ipcRenderer, {
+      channel: 'validate-screen-capture-capability',
+      label: 'validateScreenCaptureCapability',
+      fallback: () => ({ status: 'unknown', authorized: true, state: 'GRANTED' })
+    }),
+
+    openScreenRecordingSettings: invokeWithFallback(ipcRenderer, {
+      channel: 'open-screen-recording-settings',
+      label: 'openScreenRecordingSettings',
+      fallback: (error) => ({ success: false, error: error.message })
+    }),
+
+    relaunchApplication: invokeWithFallback(ipcRenderer, {
+      channel: 'relaunch-application',
+      label: 'relaunchApplication',
+      fallback: (error) => ({ success: false, error: error.message })
+    }),
+
     analyzeStealth: invokeWithFallback(ipcRenderer, {
       channel: 'analyze-stealth',
       label: 'analyzeStealth',
@@ -49,6 +79,31 @@ function createInvokeActions(ipcRenderer) {
       label: 'cancelAskAi',
       fallback: () => ({ success: false, cancelled: false })
     }),
+
+    cancelAnalyzeScreen: invokeWithFallback(ipcRenderer, {
+      channel: 'cancel-analyze-screen',
+      label: 'cancelAnalyzeScreen',
+      fallback: () => ({ success: false, cancelled: false })
+    }),
+
+    // Continuous screen intelligence (controller.js handlers).
+    ...Object.fromEntries([
+      ['screenIntelStart', 'screen-intel:start'],
+      ['screenIntelPause', 'screen-intel:pause'],
+      ['screenIntelResume', 'screen-intel:resume'],
+      ['screenIntelStop', 'screen-intel:stop'],
+      ['screenIntelRestart', 'screen-intel:restart'],
+      ['screenIntelRetry', 'screen-intel:retry'],
+      ['screenIntelReanalyse', 'screen-intel:reanalyse'],
+      ['screenIntelGetState', 'screen-intel:get-state'],
+      ['screenIntelGetRegion', 'screen-intel:get-region'],
+      ['screenIntelGetLatestFrame', 'screen-intel:get-latest-frame'],
+      ['screenIntelGetMetrics', 'screen-intel:get-metrics']
+    ].map(([label, channel]) => [label, invokeWithFallback(ipcRenderer, {
+      channel,
+      label,
+      fallback: (error) => ({ error: error.message })
+    })])),
 
     clearStealth: invokeWithFallback(ipcRenderer, {
       channel: 'clear-stealth',

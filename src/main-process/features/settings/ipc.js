@@ -91,10 +91,14 @@ function registerSettingsIpc({
   });
 
   ipcMain.handle('get-settings', () => {
-    const appEnvironment = getAppEnvironment();
-    const appState = getAppState();
-    const geminiApiKey = typeof appState?.geminiApiKey === 'string' ? appState.geminiApiKey : '';
-    const assemblyAiApiKey = typeof appState?.assemblyAiApiKey === 'string' ? appState.assemblyAiApiKey : '';
+    const appEnvironment = getAppEnvironment() || {};
+    const appState = getAppState() || {};
+    const geminiApiKey = (typeof appState.geminiApiKey === 'string' && appState.geminiApiKey.trim())
+      ? appState.geminiApiKey
+      : (appEnvironment.geminiApiKey || process.env.GEMINI_API_KEY || '');
+    const assemblyAiApiKey = (typeof appState.assemblyAiApiKey === 'string' && appState.assemblyAiApiKey.trim())
+      ? appState.assemblyAiApiKey
+      : (appEnvironment.assemblyAiApiKey || process.env.ASSEMBLY_AI_API_KEY || '');
 
     return {
       aiProvider: geminiRuntime.getActiveAiProvider(),

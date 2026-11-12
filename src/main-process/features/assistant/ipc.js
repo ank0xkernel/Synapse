@@ -9,9 +9,96 @@ function registerAssistantIpc({
   sendToRenderer,
   quitApplication,
   mobileServer,
-  latencyTracker = null
+  latencyTracker = null,
+  getScreenIntel = () => null
 }) {
   let chatContext = [];
+
+  // How long an answer waits for a just-changed screen to be read before it
+  // goes ahead with the live frame attached instead.
+  const SCREEN_VIEW_WAIT_MS = 1500;
+
+  // One live answer per slot ('screenIntelligence', 'askAi'). A newer request
+  // in the same slot, or a different problem appearing on screen, makes the
+  // older answer obsolete: Gemini aborts it, and its remaining chunks are
+  // dropped for any provider (Ollama cannot abort mid-stream).
+  const answerJobs = new Map();
+
+  function cancelAnswerJob(job, reason) {
+    if (job.cancelled) return;
+    job.cancelled = true;
+    job.reason = reason;
+    geminiRuntime.cancelActive?.(job.tag);
+  }
+
+  function beginAnswerJob(tag, problemId) {
+    const previous = answerJobs.get(tag);
+    if (previous) cancelAnswerJob(previous, 'superseded');
+    const job = { tag, problemId: problemId || null, cancelled: false, reason: null, startedAt: Date.now() };
+    answerJobs.set(tag, job);
+    return job;
+  }
+
+  function endAnswerJob(job) {
+    if (answerJobs.get(job.tag) === job) answerJobs.delete(job.tag);
+  }
+
+  /**
+   * Screen intelligence identified a different problem: answers about the old
+   * one stop now. An answer started while the screen was still being read has
+   * no problem yet; the first problem identified is the one it is about, and
+   * only a later change cancels it.
+   */
+  function onScreenProblemChange(problem) {
+    if (!problem?.id) return;
+    for (const job of answerJobs.values()) {
+      if (!job.problemId) job.problemId = problem.id;
+      else if (job.problemId !== problem.id) cancelAnswerJob(job, 'problem-changed');
+    }
+  }
+
+  /**
+   * Screen context for an answer, only while monitoring is active. A paused
+   * session no longer sees the screen, so its text may describe a screen that
+   * is gone: it is left out rather than offered as "the current problem".
+   * Waits briefly for a just-changed screen.
+   */
+  async function collectScreenContext({ wait = true } = {}) {
+    const screenIntel = getScreenIntel();
+    if (!screenIntel || !screenIntel.getSnapshot || !screenIntel.isActive()) return null;
+    const waited = wait ? await screenIntel.waitForCurrentView({ timeoutMs: SCREEN_VIEW_WAIT_MS }) : { ready: true, waitedMs: 0 };
+    // Text and frame must describe the same screen. If the problem changed
+    // while the frame was being grabbed, read both again (once); if it is
+    // still moving, send the frame with the text marked as not current.
+    const problemKey = () => { const p = screenIntel.getProblem?.(); return p ? `${p.id}|${p.status}|${p.changedAt}` : 'none'; };
+    let key = problemKey();
+    let context = screenIntel.getPromptContext();
+    let frame = await screenIntel.getLatestFrame();
+    if (problemKey() !== key) {
+      key = problemKey();
+      context = screenIntel.getPromptContext();
+      frame = await screenIntel.getLatestFrame();
+      if (problemKey() !== key) context = null;
+    }
+    return {
+      context,
+      frame,
+      waitedMs: waited.waitedMs,
+      problemId: context?.problem?.id || screenIntel.getProblem?.()?.id || null
+    };
+  }
+
+  function cancelledResult(job, extra = {}) {
+    return {
+      success: false,
+      cancelled: true,
+      reason: job.reason || 'cancelled',
+      error: job.reason === 'problem-changed'
+        ? 'The screen moved to a different problem, so this answer was stopped.'
+        : 'Answer stopped.',
+      ...extra
+    };
+  }
 
   function getAllKeysUnavailableMessage() {
     return 'All configured Gemini API keys are currently unavailable (quota exhausted or invalid). Please wait and try again later.';
@@ -196,6 +283,215 @@ function registerAssistantIpc({
     return screenshotManager.takeStealthScreenshot();
   });
 
+  ipcMain.handle('check-screen-recording-permission', async () => {
+    return screenshotManager.checkScreenRecordingPermission?.() || { state: 'GRANTED', status: 'granted', authorized: true };
+  });
+
+  ipcMain.handle('validate-screen-capture-capability', async () => {
+    return typeof screenshotManager.validateScreenCaptureCapability === 'function'
+      ? await screenshotManager.validateScreenCaptureCapability()
+      : (screenshotManager.checkScreenRecordingPermission?.() || { state: 'GRANTED', status: 'granted', authorized: true });
+  });
+
+  ipcMain.handle('open-screen-recording-settings', async () => {
+    const permManager = screenshotManager.getPermissionManager?.();
+    if (permManager && typeof permManager.openSystemSettings === 'function') {
+      return permManager.openSystemSettings();
+    }
+    const { shell } = require('electron');
+    if (shell && typeof shell.openExternal === 'function') {
+      await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
+      return { success: true };
+    }
+    return { success: false, error: 'Cannot open System Settings on this platform' };
+  });
+
+  ipcMain.handle('relaunch-application', () => {
+    const permManager = screenshotManager.getPermissionManager?.();
+    if (permManager && typeof permManager.requestRelaunch === 'function') {
+      return permManager.requestRelaunch();
+    }
+    const { app } = require('electron');
+    if (app && typeof app.relaunch === 'function' && typeof app.exit === 'function') {
+      app.relaunch();
+      app.exit(0);
+      return { success: true };
+    }
+    return { success: false, error: 'Relaunch not supported in current environment' };
+  });
+
+  ipcMain.handle('analyze-screen', async (_event, payload = {}) => {
+    const perm = typeof screenshotManager.validateScreenCaptureCapability === 'function'
+      ? await screenshotManager.validateScreenCaptureCapability()
+      : (screenshotManager.checkScreenRecordingPermission?.() || { status: 'granted', authorized: true });
+
+    if (!perm.authorized) {
+      const isRestart = perm.state === 'RESTART_REQUIRED' || perm.restartRequired;
+      const errorMsg = perm.message || (isRestart
+        ? 'Screen recording permission was enabled in System Settings, but macOS requires Synapse to restart before capture can activate.'
+        : 'Screen Recording permission is not granted. Enable Synapse in System Settings → Privacy & Security → Screen & System Audio Recording.');
+
+      sendToRenderer('ai-stream-end', { actionId: 'screenIntelligence' });
+      sendToRenderer('screen-capture-status', { stage: 'error', message: errorMsg });
+      sendToRenderer('analysis-result', { error: errorMsg, actionId: 'screenIntelligence', code: perm.state || 'PERMISSION_DENIED' });
+      return {
+        error: errorMsg,
+        code: perm.state || (isRestart ? 'RESTART_REQUIRED' : 'PERMISSION_DENIED'),
+        state: perm.state,
+        restartRequired: Boolean(isRestart)
+      };
+    }
+
+    const isOllama = geminiRuntime.getActiveAiProvider() === 'ollama';
+    if (!isOllama && !geminiRuntime.hasApiKeys()) {
+      const errorMsg = 'No Gemini API key configured. Add it in Settings.';
+      sendToRenderer('ai-stream-end', { actionId: 'screenIntelligence' });
+      sendToRenderer('screen-capture-status', { stage: 'error', message: errorMsg });
+      sendToRenderer('analysis-result', { error: errorMsg, actionId: 'screenIntelligence' });
+      return { error: errorMsg };
+    }
+
+    let screenJob = null;
+    try {
+      sendToRenderer('analysis-start');
+      sendToRenderer('screen-capture-status', { stage: 'capturing', message: 'Capturing screen...' });
+      sendToRenderer('ai-stream-start', { actionId: 'screenIntelligence' });
+
+      // While continuous monitoring is running, the current view comes from
+      // its stream (no window dimming) and the answer also gets everything
+      // read so far about the same problem. Otherwise: one in-memory capture,
+      // zero disk persistence.
+      const screenIntel = getScreenIntel();
+      // Registered before the (up to 1.5 s) screen wait, so a second press or
+      // Stop during the wait cancels this run instead of finding nothing.
+      screenJob = beginAnswerJob('screenIntelligence', null);
+      const job = screenJob;
+      const screen = await collectScreenContext();
+      if (!job.problemId) job.problemId = screen?.problemId || null;
+      if (job.cancelled) {
+        sendToRenderer('ai-stream-end', { actionId: 'screenIntelligence' });
+        return cancelledResult(job);
+      }
+      const liveFrame = screen?.frame || null;
+      const screenContext = liveFrame ? screen.context : null;
+      const capture = liveFrame
+        ? { data: Buffer.from(liveFrame.jpeg).toString('base64'), mimeType: liveFrame.mime }
+        : await screenshotManager.captureScreenInMemory({ displayId: payload?.displayId });
+
+      if (!liveFrame && screenIntel && payload?.continuous !== false) {
+        // Failures surface through the screen-intel:state event; the one-shot
+        // answer below does not depend on monitoring having started.
+        screenIntel.start({ displayId: payload?.displayId });
+      }
+
+      sendToRenderer('screen-capture-status', { stage: 'processing', message: 'Processing image...' });
+
+      const imageParts = [
+        {
+          inlineData: {
+            data: capture.data,
+            mimeType: capture.mimeType
+          }
+        },
+        ...(screenContext?.imageParts || [])
+      ];
+
+      sendToRenderer('screen-capture-status', { stage: 'analyzing', message: 'Analyzing with AI...' });
+
+      const onChunk = ({ text, index }) => {
+        if (job.cancelled) return;
+        if (!job.firstChunkAt) job.firstChunkAt = Date.now();
+        sendToRenderer('ai-stream-chunk', { actionId: 'screenIntelligence', text, index });
+      };
+
+      const responseMode = resolveResponseModeId(payload?.responseMode);
+      const text = await geminiRuntime.executeWithKeyFailover((aiService) => {
+        if (!aiService || !aiService.model) {
+          throw new Error('AI model not initialized. Please check your settings.');
+        }
+
+        return aiService.analyzeScreenshots(
+          imageParts,
+          [payload?.additionalContext, screenContext?.text].filter(Boolean).join('\n\n'),
+          {
+            contextStringOverride: payload?.contextString || '',
+            responseMode,
+            onChunk,
+            tag: 'screenIntelligence'
+          }
+        );
+      });
+
+      if (job.cancelled) {
+        sendToRenderer('ai-stream-end', { actionId: 'screenIntelligence' });
+        return cancelledResult(job);
+      }
+      const timings = {
+        screenWaitMs: screen?.waitedMs ?? null,
+        firstChunkMs: job.firstChunkAt ? job.firstChunkAt - job.startedAt : null,
+        totalMs: Date.now() - job.startedAt
+      };
+      console.log(`[analyze-screen] problem=${job.problemId || 'none'} wait=${timings.screenWaitMs}ms first-chunk=${timings.firstChunkMs}ms total=${timings.totalMs}ms`);
+
+      chatContext.push({
+        type: 'screen-intelligence',
+        content: text,
+        timestamp: new Date().toISOString()
+      });
+
+      sendToRenderer('screen-capture-status', { stage: 'complete', message: 'Analysis complete' });
+      sendToRenderer('ai-stream-end', { actionId: 'screenIntelligence' });
+      sendToRenderer('analysis-result', { text, actionId: 'screenIntelligence' });
+      return { success: true, text, problemId: job.problemId, timings };
+    } catch (error) {
+      if (error?.isCancelled || screenJob?.cancelled) {
+        sendToRenderer('ai-stream-end', { actionId: 'screenIntelligence' });
+        if (screenJob && !screenJob.cancelled) cancelAnswerJob(screenJob, 'cancelled');
+        return cancelledResult(screenJob || { reason: 'cancelled' });
+      }
+      console.error('[analyze-screen] Error details:', error);
+      sendToRenderer('ai-stream-end', { actionId: 'screenIntelligence' });
+
+      const isRestart = error?.code === 'RESTART_REQUIRED' || error?.restartRequired;
+      const isPerm = error?.code === 'SCREEN_RECORDING_DENIED' || error?.code === 'PERMISSION_DENIED' || isRestart;
+      const isInitFailed = error?.code === 'CAPTURE_INITIALIZATION_FAILED';
+      const isUnavailable = error?.code === 'CAPTURE_UNAVAILABLE';
+
+      let userMessage;
+      if (isRestart) {
+        userMessage = 'Screen recording permission was enabled in System Settings, but macOS requires Synapse to restart before capture can activate.';
+      } else if (isPerm) {
+        userMessage = error.message || 'Screen Recording permission is not granted. Enable Synapse in System Settings → Privacy & Security → Screen & System Audio Recording.';
+      } else if (isInitFailed) {
+        userMessage = 'Screen capture could not initialize despite permission being available.';
+      } else if (isUnavailable) {
+        userMessage = 'Screen capture is unavailable. Ensure your display is connected and active.';
+      } else {
+        userMessage = mapGeminiErrorMessage(error, 'Screen analysis failed');
+      }
+
+      sendToRenderer('screen-capture-status', { stage: 'error', message: userMessage });
+      sendToRenderer('analysis-result', {
+        error: userMessage,
+        actionId: 'screenIntelligence',
+        code: error?.code
+      });
+      return {
+        error: userMessage,
+        code: error?.code || 'SCREEN_ANALYSIS_FAILED',
+        restartRequired: Boolean(isRestart)
+      };
+    } finally {
+      if (screenJob) endAnswerJob(screenJob);
+    }
+  });
+
+  ipcMain.handle('cancel-analyze-screen', async () => {
+    const job = answerJobs.get('screenIntelligence');
+    if (job) cancelAnswerJob(job, 'user');
+    return { success: true, cancelled: Boolean(job) };
+  });
+
   ipcMain.handle('analyze-stealth', async () => {
     return analyzeForMeeting();
   });
@@ -243,6 +539,7 @@ function registerAssistantIpc({
       }
     };
 
+    let askJob = null;
     try {
       assemblyAiService.flushAllSttHistoryBuffers('pre-ask-ai');
 
@@ -256,9 +553,26 @@ function registerAssistantIpc({
       const sessionSummary = typeof payload?.sessionSummary === 'string'
         ? payload.sessionSummary.trim()
         : '';
-      const contextString = typeof payload?.contextString === 'string'
-        ? payload.contextString.trim()
-        : '';
+      // Screen context is read only while monitoring runs, and only for the
+      // problem on screen now. If the just-changed screen is not fully read
+      // within the wait, the live frame goes along so the model sees it.
+      // Registered before the wait so cancel-ask-ai or a problem change
+      // during it reaches this request.
+      askJob = beginAnswerJob('askAi', null);
+      const screen = await collectScreenContext();
+      if (!askJob.problemId) askJob.problemId = screen?.problemId || null;
+      if (askJob.cancelled) {
+        if (latencyId) latencyTracker.abandon(latencyId);
+        return cancelledResult(askJob, { mode, usedScreenshots: false });
+      }
+      const screenContextText = screen?.context?.text || '';
+      const liveScreenPart = screen?.frame && !screen.context?.viewAnalysed
+        ? { inlineData: { data: Buffer.from(screen.frame.jpeg).toString('base64'), mimeType: screen.frame.mime || 'image/jpeg' } }
+        : null;
+      const contextString = [
+        typeof payload?.contextString === 'string' ? payload.contextString.trim() : '',
+        screenContextText
+      ].filter(Boolean).join('\n\n');
       const enabledScreenshotIds = Array.isArray(payload?.enabledScreenshotIds)
         ? payload.enabledScreenshotIds.filter((id) => typeof id === 'string' && id.trim().length > 0)
         : null;
@@ -272,7 +586,7 @@ function registerAssistantIpc({
       const relation = typeof payload?.relation === 'string' ? payload.relation.trim() : '';
       const confidence = typeof payload?.confidence === 'string' ? payload.confidence.trim() : '';
 
-      if (!transcriptContext && !contextString && !screenshotManager.hasScreenshots()) {
+      if (!transcriptContext && !contextString && !screenshotManager.hasScreenshots() && !liveScreenPart) {
         return {
           success: false,
           error: 'No transcript or screenshots available yet. Start transcription or capture a screenshot first.',
@@ -282,7 +596,9 @@ function registerAssistantIpc({
       }
 
       let firstChunkSeen = false;
+      const job = askJob;
       const onChunk = ({ text, index }) => {
+        if (job.cancelled) return;
         if (!firstChunkSeen) {
           firstChunkSeen = true;
           if (latencyId) latencyTracker.mark(latencyId, 'T5'); // first Gemini token
@@ -301,11 +617,11 @@ function registerAssistantIpc({
 
       if (latencyId) latencyTracker.mark(latencyId, 'T3'); // context assembled (payload already trimmed above)
 
-      if (screenshotManager.hasScreenshots()) {
-        const { imageParts } = await screenshotManager.buildImagePartsFromScreenshots({
-          strict: false,
-          includeIds: enabledScreenshotIds
-        });
+      if (screenshotManager.hasScreenshots() || liveScreenPart) {
+        const manual = screenshotManager.hasScreenshots()
+          ? (await screenshotManager.buildImagePartsFromScreenshots({ strict: false, includeIds: enabledScreenshotIds })).imageParts
+          : [];
+        const imageParts = liveScreenPart ? [liveScreenPart, ...manual] : manual;
 
         if (imageParts.length > 0) {
           usedScreenshots = true;
@@ -354,6 +670,12 @@ function registerAssistantIpc({
         });
       }
 
+      if (job.cancelled) {
+        if (latencyId) latencyTracker.abandon(latencyId);
+        sendToRenderer('ai-stream-end', { actionId: 'askAi' });
+        return cancelledResult(job, { mode, usedScreenshots: false });
+      }
+
       chatContext.push({
         type: 'ask-ai',
         content: text,
@@ -363,7 +685,7 @@ function registerAssistantIpc({
 
       if (latencyId) latencyTracker.complete(latencyId);
       sendToRenderer('ai-stream-end', { actionId: 'askAi' });
-      return { success: true, text, mode, responseMode, usedScreenshots };
+      return { success: true, text, mode, responseMode, usedScreenshots, problemId: job.problemId, screenWaitMs: screen?.waitedMs ?? null };
     } catch (error) {
       // Deliberately interrupted via cancel-ask-ai below (the host updated/
       // extended the question while this was still generating) — not a
@@ -371,10 +693,10 @@ function registerAssistantIpc({
       // toast. auto-answer.js is already mid-dispatch of the question that
       // caused this and will drain the queue the moment askBtn re-enables,
       // which returning here promptly is what actually unblocks.
-      if (error?.isCancelled) {
+      if (error?.isCancelled || askJob?.cancelled) {
         if (latencyId) latencyTracker.abandon(latencyId);
         sendToRenderer('ai-stream-end', { actionId: 'askAi' });
-        return { success: false, cancelled: true, mode, usedScreenshots: false };
+        return askJob?.cancelled ? cancelledResult(askJob, { mode, usedScreenshots: false }) : { success: false, cancelled: true, mode, usedScreenshots: false };
       }
 
       console.error('Error in ask-ai-with-session-context:', error);
@@ -389,6 +711,8 @@ function registerAssistantIpc({
         mode,
         usedScreenshots: false
       };
+    } finally {
+      if (askJob) endAnswerJob(askJob);
     }
   });
 
@@ -404,7 +728,9 @@ function registerAssistantIpc({
   ipcMain.handle('get-response-modes', () => listResponseModes());
 
   ipcMain.handle('cancel-ask-ai', async () => {
-    const cancelled = geminiRuntime.cancelActive('askAi');
+    const job = answerJobs.get('askAi');
+    if (job) cancelAnswerJob(job, 'superseded');
+    const cancelled = geminiRuntime.cancelActive('askAi') || Boolean(job);
     return { success: true, cancelled };
   });
 
@@ -625,6 +951,8 @@ function registerAssistantIpc({
       mobileServer.broadcast('synapse-queue', payload);
     }
   });
+
+  return { onScreenProblemChange };
 }
 
 module.exports = {

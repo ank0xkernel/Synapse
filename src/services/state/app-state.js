@@ -130,13 +130,61 @@ function loadAppState(app) {
     ensureAppStateDir(app);
 
     if (!fs.existsSync(appStatePath)) {
+      const candidatePaths = [
+        path.join(__dirname, '..', '..', '..', APP_STATE_DIR_NAME, APP_STATE_FILE_NAME),
+        path.join(path.dirname(getAppStateBaseDir(app)), 'synapse', APP_STATE_DIR_NAME, APP_STATE_FILE_NAME),
+        path.join(path.dirname(getAppStateBaseDir(app)), 'synapse-interview-coach', 'Cache', APP_STATE_FILE_NAME)
+      ];
+      for (const candidatePath of candidatePaths) {
+        if (candidatePath !== appStatePath && fs.existsSync(candidatePath)) {
+          try {
+            const raw = fs.readFileSync(candidatePath, 'utf8');
+            const candidateState = sanitizeAppState(JSON.parse(raw));
+            if (candidateState && candidateState.geminiApiKey) {
+              writeAppStateFile(app, candidateState);
+              return candidateState;
+            }
+          } catch (_) {}
+        }
+      }
+
       const defaultState = getDefaultAppState();
+      if (process.env.GEMINI_API_KEY) {
+        defaultState.geminiApiKey = process.env.GEMINI_API_KEY.trim();
+      }
+      if (process.env.ASSEMBLY_AI_API_KEY) {
+        defaultState.assemblyAiApiKey = process.env.ASSEMBLY_AI_API_KEY.trim();
+      }
       writeAppStateFile(app, defaultState);
       return defaultState;
     }
 
     const fileContent = fs.readFileSync(appStatePath, 'utf8');
     const sanitizedState = sanitizeAppState(JSON.parse(fileContent));
+
+    if (!sanitizedState.geminiApiKey) {
+      const devStatePath = path.join(__dirname, '..', '..', '..', APP_STATE_DIR_NAME, APP_STATE_FILE_NAME);
+      if (devStatePath !== appStatePath && fs.existsSync(devStatePath)) {
+        try {
+          const raw = fs.readFileSync(devStatePath, 'utf8');
+          const devState = sanitizeAppState(JSON.parse(raw));
+          if (devState && devState.geminiApiKey) {
+            sanitizedState.geminiApiKey = devState.geminiApiKey;
+            if (!sanitizedState.geminiModel && devState.geminiModel) {
+              sanitizedState.geminiModel = devState.geminiModel;
+            }
+          }
+        } catch (_) {}
+      }
+      if (!sanitizedState.geminiApiKey && process.env.GEMINI_API_KEY) {
+        sanitizedState.geminiApiKey = process.env.GEMINI_API_KEY.trim();
+      }
+    }
+
+    if (!sanitizedState.assemblyAiApiKey && process.env.ASSEMBLY_AI_API_KEY) {
+      sanitizedState.assemblyAiApiKey = process.env.ASSEMBLY_AI_API_KEY.trim();
+    }
+
     writeAppStateFile(app, sanitizedState);
     return sanitizedState;
   } catch (error) {

@@ -37,8 +37,42 @@ const THEME_LIGHT = 'light';
 const THEME_DARK = 'dark';
 let activeTheme = THEME_LIGHT;
 const AI_CONTEXT_CHAR_BUDGET = 12000;
-const messageStore = createMessageStore();
+// The problem continuous screen monitoring says is on screen now (null when
+// not monitoring or not yet identified). New answers are stamped with it.
+let activeScreenProblemId = null;
+let lastIdentifiedProblemId = null;
+const messageStore = createMessageStore({ getActiveProblemId: () => activeScreenProblemId });
 let chatMessagesArray = messageStore.getMessages();
+
+// When the screen moves to a different problem, answers about the previous
+// one stop being sent as context. They stay visible and can be toggled back.
+function onScreenProblemSnapshot(snapshot) {
+    const problem = snapshot && snapshot.monitoring !== 'stopped' ? snapshot.problem : null;
+    const nextId = problem && problem.status === 'identified' ? problem.id : null;
+    if (!nextId) {
+        // Stopped, or still reading / unable to tell: answers started now are
+        // not stamped with the previous problem (they get the real one at the
+        // end via setProblemId). The last identified id is kept for comparison.
+        if (!snapshot || snapshot.monitoring === 'stopped') lastIdentifiedProblemId = null;
+        activeScreenProblemId = null;
+        return;
+    }
+    activeScreenProblemId = nextId;
+    if (nextId === lastIdentifiedProblemId) return;
+    const hadProblem = lastIdentifiedProblemId !== null;
+    lastIdentifiedProblemId = nextId;
+    const excluded = messageStore.excludeOtherProblems(nextId);
+    if (!excluded.length && !excluded.restored.length && !hadProblem) return;
+    chatMessagesArray = messageStore.getMessages();
+    for (const message of [...excluded, ...excluded.restored]) updateMessageAiToggleUi(message);
+    const title = problem.title ? `“${problem.title}”` : 'a different problem';
+    const parts = [`Screen moved to ${title}.`];
+    if (excluded.length) parts.push(`${excluded.length} answer(s) about the previous problem were excluded from AI context.`);
+    if (excluded.restored.length) parts.push(`${excluded.restored.length} earlier answer(s) about this problem are back in context.`);
+    addChatMessage('system', parts.join(' '));
+    updateUI();
+}
+window.electronAPI?.onScreenIntelState?.(onScreenProblemSnapshot);
 const transcriptionSourceState = createTranscriptionSourceState();
 
 // Source selection state (default: host/system on, mic off)
@@ -249,6 +283,7 @@ const monitorLiveMic = document.getElementById('monitor-live-mic');
 const monitorLogList = document.getElementById('monitor-log-list');
 const windowResizeHandles = document.querySelectorAll('[data-resize-handle]');
 
+const analyzeScreenBtn = document.getElementById('analyze-screen-btn');
 const screenshotBtn = document.getElementById('screenshot-btn');
 const analyzeBtn = document.getElementById('analyze-btn');
 const screenAiBtn = document.getElementById('screen-ai-btn');
@@ -311,6 +346,7 @@ let hasJdContext = true;
 const aiActionInFlightState = {
     askAi: false,
     screenAi: false,
+    screenIntelligence: false,
     suggest: false,
     notes: false,
     insights: false
@@ -654,6 +690,7 @@ async function runAiActionWithLock(actionId, action) {
 }
 
 let activeScreenAiStream = null;
+let rerunScreenAnalysisAfterCancel = false;
 
 function createStreamHandler(actionId) {
     let accumulatedText = '';
@@ -728,14 +765,16 @@ function createStreamHandler(actionId) {
     // streaming (see cancel-ask-ai / auto-answer.js's supersede check) —
     // whatever text had rendered so far is genuinely stale, not broken, so
     // it's marked rather than left looking like a silently truncated answer.
-    function markInterrupted() {
+    function markInterrupted(customNote) {
         if (actionId === 'askAi' && requestStartAt) {
-            console.log(`[AI] interrupted id=${questionId || 'manual'} +${Date.now() - requestStartAt}ms — question updated`);
+            console.log(`[AI] interrupted id=${questionId || 'manual'} +${Date.now() - requestStartAt}ms — ${customNote ? 'screen problem changed' : 'question updated'}`);
         }
         if (!messageRecord) return;
-        const note = accumulatedText.trim()
-            ? `${accumulatedText}\n\n_(interrupted — answering the updated question instead)_`
-            : '_(skipped — the question was updated before an answer arrived)_';
+        const note = customNote
+            ? `${accumulatedText.trim() ? `${accumulatedText}\n\n` : ''}${customNote}`
+            : accumulatedText.trim()
+                ? `${accumulatedText}\n\n_(interrupted — answering the updated question instead)_`
+                : '_(skipped — the question was updated before an answer arrived)_';
         chatUiManager.updateChatMessageContent(messageRecord.id, note);
     }
 
@@ -762,7 +801,16 @@ function createStreamHandler(actionId) {
         }
     }
 
-    return { start, finalize, markInterrupted, cleanup, fail };
+    /** The main process reports which screen problem the answer was for. */
+    function setProblemId(problemId) {
+        if (!messageRecord || typeof problemId !== 'string' || !problemId) return;
+        if (messageStore.assignProblem(messageRecord.id, problemId, lastIdentifiedProblemId)) {
+            chatMessagesArray = messageStore.getMessages();
+            updateMessageAiToggleUi(messageRecord);
+        }
+    }
+
+    return { start, finalize, markInterrupted, cleanup, fail, setProblemId };
 }
 
 function hasConfiguredGeminiApiKeys(value) {
@@ -1069,13 +1117,17 @@ async function askAiWithSessionContext() {
             stream.start('');
 
             const result = await window.electronAPI.askAiWithSessionContext(payload);
+            stream.setProblemId(result?.problemId);
 
             if (result?.success && result?.text) {
                 stream.finalize(result.text);
             } else if (result?.cancelled) {
                 // Not a failure — auto-answer.js interrupted this on purpose
-                // because the host updated the question. No error toast.
-                stream.markInterrupted();
+                // because the host updated the question, or the screen moved
+                // to a different problem. No error toast.
+                stream.markInterrupted(result.reason === 'problem-changed'
+                    ? '_(stopped — the screen moved to a different problem. Ask again for the new one.)_'
+                    : undefined);
             } else {
                 throw new Error(result?.error || 'Ask AI failed');
             }
@@ -1152,6 +1204,98 @@ function getAnswerSize() {
         }
     });
 })();
+
+async function analyzeScreenAction() {
+    if (!hasGeminiApiKeysConfigured) {
+        showFeedback('Gemini API key missing. Add it in Settings.', 'error');
+        return;
+    }
+
+    if (isAiActionInFlight('screenIntelligence')) {
+        // A new press means the running answer is for an older screen: stop
+        // it and analyse again once it has unwound (see finally below).
+        rerunScreenAnalysisAfterCancel = true;
+        window.electronAPI?.cancelAnalyzeScreen?.();
+        return;
+    }
+    if (isAnalyzing) {
+        return;
+    }
+
+    const bundle = buildFilteredAiContextBundle({ charBudget: AI_CONTEXT_CHAR_BUDGET, emitTruncationLog: false });
+    const responseMode = responseModeSelect ? responseModeSelect.value : 'professional';
+
+    await runAiActionWithLock('screenIntelligence', async () => {
+        const stream = createStreamHandler('screenIntelligence');
+        activeScreenAiStream = stream;
+        if (analyzeScreenBtn) {
+            analyzeScreenBtn.classList.add('analyzing');
+            analyzeScreenBtn.disabled = true;
+            analyzeScreenBtn.setAttribute('aria-busy', 'true');
+        }
+
+        try {
+            setAnalyzing(true);
+            showLoadingOverlay('Capturing screen...');
+            stream.start('**[Screen Analysis]**\n\n');
+
+            const result = await window.electronAPI.analyzeScreen({
+                contextString: bundle.contextString,
+                responseMode
+            });
+
+            stream.setProblemId(result?.problemId);
+            if (result?.success && result?.text) {
+                const header = '**[Screen Analysis]**\n\n';
+                stream.finalize(result.text.startsWith(header) ? result.text : `${header}${result.text}`);
+            } else if (result?.cancelled) {
+                stream.markInterrupted(result.reason === 'problem-changed'
+                    ? '_(stopped — the screen moved to a different problem. Press Analyze for the new one.)_'
+                    : '_(stopped)_');
+            } else if (result?.error) {
+                if (result?.restartRequired) {
+                    showFeedback('Screen recording enabled. Restart Synapse to apply changes.', 'warn');
+                } else {
+                    showFeedback(result.error, 'error');
+                }
+                if (activeScreenAiStream) {
+                    const extra = result?.restartRequired
+                        ? '\n\n*(macOS requires Synapse to restart before screen capture permissions take effect.)*'
+                        : '';
+                    activeScreenAiStream.finalize(`**[Screen Analysis]**\n\n⚠️ ${result.error}${extra}`);
+                    activeScreenAiStream.cleanup();
+                    activeScreenAiStream = null;
+                }
+            }
+        } catch (error) {
+            console.error('Screen intelligence error:', error);
+            showFeedback(error.message || 'Screen analysis failed', 'error');
+            if (activeScreenAiStream) {
+                activeScreenAiStream.finalize(`**[Screen Analysis]**\n\n⚠️ ${error.message || 'Screen analysis failed'}`);
+                activeScreenAiStream.cleanup();
+                activeScreenAiStream = null;
+            }
+        } finally {
+            setAnalyzing(false);
+            hideLoadingOverlay();
+            if (activeScreenAiStream) {
+                activeScreenAiStream.cleanup();
+                activeScreenAiStream = null;
+            }
+            if (analyzeScreenBtn) {
+                analyzeScreenBtn.classList.remove('analyzing');
+                analyzeScreenBtn.disabled = isAnalyzing || isAiActionInFlight('screenIntelligence') || !hasGeminiApiKeysConfigured;
+                analyzeScreenBtn.removeAttribute('aria-busy');
+            }
+            updateUI();
+        }
+    });
+
+    if (rerunScreenAnalysisAfterCancel) {
+        rerunScreenAnalysisAfterCancel = false;
+        await analyzeScreenAction();
+    }
+}
 
 async function analyzeScreenshotsOnly() {
     if (!hasGeminiApiKeysConfigured) {
@@ -1461,9 +1605,14 @@ function updateUI() {
     const canRunTranscription = hasAssemblyAiApiKeyConfigured;
     const askAiInFlight = isAiActionInFlight('askAi');
     const screenAiInFlight = isAiActionInFlight('screenAi');
+    const screenIntelInFlight = isAiActionInFlight('screenIntelligence');
     const suggestInFlight = isAiActionInFlight('suggest');
     const notesInFlight = isAiActionInFlight('notes');
     const insightsInFlight = isAiActionInFlight('insights');
+
+    if (analyzeScreenBtn) {
+        analyzeScreenBtn.disabled = isAnalyzing || screenIntelInFlight || !canRunAiActions;
+    }
 
     if (analyzeBtn) {
         analyzeBtn.disabled = isAnalyzing || askAiInFlight || !canRunAiActions || !hasAiContext;
@@ -1554,6 +1703,10 @@ function applyDisabledReasons(state) {
         const reason = reasons.find(Boolean);
         button.setAttribute('title', reason || button.dataset.defaultTitle);
     };
+
+    reasonFor(analyzeScreenBtn, [
+        !state.canRunAiActions && missingAiKey
+    ]);
 
     reasonFor(analyzeBtn, [
         !state.canRunAiActions && missingAiKey,
@@ -1740,6 +1893,7 @@ function startTimer() {
 function setupEventListeners() {
     setupEventListenersModule({
         windowApi: window.electronAPI,
+        analyzeScreenBtn,
         screenshotBtn,
         analyzeBtn,
         screenAiBtn,
@@ -1770,6 +1924,7 @@ function setupEventListeners() {
         isShortcutPressed,
         updateWindowOpacityValueLabel,
         takeStealthScreenshot,
+        analyzeScreenAction,
         askAiWithSessionContext,
         analyzeScreenshotsOnly,
         clearStealthData,

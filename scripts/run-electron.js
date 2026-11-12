@@ -8,6 +8,7 @@
 const { spawn } = require('child_process');
 const electronBinary = require('electron');
 const { buildNativeAudio } = require('./build-native-audio');
+const { buildNativeOcr } = require('./build-native-ocr');
 
 // Rebuilds the native system-audio helper only when its source changed. A
 // failed build is not fatal: the app falls back to legacy loopback capture and
@@ -16,6 +17,14 @@ try {
   buildNativeAudio();
 } catch (error) {
   console.error('[run-electron] Native audio helper build failed:', error.message);
+}
+
+// Local OCR helper (Apple Vision). A failed build is not fatal: screen OCR
+// falls back to the configured vision model.
+try {
+  buildNativeOcr();
+} catch (error) {
+  console.error('[run-electron] Native OCR helper build failed:', error.message);
 }
 
 const env = { ...process.env };

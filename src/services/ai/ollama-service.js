@@ -334,7 +334,9 @@ class OllamaService {
     const prompt = buildScreenshotAnalysisPrompt({
       contextString,
       additionalContext,
-      programmingLanguage: this.programmingLanguage
+      programmingLanguage: this.programmingLanguage,
+      responseMode: options.responseMode,
+      screenshotCount: options.screenshotCount || imageParts.length
     });
 
     const streamOptions = { onChunk: options.onChunk };

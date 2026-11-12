@@ -32,9 +32,10 @@ function normalizeGeminiApiKeys(value) {
 }
 
 function getEnvPath(app) {
-  return app.isPackaged
-    ? path.join(process.resourcesPath, '.env')
-    : path.join(__dirname, '..', '..', '.env');
+  if (app && app.isPackaged && typeof app.getPath === 'function') {
+    return path.join(app.getPath('userData'), '.env');
+  }
+  return path.join(__dirname, '..', '..', '.env');
 }
 
 function parseBoolean(value, defaultValue) {
@@ -117,6 +118,7 @@ function validateRequiredEnvironment(environment, envPath) {
 
 function loadApplicationEnvironment(app) {
   const envPath = getEnvPath(app);
+  let parsed = null;
 
   // dotenv writes every key it finds straight into process.env, including
   // NODE_OPTIONS. Electron re-reads that variable and rejects it once the
@@ -124,7 +126,19 @@ function loadApplicationEnvironment(app) {
   // still parsed and reported below; it is just applied via the js-flags switch
   // in start-application.js instead of through the environment.
   const nodeOptionsBefore = process.env.NODE_OPTIONS;
-  const parsed = dotenv.config({ path: envPath });
+
+  // In packaged mode, if the user config does not exist yet in userData,
+  // check if a read-only template was shipped in resourcesPath.
+  if (fs.existsSync(envPath)) {
+    parsed = dotenv.config({ path: envPath });
+  } else if (app && app.isPackaged && typeof process.resourcesPath === 'string') {
+    const resourceEnv = path.join(process.resourcesPath, '.env');
+    if (fs.existsSync(resourceEnv)) {
+      parsed = dotenv.config({ path: resourceEnv });
+    }
+  } else {
+    parsed = dotenv.config({ path: envPath });
+  }
 
   if (nodeOptionsBefore === undefined) {
     delete process.env.NODE_OPTIONS;
@@ -177,6 +191,14 @@ function saveApplicationEnvironment(app, values = {}) {
   const envPath = getEnvPath(app);
   const environment = normalizeApplicationEnvironment(values);
   syncProcessEnvironment(environment);
+
+  try {
+    const parentDir = path.dirname(envPath);
+    if (!fs.existsSync(parentDir)) {
+      fs.mkdirSync(parentDir, { recursive: true });
+    }
+  } catch (_) {}
+
   fs.writeFileSync(envPath, buildEnvironmentFileContent(environment), 'utf8');
 
   try {

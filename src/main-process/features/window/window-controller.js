@@ -558,6 +558,7 @@ function createWindowController({
     };
 
     registerShortcut('screenAi', triggerCommand('screen'));
+    registerShortcut('analyzeScreen', triggerCommand('analyze-screen'));
     registerShortcut('suggest', triggerCommand('suggest'));
     registerShortcut('notes', triggerCommand('notes'));
     registerShortcut('insights', triggerCommand('insights'));

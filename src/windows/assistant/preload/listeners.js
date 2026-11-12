@@ -102,6 +102,11 @@ function createEventActions(ipcRenderer) {
     label: 'onAiStreamEnd'
   });
 
+  const onScreenCaptureStatus = createEventListener(ipcRenderer, {
+    channel: 'screen-capture-status',
+    label: 'onScreenCaptureStatus'
+  });
+
   const rawOnSttDebug = createEventListener(ipcRenderer, {
     channel: 'stt-debug',
     label: 'onSttDebug'
@@ -146,7 +151,14 @@ function createEventActions(ipcRenderer) {
     label: 'onWebSyncState'
   });
 
+  // Continuous screen intelligence snapshots (main window only).
+  const onScreenIntelState = createEventListener(ipcRenderer, {
+    channel: 'screen-intel:state',
+    label: 'onScreenIntelState'
+  });
+
   return {
+    onScreenIntelState,
     onWebSyncState,
     onNativeSystemAudioFrame,
     onNativeSystemAudioStatus,
@@ -166,6 +178,7 @@ function createEventActions(ipcRenderer) {
     onAiStreamStart,
     onAiStreamChunk,
     onAiStreamEnd,
+    onScreenCaptureStatus,
     onToggleVoiceRecognition,
     onTriggerAskAi,
     onTriggerCommand,

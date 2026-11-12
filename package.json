@@ -13,7 +13,10 @@
     "build:linux": "node scripts/run-build.js --linux",
     "icons": "node scripts/generate-icons.js",
     "build:native": "node scripts/build-native-audio.js --force",
-    "test": "node scripts/run-tests.js"
+    "build:native:ocr": "node scripts/build-native-ocr.js --force",
+    "test": "node scripts/run-tests.js",
+    "test:screen:live": "node scripts/run-live-screen-test.js",
+    "test:modec:live": "node scripts/run-live-screen-test.js tests/verify-mode-c-live.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
@@ -57,15 +60,22 @@
       "category": "public.app-category.education",
       "icon": "assets/icon.icns",
       "minimumSystemVersion": "13.0",
+      "entitlements": "assets/entitlements.mac.plist",
+      "entitlementsInherit": "assets/entitlements.mac.inherit.plist",
       "extraResources": [
         {
           "from": "native/macos-audio-capture/build/synapse-audio-capture",
           "to": "native/synapse-audio-capture"
+        },
+        {
+          "from": "native/macos-ocr/build/synapse-ocr",
+          "to": "native/synapse-ocr"
         }
       ],
       "extendInfo": {
         "NSAudioCaptureUsageDescription": "Synapse listens to your Mac's audio output so it can transcribe the other person on your call. Your speakers or headphones keep working normally.",
         "NSMicrophoneUsageDescription": "Synapse transcribes your microphone so it can coach you on the answers you give during practice.",
+        "NSScreenCaptureDescription": "Synapse captures your screen on demand to analyze visible coding problems, technical questions, and diagrams.",
         "NSCameraUsageDescription": "Not used by Synapse.",
         "NSAppleEventsUsageDescription": "Synapse inserts a drafted answer into your focused editor when you explicitly ask it to."
       }

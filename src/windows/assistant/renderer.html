@@ -25,6 +25,7 @@
   <link rel="stylesheet" href="ui/brand-tokens.css">
   <link rel="stylesheet" href="ui/tokens.css">
   <link rel="stylesheet" href="ui/app.css">
+  <link rel="stylesheet" href="ui/screen-intel.css">
 </head>
 <body class="theme-dark">
   <div id="app" class="app">
@@ -83,6 +84,12 @@
             </select>
           </label>
 
+          <button id="analyze-screen-btn" class="btn btn-sm analyze-screen-btn" type="button" aria-label="Analyze Screen" data-tip="Analyze Screen  ⌥⇧D">
+            <svg class="analyze-screen-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="7" y1="10" x2="17" y2="10"/></svg>
+            <span class="spinner analyze-screen-spinner" hidden aria-hidden="true"></span>
+            <span class="analyze-screen-label">Analyze Screen</span>
+          </button>
+
           <button id="screenshot-btn" class="icon-btn screenshot-btn" type="button" aria-label="Capture screen" data-tip="Capture screen  ⌥⇧S">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8V6a2 2 0 0 1 2-2h2"/><path d="M16 4h2a2 2 0 0 1 2 2v2"/><path d="M20 16v2a2 2 0 0 1-2 2h-2"/><path d="M8 20H6a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3"/></svg>
             <span id="screenshot-count" class="count-badge screenshot-count" aria-label="Screenshots captured" hidden>0</span>
@@ -139,6 +146,49 @@
       </button>
       <button type="button" id="session-details" class="btn btn-ghost btn-sm">Session details</button>
     </div>
+    <!-- Continuous screen intelligence. Hidden until a monitoring session exists;
+         every value comes from the main-process session snapshot. -->
+    <section id="screen-intel" class="screen-intel" hidden aria-label="Screen monitoring">
+      <div class="screen-intel-row">
+        <span class="screen-intel-dot" aria-hidden="true"></span>
+        <div class="screen-intel-status" role="status" aria-live="polite">
+          <span id="screen-intel-primary" class="screen-intel-primary"></span>
+          <span id="screen-intel-time" class="screen-intel-time"></span>
+          <span id="screen-intel-hint" class="screen-intel-hint"></span>
+        </div>
+        <div id="screen-intel-chips" class="screen-intel-chips"></div>
+        <button id="screen-intel-retry" class="btn btn-ghost btn-sm" type="button" hidden>Retry</button>
+        <button id="screen-intel-pause" class="btn btn-ghost btn-sm" type="button">Pause</button>
+        <button id="screen-intel-stop" class="btn btn-ghost btn-sm" type="button">Stop</button>
+        <button id="screen-intel-toggle" class="btn btn-ghost btn-sm" type="button" aria-expanded="false" aria-controls="screen-intel-details">Details</button>
+      </div>
+      <div id="screen-intel-details" class="screen-intel-details" hidden>
+        <dl class="screen-intel-facts">
+          <div><dt>Monitoring</dt><dd id="screen-intel-monitoring"></dd></div>
+          <div><dt>Current screen</dt><dd id="screen-intel-view"></dd></div>
+          <div><dt>Active problem</dt><dd id="screen-intel-problem"></dd></div>
+          <div><dt>Last capture</dt><dd id="screen-intel-last-capture"></dd></div>
+          <div><dt>Last analysis</dt><dd id="screen-intel-last-analysis"></dd></div>
+          <div><dt>Analysis took</dt><dd id="screen-intel-duration"></dd></div>
+        </dl>
+        <p id="screen-intel-error" class="screen-intel-error" hidden></p>
+        <div id="screen-intel-maps" class="screen-intel-maps"></div>
+        <ul id="screen-intel-regions" class="screen-intel-regions"></ul>
+        <div class="screen-intel-actions">
+          <button id="screen-intel-latest" class="btn btn-ghost btn-sm" type="button">View latest capture</button>
+          <button id="screen-intel-restart" class="btn btn-ghost btn-sm" type="button">Clear and restart</button>
+        </div>
+        <div id="screen-intel-inspector" class="screen-intel-inspector" hidden>
+          <div class="screen-intel-inspector-head">
+            <span id="screen-intel-inspector-title" class="screen-intel-inspector-title"></span>
+            <button id="screen-intel-reanalyse" class="btn btn-ghost btn-sm" type="button" hidden>Reanalyse</button>
+            <button id="screen-intel-inspector-close" class="btn btn-ghost btn-sm" type="button" aria-label="Close region inspector">Close</button>
+          </div>
+          <img id="screen-intel-inspector-image" class="screen-intel-inspector-image" alt="Captured screen region" hidden>
+          <pre id="screen-intel-inspector-text" class="screen-intel-inspector-text"></pre>
+        </div>
+      </div>
+    </section>
     <main id="chat-container" class="chat-container">
       <div id="chat-messages" class="chat-messages" role="log" aria-live="polite" aria-label="Transcript and answers"></div>
       <!-- Outside #chat-messages so Clear (which empties the feed) cannot remove it;
@@ -204,6 +254,7 @@
       </header>
       <div class="sheet-body">
         <ul class="checklist" aria-label="Readiness">
+          <li class="check-row" data-check="screen" data-tone="idle"><span class="check-dot" aria-hidden="true"></span><span class="check-text"><span class="check-title">Screen recording</span><span class="check-detail">Checking…</span></span><span class="check-value"></span></li>
           <li class="check-row" data-check="system-audio" data-tone="idle"><span class="check-dot" aria-hidden="true"></span><span class="check-text"><span class="check-title">System audio</span><span class="check-detail">Checking…</span></span><span class="check-value"></span></li>
           <li class="check-row" data-check="playback" data-tone="idle"><span class="check-dot" aria-hidden="true"></span><span class="check-text"><span class="check-title">Playback</span><span class="check-detail">Checking…</span></span><span class="check-value"></span></li>
           <li class="check-row" data-check="microphone" data-tone="idle"><span class="check-dot" aria-hidden="true"></span><span class="check-text"><span class="check-title">Microphone</span><span class="check-detail">Checking…</span></span><span class="check-value"></span></li>
@@ -488,8 +539,13 @@
 
         <section class="setup-step" data-step="permissions" hidden>
           <p class="setup-eyebrow">Step 1 of 5 · Permissions</p>
-          <h2 tabindex="-1">Let Synapse hear your call</h2>
-          <p>macOS asks once for permission to record system audio. Synapse only listens while Listen is on, and macOS shows its recording indicator in the menu bar whenever it does.</p>
+          <h2 tabindex="-1">Let Synapse hear and see your session</h2>
+          <p>macOS asks once for permission to record system audio and capture your screen. Synapse only captures when requested, and never interrupts active sessions.</p>
+          <div class="setup-row">
+            <div><strong>Screen recording</strong><span>Required for Screen Analysis and coding question detection.</span></div>
+            <button class="btn btn-sm" type="button" data-setup="request-screen">Check screen</button>
+          </div>
+          <p class="setup-result" data-result="permissions-screen" hidden></p>
           <p class="setup-result" data-result="permissions-audio" hidden></p>
           <div class="setup-row">
             <div><strong>Microphone</strong><span>Optional. Lets Synapse transcribe your own answers.</span></div>
@@ -588,5 +644,6 @@
   <!-- Loaded after renderer.js so the controls it dispatches to already exist. -->
   <script type="module" src="renderer/features/command-bar/command-bar.js"></script>
   <script type="module" src="renderer/features/auto-answer/auto-answer.js"></script>
+  <script type="module" src="renderer/features/screen-intel/screen-intel-bar.js"></script>
 </body>
 </html>

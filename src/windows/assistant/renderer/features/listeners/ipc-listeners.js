@@ -47,20 +47,46 @@ export function setupIpcListeners({
         const stream = typeof getActiveScreenAiStream === 'function' ? getActiveScreenAiStream() : null;
         console.log('[onAnalysisResult] stream active:', !!stream, 'has error:', !!data.error);
         if (data.error) {
-            addChatMessage('system', `Error: ${data.error}`);
-            showFeedback('Analysis failed', 'error');
+            if (stream) {
+                stream.finalize(`**[Screen Analysis]**\n\n⚠️ ${data.error}`);
+            } else {
+                addChatMessage('system', `Error: ${data.error}`);
+            }
+            showFeedback(data.error.length < 60 ? data.error : 'Analysis failed', 'error');
         } else if (stream) {
-            stream.finalize(data.text);
+            const header = '**[Screen Analysis]**\n\n';
+            const content = data.text?.startsWith(header) ? data.text : `${header}${data.text || ''}`;
+            stream.finalize(content);
+            showFeedback('Analysis complete', 'success');
+        } else if (data.actionId === 'screenIntelligence') {
+            // Analyze Screen finalizes its own card from the invoke result; this
+            // event can arrive after that card is closed, and must not add a
+            // second copy of the same answer (UI and AI context).
             showFeedback('Analysis complete', 'success');
         } else {
             console.log('[onAnalysisResult] No active stream - creating new message');
-            addChatMessage('ai-response', data.text);
+            const header = '**[Screen Analysis]**\n\n';
+            const content = data.text?.startsWith(header) ? data.text : `${header}${data.text || ''}`;
+            addChatMessage('ai-response', content);
             showFeedback('Analysis complete', 'success');
         }
 
         // Clean up the screen AI stream after processing the result
         if (typeof clearActiveScreenAiStream === 'function') {
             clearActiveScreenAiStream();
+        }
+    });
+
+    windowApi.onScreenCaptureStatus?.((status) => {
+        if (!status) return;
+        if (status.stage === 'capturing') {
+            showLoadingOverlay(status.message || 'Capturing screen...');
+        } else if (status.stage === 'processing') {
+            showLoadingOverlay(status.message || 'Processing image...');
+        } else if (status.stage === 'analyzing') {
+            showLoadingOverlay(status.message || 'Analyzing with AI...');
+        } else if (status.stage === 'complete' || status.stage === 'error') {
+            hideLoadingOverlay();
         }
     });
 

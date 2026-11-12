@@ -66,6 +66,10 @@ class GeminiService {
     this.conversationHistory = [];
     this.maxHistoryLength = 20;
 
+    // Streams that go silent are aborted and reported (see _executeRequest).
+    this.streamFirstChunkTimeoutMs = 30000;
+    this.streamIdleTimeoutMs = 20000;
+
     // Cancellation — keyed by a caller-supplied tag (e.g. 'askAi') rather
     // than a request id, since the caller (ipc.js) knows which logical slot
     // it wants to interrupt but never sees an id until the promise already
@@ -242,13 +246,16 @@ class GeminiService {
   }
 
   isRetryableError(error) {
-    const message = String(error?.message || '');
+    const message = String(error?.message || '').toLowerCase();
 
     return (
       message.includes('429') ||
       message.includes('500') ||
       message.includes('503') ||
-      message.includes('RATE_LIMIT')
+      message.includes('rate_limit') ||
+      message.includes('fetch failed') ||
+      message.includes('econnreset') ||
+      message.includes('etimedout')
     );
   }
 
@@ -401,26 +408,62 @@ class GeminiService {
       // Streaming path: use generateContentStream when onChunk callback is provided
       if (typeof request.onChunk === 'function') {
         console.log(`[Gemini API] Streaming ${request.type} request started (${request.priority || 'background'})`);
-        const streamResult = await this.model.generateContentStream(payload, requestOptions);
-        let fullText = '';
-        let chunkIndex = 0;
-
-        for await (const chunk of streamResult.stream) {
-          const chunkText = chunk.text();
-          if (chunkText) {
-            fullText += chunkText;
-            chunkIndex += 1;
-            if (!request._firstChunkSent) {
-              request._firstChunkSent = true;
-              this.emitTiming(request, 'first-token');
-            }
-            request.onChunk({ text: chunkText, index: chunkIndex });
-          }
+        // Watchdog: a provider stream that stalls (seen live: no data for 45 s,
+        // no error) would leave the answer spinning forever. Its own abort
+        // signal follows the caller's cancel and fires on silence.
+        const watchdog = new AbortController();
+        const outer = request.controller;
+        const followOuter = () => watchdog.abort();
+        if (outer) {
+          if (outer.signal.aborted) watchdog.abort();
+          else outer.signal.addEventListener('abort', followOuter, { once: true });
         }
+        let timedOut = false;
+        let timer = null;
+        const arm = (ms) => {
+          clearTimeout(timer);
+          timer = setTimeout(() => { timedOut = true; watchdog.abort(); }, ms);
+        };
+        arm(this.streamFirstChunkTimeoutMs);
+        try {
+          const streamResult = await this.model.generateContentStream(payload, { signal: watchdog.signal });
+          // The SDK also exposes the aggregated response as a promise. Nothing
+          // here reads it, and after an abort it rejects ("Error reading from
+          // the stream") with no handler: an unhandled rejection on every
+          // cancel. The stream loop below already surfaces any real error.
+          if (streamResult.response && typeof streamResult.response.catch === 'function') streamResult.response.catch(() => {});
+          let fullText = '';
+          let chunkIndex = 0;
 
-        this.dailyTokenCount += this.estimateTokens(fullText);
-        console.log(`[Gemini API] Streaming ${request.type} request completed (${chunkIndex} chunks, ${fullText.length} chars)`);
-        return fullText;
+          for await (const chunk of streamResult.stream) {
+            arm(this.streamIdleTimeoutMs);
+            const chunkText = chunk.text();
+            if (chunkText) {
+              fullText += chunkText;
+              chunkIndex += 1;
+              if (!request._firstChunkSent) {
+                request._firstChunkSent = true;
+                this.emitTiming(request, 'first-token');
+              }
+              request.onChunk({ text: chunkText, index: chunkIndex });
+            }
+          }
+
+          this.dailyTokenCount += this.estimateTokens(fullText);
+          console.log(`[Gemini API] Streaming ${request.type} request completed (${chunkIndex} chunks, ${fullText.length} chars)`);
+          return fullText;
+        } catch (error) {
+          if (timedOut && !(outer && outer.signal.aborted)) {
+            const timeout = new Error(`Gemini response timed out: no data for ${Math.round((request._firstChunkSent ? this.streamIdleTimeoutMs : this.streamFirstChunkTimeoutMs) / 1000)} s`);
+            timeout.code = 'TIMEOUT';
+            timeout.isTimeout = true;
+            throw timeout;
+          }
+          throw error;
+        } finally {
+          clearTimeout(timer);
+          if (outer) outer.signal.removeEventListener('abort', followOuter);
+        }
       }
 
       console.log(`[Gemini API] Non-streaming ${request.type} request started (${request.priority || 'background'})`);
@@ -581,10 +624,22 @@ class GeminiService {
     const prompt = buildScreenshotAnalysisPrompt({
       contextString,
       additionalContext,
-      programmingLanguage: this.programmingLanguage
+      programmingLanguage: this.programmingLanguage,
+      responseMode: options.responseMode,
+      screenshotCount: options.screenshotCount || imageParts.length
     });
 
-    const streamOptions = { onChunk: options.onChunk };
+    // A tagged call is the user pressing Analyze: a live answer, so it takes
+    // the realtime lane and the response mode's limits instead of queueing
+    // behind background work (OCR fallback, notes). The tag also lets a newer
+    // request or a problem change abort it (cancel(tag)).
+    // Floor of 1600 output tokens: thinking draws on the same budget, and at
+    // the Quick mode's 300 a screen of code came back empty (measured on
+    // gemini-3.5-flash-lite, 2026-11-12).
+    const realtime = options.tag ? this.realtimeOptions(options) : null;
+    const streamOptions = realtime
+      ? { ...realtime, generation: { ...realtime.generation, maxOutputTokens: Math.max(realtime.generation.maxOutputTokens || 0, 1600) } }
+      : { onChunk: options.onChunk };
     const result = await this.generateMultimodal([
       { text: prompt },
       ...imageParts

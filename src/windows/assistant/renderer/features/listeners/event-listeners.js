@@ -1,5 +1,6 @@
 export function setupEventListeners({
     windowApi,
+    analyzeScreenBtn,
     screenshotBtn,
     analyzeBtn,
     screenAiBtn,
@@ -30,6 +31,7 @@ export function setupEventListeners({
     isShortcutPressed,
     updateWindowOpacityValueLabel,
     takeStealthScreenshot,
+    analyzeScreenAction,
     askAiWithSessionContext,
     analyzeScreenshotsOnly,
     clearStealthData,
@@ -55,6 +57,7 @@ export function setupEventListeners({
     closeSettings,
     saveSettings
 }) {
+    if (analyzeScreenBtn) analyzeScreenBtn.addEventListener('click', analyzeScreenAction);
     if (screenshotBtn) screenshotBtn.addEventListener('click', takeStealthScreenshot);
     if (analyzeBtn) analyzeBtn.addEventListener('click', askAiWithSessionContext);
     if (screenAiBtn) screenAiBtn.addEventListener('click', analyzeScreenshotsOnly);
@@ -214,6 +217,18 @@ export function setupEventListeners({
             analyzeScreenshotsOnly().catch((error) => {
                 console.error('Local Screen AI shortcut failed:', error);
                 addMonitorLog('error', 'shortcut-screen-ai-failed', error.message);
+            });
+            return;
+        }
+
+        if (isShortcutPressed?.(event, 'analyzeScreen')) {
+            event.preventDefault();
+            if (analyzeScreenBtn?.disabled) {
+                return;
+            }
+            analyzeScreenAction().catch((error) => {
+                console.error('Local Analyze Screen shortcut failed:', error);
+                addMonitorLog('error', 'shortcut-analyze-screen-failed', error.message);
             });
             return;
         }
