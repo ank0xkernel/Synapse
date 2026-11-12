@@ -309,6 +309,61 @@ const SCENES = {
     await sleep(1500);
   },
 
+  /**
+   * Conversation history, part 1: a transcript, a typed message through the
+   * real composer and a streamed answer, then a rename and an answer-style
+   * change through the real History sheet and picker. Run `history-restore`
+   * in a second launch to check what survived the restart.
+   */
+  async 'history-write'({ win, send }) {
+    const run = (fn, ...a) => win.webContents.executeJavaScript(js(fn, ...a));
+    const assert = (ok, message) => { if (!ok) throw new Error(message); };
+    await disableAutoAnswer(win);
+    send('vosk-final', { source: 'system', text: 'History check: how does a B-tree stay balanced?' });
+    await sleep(2500);
+    await run(() => {
+      const input = document.getElementById('chat-manual-input');
+      input.value = 'History check: typed note from the composer';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      document.getElementById('chat-manual-send').click();
+    });
+    await run(() => window.__synapseBeginDemoStream?.());
+    send('ai-stream-chunk', { actionId: 'askAi', text: 'Splits and merges keep every leaf at the same depth.', index: 1 });
+    await sleep(200);
+    await run(() => window.__synapseEndDemoStream?.(true));
+    await run(() => { const s = document.getElementById('response-mode-select'); s.value = 'technical'; s.dispatchEvent(new Event('change')); });
+    await sleep(600);
+    await run(() => document.getElementById('history-btn').click());
+    await sleep(800);
+    const first = await run(() => document.querySelector('#history-list .history-item[data-current="true"] .history-title')?.textContent);
+    assert(first === 'History check: how does a B-tree stay balanced?', `History title was ${first}`);
+    await run(() => [...document.querySelectorAll('#history-list .history-item[data-current="true"] button')].find((b) => b.textContent === 'Rename').click());
+    await sleep(200);
+    await run(() => { const f = document.querySelector('.history-rename'); f.querySelector('input').value = 'Renamed in History'; f.requestSubmit(); });
+    await sleep(800);
+    const renamed = await run(() => document.querySelector('#history-list .history-item[data-current="true"] .history-title')?.textContent);
+    assert(renamed === 'Renamed in History', `rename shown as ${renamed}`);
+    const meta = await run(() => document.querySelector('#history-list .history-item[data-current="true"] .history-meta')?.textContent);
+    assert(/3 messages/.test(meta), `expected 3 saved messages, meta: ${meta}`);
+    console.log(`[ui-capture] history-write: saved "${renamed}" (${meta}); status: ${await run(() => document.getElementById('history-sync-status').textContent)}`);
+  },
+
+  /** Conversation history, part 2 (a fresh launch): the open conversation and answer style came back. */
+  async 'history-restore'({ win }) {
+    const run = (fn) => win.webContents.executeJavaScript(js(fn));
+    const assert = (ok, message) => { if (!ok) throw new Error(message); };
+    const texts = await run(() => [...document.querySelectorAll('#chat-messages .chat-message .message-content')].map((e) => e.textContent.trim()));
+    assert(texts.some((t) => t.includes('how does a B-tree stay balanced')), `transcript not restored: ${JSON.stringify(texts)}`);
+    assert(texts.some((t) => t.includes('typed note from the composer')), 'typed message not restored');
+    assert(texts.some((t) => t.includes('Splits and merges')), 'answer not restored');
+    assert(await run(() => document.getElementById('response-mode-select').value) === 'technical', 'answer style not restored');
+    await run(() => document.getElementById('history-btn').click());
+    await sleep(800);
+    const title = await run(() => document.querySelector('#history-list .history-item[data-current="true"] .history-title')?.textContent);
+    assert(title === 'Renamed in History', `rename did not survive restart: ${title}`);
+    console.log(`[ui-capture] history-restore: ${texts.length} message(s) restored, title "${title}", status: ${await run(() => document.getElementById('history-sync-status').textContent)}`);
+  },
+
   async error({ send }) {
     send('vosk-error', { source: 'system', error: 'AssemblyAI rejected the API key: it has been disabled or deleted.', unexpected: false });
   }
@@ -344,8 +399,9 @@ async function runUiCapture({ app, getMainWindow, baseSendToRenderer, outDir, sc
       if (sceneName !== 'onboarding') window.__synapseCloseOnboarding?.();
       document.querySelectorAll('.sheet').forEach((sheet) => sheet.classList.add('hidden'));
       document.getElementById('close-settings')?.click();
+      // history-restore checks what the last launch left on screen, so it must not be cleared.
       const clear = document.getElementById('clear-btn');
-      if (clear && !clear.disabled) clear.click();
+      if (sceneName !== 'history-restore' && clear && !clear.disabled) clear.click();
     }, name));
     await sleep(500);
     console.log(`[ui-capture] scene ${name}: ready`);
