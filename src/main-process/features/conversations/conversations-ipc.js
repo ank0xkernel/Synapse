@@ -25,23 +25,36 @@ function registerConversationsIpc({ ipcMain, app, webSync, sendToWindow, log = (
       lastState = status.state;
       sendToWindow('conversations:status', status);
     },
-    onRemoteChange: (change) => sendToWindow('conversations:remote', change),
+    onRemoteChange: (change) => {
+      sendToWindow('conversations:remote', change);
+      // The open conversation was deleted on the website: its screen problems go with it.
+      if (change?.currentDeleted) currentChanged();
+    },
     onSettings: (settings) => sendToWindow('conversations:settings', settings)
   });
 
   const changed = (value) => { sync.notifyLocalChange(); return value; };
   // Screen problems belong to the open conversation; listeners reload them when it changes.
   const currentListeners = new Set();
+  const beforeListeners = new Set();
+  // Pending problem saves belong to the conversation that is still open: write them before it changes.
+  const beforeChange = () => {
+    for (const fn of beforeListeners) { try { fn(); } catch (error) { log('error', `problem save failed: ${error.message}`); } }
+  };
   const currentChanged = (value) => {
     for (const fn of currentListeners) { try { fn(store.getProblems()); } catch (error) { log('error', `problem reload failed: ${error.message}`); } }
     return value;
   };
 
   ipcMain.handle('conversations:append', (_e, message) => changed(store.appendMessage(message)));
-  ipcMain.handle('conversations:new', () => currentChanged(changed(store.startNew())));
+  ipcMain.handle('conversations:new', () => { beforeChange(); return currentChanged(changed(store.startNew())); });
   ipcMain.handle('conversations:list', () => store.list());
   ipcMain.handle('conversations:current', () => store.current());
-  ipcMain.handle('conversations:open', (_e, id) => (ID.test(String(id)) ? currentChanged(store.open(String(id))) : null));
+  ipcMain.handle('conversations:open', (_e, id) => {
+    if (!ID.test(String(id))) return null;
+    beforeChange();
+    return currentChanged(store.open(String(id)));
+  });
   ipcMain.handle('conversations:rename', (_e, { id, title } = {}) => (ID.test(String(id)) ? changed(store.rename(String(id), title)) : null));
   ipcMain.handle('conversations:delete', (_e, id) => {
     if (!ID.test(String(id))) return false;
@@ -69,7 +82,8 @@ function registerConversationsIpc({ ipcMain, app, webSync, sendToWindow, log = (
     problems: {
       load: () => store.getProblems(),
       save: (problems) => store.setProblems(problems),
-      onCurrentChange: (fn) => { currentListeners.add(fn); return () => currentListeners.delete(fn); }
+      onCurrentChange: (fn) => { currentListeners.add(fn); return () => currentListeners.delete(fn); },
+      onBeforeCurrentChange: (fn) => { beforeListeners.add(fn); return () => beforeListeners.delete(fn); }
     },
     cleanup: () => {
       sync.stop();

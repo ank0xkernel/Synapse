@@ -614,6 +614,7 @@ async function startApplication() {
       // Problems persist with the open conversation (desktop only, never synced).
       problemStore: conversationsControl.problems
     });
+    conversationsControl.problems.onBeforeCurrentChange(() => screenIntel?.saveProblems());
     conversationsControl.problems.onCurrentChange((saved) => screenIntel?.loadProblems(saved));
 
     // Point the brief at userData in packaged builds before anything reads it.

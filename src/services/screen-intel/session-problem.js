@@ -12,7 +12,7 @@
 // only follows the viewport across a confirmed boundary, after the scroll
 // settles. Nothing of a previous problem is discarded.
 
-const { spanOf } = require('./region-ledger');
+const { spanOf, INFLIGHT } = require('./region-ledger');
 const { SAME_THRESHOLD, MIN_SHINGLES, shinglesOf, instructionTextOf, isGenericHeading, normTitle } = require('./problem-tracker');
 const pb = require('./problem-boundaries');
 
@@ -319,6 +319,7 @@ function createProblemIdentity({ getRun, tracker, isVisible, now, log, onProblem
   /** Decides the current screen again from what is already read (after the problem registry was replaced). */
   function reevaluate() {
     const run = getRun();
+    if (!run.sessionId || run.stopped) return; // a stopped screen is not read into the new registry
     const latest = liveRecordsOf(run, run.epoch).sort((a, b) => b.seq - a.seq)[0];
     if (latest) evaluateProblem(run, latest);
   }
@@ -391,7 +392,8 @@ function createProblemIdentity({ getRun, tracker, isVisible, now, log, onProblem
     const keepPast = new Set(past);
     const removed = run.ledger.prune((r) => {
       if (r.epoch === run.epoch) return !(DEAD.has(r.status) && (r.updatedAt || r.capturedAt || 0) < cutoff);
-      return keepPast.has(r.epoch) && LIVE.has(r.status) && !r.duplicateOf;
+      // Work still running on a screen left by New Problem finishes for the previous problem.
+      return keepPast.has(r.epoch) && (LIVE.has(r.status) || INFLIGHT.has(r.status)) && !r.duplicateOf;
     });
     if (removed) {
       for (const id of run.recap.keys()) if (!run.ledger.get(id)) run.recap.delete(id);

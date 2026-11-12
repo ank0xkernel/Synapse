@@ -20,7 +20,9 @@ function createExplicitProblems({ getRun, tracker, identity, engineControl, adop
   let bindNext = null;
 
   /** Problem to bind to the first screen of the next run (chosen while monitoring was stopped). */
-  function takePendingBind() { const id = bindNext; bindNext = null; return id; }
+  function takePendingBind() { const id = bindNext; bindNext = null; return tracker.knows(id) ? id : null; }
+  /** The registry was replaced (another conversation): a problem chosen for the next screen no longer exists. */
+  function clearPendingBind() { bindNext = null; }
 
   /** Undecided boundaries in view become the start of this problem: the user just said so. */
   function claimVisibleCandidates(run, problemId) {
@@ -50,6 +52,11 @@ function createExplicitProblems({ getRun, tracker, identity, engineControl, adop
       epoch = await engineControl.beginEpoch({ epoch: target });
     } catch (error) {
       log('begin-epoch-failed', error);
+    }
+    if (tracker.get(problem.id) !== problem) {
+      // The problem registry was replaced (another conversation opened) while the engine answered.
+      run.explicitEpochs.delete(target);
+      return { success: false, code: 'REGISTRY_CHANGED', message: 'The conversation changed. Press New problem again.' };
     }
     if (run !== getRun() || run.stopped) {
       run.explicitEpochs.delete(target);
@@ -141,7 +148,7 @@ function createExplicitProblems({ getRun, tracker, identity, engineControl, adop
     return { success: true, problem: tracker.describe() };
   }
 
-  return { newProblem, activateProblem, resolveCandidate, takePendingBind };
+  return { newProblem, activateProblem, resolveCandidate, takePendingBind, clearPendingBind };
 }
 
 module.exports = { createExplicitProblems };

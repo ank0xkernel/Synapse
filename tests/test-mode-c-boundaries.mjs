@@ -111,7 +111,11 @@ function harness({ store = null, beginEpoch = 'ok', t0 = 1_700_000_000_000 } = {
   const engine = {
     async start() {}, async stop() {}, async pause() {}, async resume() {},
     async requestRecapture() { return true; }, async getLatestFrame() { return null; },
-    async beginEpoch({ epoch }) { h.beginCalls.push(epoch); return beginEpoch === 'ok' ? epoch : null; },
+    async beginEpoch({ epoch }) {
+      h.beginCalls.push(epoch);
+      if (beginEpoch === 'gate') await new Promise((r) => { h.openGate = r; });
+      return beginEpoch === 'fail' ? null : epoch;
+    },
     forgetOutsideView({ containerId }) { h.forgotten.push(containerId); return true; },
   };
   const s = createScreenSession({ ocr, engineControl: engine, now, timers, problemStore: store, onProblemChange: (p) => h.changes.push(p) });
@@ -855,6 +859,36 @@ await test('persistence through the real conversation store: draft before the fi
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+await test('opening another conversation clears a New Problem chosen while stopped; it never binds a foreign id', async () => {
+  const h = harness();
+  await h.start();
+  await openPanel(h, layout(Q1));
+  await h.s.stop();
+  await h.s.newProblem();
+  h.s.loadProblems(null);
+  await h.start();
+  h.region({ c: 'root', doc: layout(Q2), from: 0, to: 800, epoch: 1 });
+  await flush();
+  const p = h.problem();
+  assert.equal(p.status, 'identified');
+  assert.equal(p.origin, 'auto', 'a problem from the previous conversation\'s registry was bound');
+  assert.deepEqual(h.s.listProblems().map((x) => x.id), [p.id]);
+});
+
+await test('registry replaced while New Problem waits for the engine: refused, nothing bound to a stale problem', async () => {
+  const h = harness({ beginEpoch: 'gate' });
+  await h.start();
+  await openPanel(h, layout(Q1));
+  const pending = h.s.newProblem();
+  await flush();
+  h.s.loadProblems(null);
+  h.openGate();
+  const r = await pending;
+  assert.deepEqual([r.success, r.code], [false, 'REGISTRY_CHANGED']);
+  assert.equal(h.problem().id, 'p1', 'the screen did not re-identify against the loaded registry');
+  assert.equal(h.s.listProblems().length, 1);
 });
 
 console.log('capture engine');

@@ -296,10 +296,9 @@ function createScreenSession({ ocr, engineControl, now = Date.now, emitState, on
     run: () => R, isDisposed: () => disposed, T, now, log, refresh, enqueueRecord, enforceBudget, recoverPending, supersede, normalise, cancelJobs,
     notifySystem: (...a) => notifySystem(...a), stampFor: identity.stampFor, onMotionSettled: identity.onMotionSettled,
     onEpochAdopted: (run, epoch) => {
-      if (!run.bindNextEpoch) return;
-      run.explicitEpochs.set(epoch, run.bindNextEpoch);
-      tracker.setEpochProblem(epoch, run.bindNextEpoch);
+      const id = run.bindNextEpoch;
       run.bindNextEpoch = null;
+      if (tracker.knows(id)) { run.explicitEpochs.set(epoch, id); tracker.setEpochProblem(epoch, id); }
     },
   });
   const explicit = createExplicitProblems({
@@ -490,6 +489,7 @@ function createScreenSession({ ocr, engineControl, now = Date.now, emitState, on
       R.ledger.prune((r) => r.status !== 'retired'); // retired text of the old registry's problems goes; the screen is identified again
       for (const r of R.ledger.all()) { r.problemId = null; r.cutEntry = null; }
       attachProblemState(R, tracker);
+      explicit.clearPendingBind(); Object.assign(R, { bindNextEpoch: null, lateEpoch: undefined });
       identity.reevaluate();
       refresh();
     },
