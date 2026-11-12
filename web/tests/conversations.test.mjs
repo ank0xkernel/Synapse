@@ -123,6 +123,32 @@ describe('conversations and desktop sync', () => {
     assert.ok(!(await b.json('GET', '/api/conversations')).data.conversations.some((c) => c.id === id));
   });
 
+  test('a message id already used in another conversation is refused, never answered against an empty history', async () => {
+    const msg = uuid();
+    await a.json('POST', `/api/conversations/${uuid()}/messages`, { id: msg, content: 'first use' });
+    const calls = fake.state.calls.length;
+    const reused = await a.json('POST', `/api/conversations/${uuid()}/messages`, { id: msg, content: 'second use' });
+    assert.equal(reused.status, 409, JSON.stringify(reused.data));
+    assert.equal(fake.state.calls.length, calls, 'the AI was asked without the user turn');
+  });
+
+  test('AI replies are rate limited per account (10 a minute); the message is still saved', async () => {
+    const c = await signup(S.base, 'conv-rate@example.com');
+    const id = uuid();
+    for (let i = 0; i < 10; i += 1) {
+      const r = await c.json('POST', `/api/conversations/${id}/messages`, { id: uuid(), content: `question ${i}` });
+      assert.equal(r.status, 200, JSON.stringify(r.data));
+    }
+    const msg = uuid();
+    const limited = await c.json('POST', `/api/conversations/${id}/messages`, { id: msg, content: 'one too many' });
+    assert.equal(limited.status, 429);
+    assert.match(limited.data.error, /saved/);
+    const got = await c.json('GET', `/api/conversations/${id}`);
+    assert.ok(got.data.messages.some((m) => m.id === msg), 'the limited message was not saved');
+    const other = await b.json('POST', `/api/conversations/${uuid()}/messages`, { id: uuid(), content: 'still allowed' });
+    assert.equal(other.status, 200, 'one account\'s limit blocked another account');
+  });
+
   test('cookie mutations from another origin are refused; sync refuses a missing or bad token', async () => {
     const r = await a.json('POST', `/api/conversations/${uuid()}/messages`, { id: uuid(), content: 'x' }, { origin: 'https://evil.example' });
     assert.equal(r.status, 403);

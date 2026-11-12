@@ -1,10 +1,13 @@
 import 'server-only';
 import { ApiError } from './http';
+import { one } from './db';
 import { AiResumeUnavailable, generate } from './ai-resume';
 import { aiConfigured } from './prep';
 import { appendMessages, getConversation, getSettings, replyIdFor, saveConversation, type Message } from './conversations';
 
 const HISTORY = 30;
+// Every reply spends the shared GEMINI_API_KEY. Counted in the database, so the limit holds across serverless instances.
+const REPLIES_PER_MINUTE = 10;
 
 const MODE_HINT: Record<string, string> = {
   quick: 'Answer in two or three sentences.',
@@ -37,8 +40,17 @@ export async function sendMessage(userId: string, input: { conversationId: strin
   if (stored) return { conversation: thread.conversation, reply: stored };
 
   if (!aiConfigured()) throw new ApiError(503, 'AI replies need GEMINI_API_KEY on the server. Your message was saved.');
-  const { settings } = await getSettings(userId);
   const upTo = thread.messages.findIndex((m) => m.id === input.messageId);
+  // The id was already used in another conversation, so the insert above was skipped.
+  if (upTo < 0) throw new ApiError(409, 'That message id is already in use. Send the message again.');
+  const recent = await one<{ n: number }>(
+    `SELECT count(*)::int AS n FROM messages WHERE user_id = $1 AND role = 'assistant' AND created_at > now() - interval '1 minute'`,
+    [userId]
+  );
+  if ((recent?.n ?? 0) >= REPLIES_PER_MINUTE) {
+    throw new ApiError(429, 'Too many AI replies in the last minute. Your message was saved; press Retry shortly.', { 'Retry-After': '30' });
+  }
+  const { settings } = await getSettings(userId);
   const history = thread.messages.slice(0, upTo + 1).slice(-HISTORY);
   const prompt = [
     'You are Synapse, a private AI assistant for one person. Be accurate; say so when you are unsure.',
