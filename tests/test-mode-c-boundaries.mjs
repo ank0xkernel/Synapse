@@ -576,6 +576,8 @@ await test('engine cannot start a new screen: the problem is created and owns th
   await openPanel(h, layout(Q1));
   const r = await h.s.newProblem();
   assert.deepEqual([r.success, r.pending], [true, 'next-screen']);
+  assert.equal(h.problem().id, 'p2', 'the new problem was not reported as active while waiting for a screen');
+  assert.ok(!h.context().includes('linked lists'), 'the previous problem leaked while waiting for a screen');
   h.send({ type: 'scene-change', epoch: 1 });
   h.region({ c: 'root', doc: layout(Q1), from: 0, to: 800, epoch: 1 });
   await flush();
@@ -761,6 +763,8 @@ await test('a region that failed before identification and is retried after a sw
   assert.equal(h.problem().id, 'p2');
   h.advance(2500); // the NETWORK backoff retries the notebook region now, while p2 is active
   await flush();
+  const retried = h.s.getSnapshot().regions.find((r) => r.preview.includes('def merge'));
+  assert.equal(retried.status, 'analysed', 'the retry never ran, so this test proves nothing');
   assert.ok(!h.context().includes('sorted(a + b)'), 'a retried Q1 region was attributed to Q2');
   await h.scroll({ id: 'q', y: 0, doc: QUIZ });
   assert.match(h.context(), /sorted\(a \+ b\)/, 'the retried region is missing from its own problem');

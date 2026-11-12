@@ -66,8 +66,10 @@ function createExplicitProblems({ getRun, tracker, identity, engineControl, adop
       run.lateUntil = now();
       adoptEpoch(epoch, { preserveInflight: true });
     } else {
-      // The engine could not start a new screen (capture restarting): the next screen it reports is this problem's.
+      // The engine could not start a new screen (capture restarting): what it captures from now on, and the
+      // next screen it reports, are this problem's. Earlier regions keep their stamps.
       run.explicitEpochs.delete(target);
+      tracker.setEpochProblem(run.epoch, problem.id);
       run.bindNextEpoch = problem.id;
     }
     identity.notify(run, before, decision);
