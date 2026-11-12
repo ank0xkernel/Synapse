@@ -35,13 +35,13 @@ function createInvokeActions(ipcRenderer) {
     checkScreenRecordingPermission: invokeWithFallback(ipcRenderer, {
       channel: 'check-screen-recording-permission',
       label: 'checkScreenRecordingPermission',
-      fallback: () => ({ status: 'unknown', authorized: true, state: 'GRANTED' })
+      fallback: (error) => ({ status: 'unknown', authorized: false, state: 'UNKNOWN', message: `Permission check failed: ${error.message}` })
     }),
 
     validateScreenCaptureCapability: invokeWithFallback(ipcRenderer, {
       channel: 'validate-screen-capture-capability',
       label: 'validateScreenCaptureCapability',
-      fallback: () => ({ status: 'unknown', authorized: true, state: 'GRANTED' })
+      fallback: (error) => ({ status: 'unknown', authorized: false, state: 'UNKNOWN', message: `Permission check failed: ${error.message}` })
     }),
 
     openScreenRecordingSettings: invokeWithFallback(ipcRenderer, {

@@ -1,8 +1,53 @@
 const fs = require('fs');
 const path = require('path');
-const { desktopCapturer, screen, systemPreferences, shell } = require('electron');
+const { desktopCapturer, screen, systemPreferences, shell, nativeImage } = require('electron');
 const screenshot = require('screenshot-desktop');
 const { createScreenPermissionManager } = require('./screen-permission-manager');
+
+// Full display resolution up to 4K. The vision request gets this frame plus
+// left/right crops (see buildVisionImageParts), so small sidebar text keeps
+// its pixels instead of being averaged away by an early downscale.
+const MAX_CAPTURE_DIMENSION = 3840;
+// Below this width a half-screen crop adds no detail the full frame lacks.
+const MIN_WIDTH_FOR_CROPS = 1600;
+const VISION_JPEG_QUALITY = 85;
+
+function captureError(code, message, extra = {}) {
+  return Object.assign(new Error(message), { code, ...extra });
+}
+
+/**
+ * Full frame plus left and right halves for the vision model. Models scale
+ * every image down to a fixed token budget, so on a Retina screen a sidebar's
+ * small print is lost in the full frame alone; each half gets its own budget,
+ * which roughly doubles the detail the model sees there. Text parts label
+ * each image so the model knows the crops are the same screen.
+ * @param {Electron.NativeImage} image
+ */
+function buildVisionImageParts(image) {
+  const { width, height } = image.getSize();
+  const part = (img) => ({ inlineData: { data: img.toJPEG(VISION_JPEG_QUALITY).toString('base64'), mimeType: 'image/jpeg' } });
+  const parts = [{ text: `[Image 1: the full screen, ${width}x${height}px]` }, part(image)];
+  if (width >= MIN_WIDTH_FOR_CROPS) {
+    const half = Math.ceil(width / 2);
+    parts.push(
+      { text: '[Image 2: left half of the same screen at full resolution]' },
+      part(image.crop({ x: 0, y: 0, width: half, height })),
+      { text: '[Image 3: right half of the same screen at full resolution]' },
+      part(image.crop({ x: width - half, y: 0, width: half, height }))
+    );
+  }
+  return parts;
+}
+
+function isBlackFrame(image) {
+  const bitmap = image.toBitmap();
+  let nonBlackPixels = 0;
+  for (let i = 0; i < bitmap.length && nonBlackPixels === 0; i += 64) {
+    if (bitmap[i] > 10 || bitmap[i + 1] > 10 || bitmap[i + 2] > 10) nonBlackPixels += 1;
+  }
+  return bitmap.length > 0 && nonBlackPixels === 0;
+}
 
 function createScreenshotManager({
   app,
@@ -21,6 +66,7 @@ function createScreenshotManager({
   });
   let screenshots = [];
   let screenshotSequence = 0;
+  let captureSequence = 0;
   let screenshotInProgress = false;
 
   function nextScreenshotId() {
@@ -71,111 +117,194 @@ function createScreenshotManager({
     }
   }
 
-  async function takeStealthScreenshot() {
-    if (screenshotInProgress) {
-      console.log('Screenshot already in progress, skipping');
+  function resolveTargetDisplay(displayId, mainWindow) {
+    if (!screen) return null;
+    try {
+      const displays = screen.getAllDisplays ? screen.getAllDisplays() : [];
+      if (!displays || displays.length === 0) return null;
+
+      if (displayId != null) {
+        const found = displays.find((d) => String(d.id) === String(displayId));
+        if (found) return found;
+      }
+
+      // 1. Prefer display containing the cursor (where the user's active focus is)
+      if (typeof screen.getCursorScreenPoint === 'function' && typeof screen.getDisplayNearestPoint === 'function') {
+        const cursorPoint = screen.getCursorScreenPoint();
+        if (cursorPoint) {
+          const cursorDisplay = screen.getDisplayNearestPoint(cursorPoint);
+          if (cursorDisplay) return cursorDisplay;
+        }
+      }
+
+      // 2. Display containing mainWindow
+      if (mainWindow && !mainWindow.isDestroyed() && typeof screen.getDisplayMatching === 'function' && typeof mainWindow.getBounds === 'function') {
+        const windowDisplay = screen.getDisplayMatching(mainWindow.getBounds());
+        if (windowDisplay) return windowDisplay;
+      }
+
+      // 3. Primary display
+      if (typeof screen.getPrimaryDisplay === 'function') {
+        return screen.getPrimaryDisplay() || displays[0];
+      }
+      return displays[0];
+    } catch (_) {
       return null;
     }
+  }
 
-    const mainWindow = getMainWindow();
-    const appEnvironment = getAppEnvironment();
+  async function requireCapturePermission() {
+    const perm = await validateScreenCaptureCapability();
+    if (perm.authorized) return;
+    const isRestart = perm.state === 'RESTART_REQUIRED' || perm.restartRequired;
+    throw captureError(
+      isRestart ? 'RESTART_REQUIRED' : (perm.state === 'CAPTURE_INITIALIZATION_FAILED' ? 'CAPTURE_INITIALIZATION_FAILED' : 'SCREEN_RECORDING_DENIED'),
+      perm.message || 'Screen Recording permission is not granted.',
+      { state: perm.state, restartRequired: Boolean(isRestart) }
+    );
+  }
 
-    if (!mainWindow || mainWindow.isDestroyed()) {
-      throw new Error('Main window not available');
+  /**
+   * One frame of one display. The frame always comes from the display that
+   * was asked for: when that display is not among the sources, the capture
+   * fails instead of quietly using another screen.
+   */
+  async function grabFrame(displayId, mainWindow) {
+    const display = resolveTargetDisplay(displayId, mainWindow);
+    if (!display) throw captureError('CAPTURE_UNAVAILABLE', 'No display is available to capture.');
+    const id = String(display.id);
+    const scaleFactor = display.scaleFactor || 1;
+    let width = Math.round(display.bounds.width * scaleFactor);
+    let height = Math.round(display.bounds.height * scaleFactor);
+    if (width > MAX_CAPTURE_DIMENSION || height > MAX_CAPTURE_DIMENSION) {
+      const scale = Math.min(MAX_CAPTURE_DIMENSION / width, MAX_CAPTURE_DIMENSION / height);
+      width = Math.round(width * scale);
+      height = Math.round(height * scale);
     }
 
-    screenshotInProgress = true;
+    let image = null;
+    let source = 'desktopCapturer';
     try {
-      console.log('Capturing screen...');
-      const currentOpacity = mainWindow.getOpacity();
-      const screenshotDelay = appEnvironment?.screenshotDelay || 300;
-
-      mainWindow.setOpacity(0.01);
-      await new Promise((resolve) => setTimeout(resolve, screenshotDelay));
-
-      const screenshotsDir = ensureScreenshotsDir();
-      const screenshotPath = path.join(screenshotsDir, `capture-${Date.now()}.png`);
-
-      let capturedBuffer = null;
-      if (desktopCapturer && typeof desktopCapturer.getSources === 'function') {
-        try {
-          const targetDisplay = resolveTargetDisplay(null, mainWindow) || (screen?.getPrimaryDisplay ? screen.getPrimaryDisplay() : null);
-          const bounds = targetDisplay?.bounds || { width: 1920, height: 1080 };
-          const scaleFactor = targetDisplay?.scaleFactor || 2;
-          const rawWidth = Math.round(bounds.width * scaleFactor);
-          const rawHeight = Math.round(bounds.height * scaleFactor);
-          const maxDim = 2048;
-          let targetWidth = rawWidth;
-          let targetHeight = rawHeight;
-          if (targetWidth > maxDim || targetHeight > maxDim) {
-            const scale = Math.min(maxDim / targetWidth, maxDim / targetHeight);
-            targetWidth = Math.round(targetWidth * scale);
-            targetHeight = Math.round(targetHeight * scale);
-          }
-
-          const sources = await desktopCapturer.getSources({
-            types: ['screen'],
-            thumbnailSize: { width: targetWidth, height: targetHeight }
-          });
-
-          if (sources && sources.length > 0) {
-            let matched = null;
-            if (targetDisplay) {
-              const targetIdStr = String(targetDisplay.id);
-              matched = sources.find((s) => (
-                s.display_id === targetIdStr ||
-                s.id === `screen:${targetIdStr}:0` ||
-                (typeof s.id === 'string' && s.id.startsWith(`screen:${targetIdStr}`))
-              ));
-            }
-            if (!matched) matched = sources[0];
-            if (matched && matched.thumbnail && !matched.thumbnail.isEmpty()) {
-              capturedBuffer = matched.thumbnail.toPNG();
-            }
-          }
-        } catch (capturerErr) {
-          console.warn('[ScreenManager] desktopCapturer in stealth screenshot failed, falling back:', capturerErr.message);
-        }
+      const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width, height } });
+      const matched = (sources || []).find((s) => s.display_id === id || (typeof s.id === 'string' && s.id.startsWith(`screen:${id}:`)))
+        || (sources && sources.length === 1 ? sources[0] : null);
+      if (!matched) {
+        throw captureError('CAPTURE_DISPLAY_NOT_FOUND', `Display ${id} is not among the ${sources?.length || 0} capturable screens.`);
       }
-
-      if (capturedBuffer && capturedBuffer.length > 0) {
-        fs.writeFileSync(screenshotPath, capturedBuffer);
-      } else {
-        await screenshot({ filename: screenshotPath });
-      }
-
-      const screenshotEntry = {
-        id: nextScreenshotId(),
-        path: screenshotPath,
-        timestamp: new Date().toISOString()
-      };
-
-      screenshots.push(screenshotEntry);
-      if (screenshots.length > appEnvironment.maxScreenshots) {
-        cleanupScreenshotFile(screenshots.shift());
-      }
-
-      console.log(`Screenshot saved: ${screenshotPath}`);
-      console.log(`Total screenshots: ${screenshots.length}`);
-
-      sendToRenderer('screenshot-taken-stealth', {
-        count: screenshots.length,
-        screenshotId: screenshotEntry.id,
-        timestamp: screenshotEntry.timestamp
-      });
-
-      return screenshotPath;
+      if (matched.thumbnail && !matched.thumbnail.isEmpty()) image = matched.thumbnail;
     } catch (error) {
-      console.error('Stealth screenshot error:', error);
-      throw error;
+      if (error.code === 'CAPTURE_DISPLAY_NOT_FOUND') throw error;
+      console.warn(`[ScreenCapture] desktopCapturer failed: ${error.message}`);
+    }
+
+    // screencapture(1) grabs the main display only, so it is a valid
+    // substitute only when there is just one display.
+    if (!image && screen.getAllDisplays().length === 1) {
+      try {
+        const png = await screenshot({ format: 'png' });
+        const fallback = png && png.length ? nativeImage.createFromBuffer(png) : null;
+        if (fallback && !fallback.isEmpty()) {
+          image = fallback;
+          source = 'screencapture';
+        }
+      } catch (error) {
+        console.warn(`[ScreenCapture] screencapture fallback failed: ${error.message}`);
+      }
+    }
+
+    if (!image) throw captureError('CAPTURE_EMPTY_FRAME', 'Screen capture returned no image. The display may be asleep or protected.');
+    if (isBlackFrame(image)) throw captureError('CAPTURE_BLACK_FRAME', 'Screen capture returned a black frame. The content may be protected or the display asleep.');
+
+    captureSequence += 1;
+    const size = image.getSize();
+    return {
+      image,
+      meta: {
+        captureId: `cap-${Date.now()}-${captureSequence}`,
+        displayId: id,
+        width: size.width,
+        height: size.height,
+        scaleFactor,
+        source,
+        capturedAt: Date.now()
+      }
+    };
+  }
+
+  /**
+   * Dims the assistant window for the capture and always restores it, even
+   * when the capture throws.
+   */
+  async function withWindowDimmed(mainWindow, delayMs, fn) {
+    const previousOpacity = mainWindow.getOpacity();
+    const wasVisible = mainWindow.isVisible();
+    const wasFocused = mainWindow.isFocused();
+    mainWindow.setOpacity(0.01);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      return await fn();
     } finally {
       try {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.setOpacity(currentOpacity);
+        if (!mainWindow.isDestroyed()) {
+          mainWindow.setOpacity(previousOpacity);
+          if (wasVisible && !mainWindow.isVisible()) mainWindow.showInactive();
+          if (wasFocused && !mainWindow.isFocused()) mainWindow.focus();
         }
-      } catch (_) {}
+      } catch (error) {
+        console.error(`[ScreenCapture] could not restore the assistant window: ${error.message}`);
+      }
+    }
+  }
+
+  async function runExclusiveCapture(displayId, delayMs) {
+    if (screenshotInProgress) {
+      throw captureError('CAPTURE_IN_PROGRESS', 'A screen capture is already in progress.');
+    }
+    screenshotInProgress = true;
+    const started = Date.now();
+    try {
+      await requireCapturePermission();
+      const mainWindow = getMainWindow();
+      if (!mainWindow || mainWindow.isDestroyed()) {
+        throw captureError('WINDOW_UNAVAILABLE', 'The assistant window is not available.');
+      }
+      const frame = await withWindowDimmed(mainWindow, delayMs, () => grabFrame(displayId, mainWindow));
+      const m = frame.meta;
+      console.log(`[ScreenCapture] ${m.captureId} display=${m.displayId} ${m.width}x${m.height}@${m.scaleFactor}x source=${m.source} took=${Date.now() - started}ms`);
+      return frame;
+    } catch (error) {
+      console.warn(`[ScreenCapture] failed code=${error.code || 'UNKNOWN'} after ${Date.now() - started}ms: ${error.message}`);
+      throw error;
+    } finally {
       screenshotInProgress = false;
     }
+  }
+
+  async function takeStealthScreenshot() {
+    const appEnvironment = getAppEnvironment() || {};
+    const { image, meta } = await runExclusiveCapture(null, Math.min(appEnvironment.screenshotDelay || 300, 500));
+
+    const screenshotPath = path.join(ensureScreenshotsDir(), `capture-${meta.capturedAt}.png`);
+    fs.writeFileSync(screenshotPath, image.toPNG());
+
+    const screenshotEntry = {
+      id: nextScreenshotId(),
+      path: screenshotPath,
+      timestamp: new Date(meta.capturedAt).toISOString()
+    };
+
+    screenshots.push(screenshotEntry);
+    if (screenshots.length > (appEnvironment.maxScreenshots || 5)) {
+      cleanupScreenshotFile(screenshots.shift());
+    }
+
+    sendToRenderer('screenshot-taken-stealth', {
+      count: screenshots.length,
+      screenshotId: screenshotEntry.id,
+      timestamp: screenshotEntry.timestamp
+    });
+
+    return screenshotPath;
   }
 
   async function buildImagePartsFromScreenshots({ strict = true, includeIds = null } = {}) {
@@ -271,198 +400,16 @@ function createScreenshotManager({
         restartRequired: false
       };
     }
-    const pre = checkScreenRecordingPermission();
-    if (pre && pre.authorized && (!desktopCapturer || typeof desktopCapturer.getSources !== 'function')) {
-      return pre;
-    }
     return permManager.validateCaptureCapability();
   }
 
-  function resolveTargetDisplay(displayId, mainWindow) {
-    if (!screen) return null;
-    try {
-      const displays = screen.getAllDisplays ? screen.getAllDisplays() : [];
-      if (!displays || displays.length === 0) return null;
-
-      if (displayId != null) {
-        const found = displays.find((d) => String(d.id) === String(displayId));
-        if (found) return found;
-      }
-
-      // 1. Prefer display containing the cursor (where the user's active focus is)
-      if (typeof screen.getCursorScreenPoint === 'function' && typeof screen.getDisplayNearestPoint === 'function') {
-        const cursorPoint = screen.getCursorScreenPoint();
-        if (cursorPoint) {
-          const cursorDisplay = screen.getDisplayNearestPoint(cursorPoint);
-          if (cursorDisplay) return cursorDisplay;
-        }
-      }
-
-      // 2. Display containing mainWindow
-      if (mainWindow && !mainWindow.isDestroyed() && typeof screen.getDisplayMatching === 'function' && typeof mainWindow.getBounds === 'function') {
-        const windowDisplay = screen.getDisplayMatching(mainWindow.getBounds());
-        if (windowDisplay) return windowDisplay;
-      }
-
-      // 3. Primary display
-      if (typeof screen.getPrimaryDisplay === 'function') {
-        return screen.getPrimaryDisplay() || displays[0];
-      }
-      return displays[0];
-    } catch (_) {
-      return null;
-    }
-  }
-
+  /**
+   * One in-memory capture for a vision request. Returns the frame as a
+   * NativeImage (for crops) with its capture metadata. Nothing touches disk.
+   */
   async function captureScreenInMemory({ displayId = null } = {}) {
-    if (screenshotInProgress) {
-      const error = new Error('Screen capture already in progress');
-      error.code = 'CAPTURE_IN_PROGRESS';
-      throw error;
-    }
-
-    screenshotInProgress = true;
-    let mainWindow = null;
-    let currentOpacity = 1.0;
-    let wasVisible = false;
-    let wasFocused = false;
-
-    try {
-      const perm = await validateScreenCaptureCapability();
-      if (!perm.authorized) {
-        const isRestart = perm.state === 'RESTART_REQUIRED' || perm.restartRequired;
-        const error = new Error(perm.message || (isRestart
-          ? 'Screen recording permission was enabled in System Settings, but macOS requires Synapse to restart before capture can activate.'
-          : 'Screen Recording permission is not granted. Enable Synapse under System Settings → Privacy & Security → Screen & System Audio Recording.'));
-        error.code = isRestart ? 'RESTART_REQUIRED' : 'SCREEN_RECORDING_DENIED';
-        error.state = perm.state;
-        error.restartRequired = Boolean(isRestart);
-        throw error;
-      }
-
-      mainWindow = getMainWindow();
-      if (!mainWindow || mainWindow.isDestroyed()) {
-        throw new Error('Main window not available');
-      }
-
-      currentOpacity = mainWindow.getOpacity();
-      wasVisible = mainWindow.isVisible();
-      wasFocused = mainWindow.isFocused();
-
-      mainWindow.setOpacity(0.01);
-      const appEnvironment = getAppEnvironment?.() || {};
-      const screenshotDelay = Math.min(appEnvironment?.screenshotDelay || 150, 300);
-      await new Promise((resolve) => setTimeout(resolve, screenshotDelay));
-
-      let imageBuffer = null;
-
-      // 1. High-resolution in-memory capture via Electron desktopCapturer with active display detection & Retina scaling
-      if (desktopCapturer && typeof desktopCapturer.getSources === 'function') {
-        try {
-          const targetDisplay = resolveTargetDisplay(displayId, mainWindow) || (screen?.getPrimaryDisplay ? screen.getPrimaryDisplay() : null);
-          const bounds = targetDisplay?.bounds || { width: 1920, height: 1080 };
-          const scaleFactor = targetDisplay?.scaleFactor || 2;
-          const rawWidth = Math.round(bounds.width * scaleFactor);
-          const rawHeight = Math.round(bounds.height * scaleFactor);
-
-          // Preserve text legibility for code & terminal while budgeting dimensions for vision models (max 2048px)
-          const MAX_CAPTURE_DIMENSION = 2048;
-          let targetWidth = rawWidth;
-          let targetHeight = rawHeight;
-          if (targetWidth > MAX_CAPTURE_DIMENSION || targetHeight > MAX_CAPTURE_DIMENSION) {
-            const scale = Math.min(MAX_CAPTURE_DIMENSION / targetWidth, MAX_CAPTURE_DIMENSION / targetHeight);
-            targetWidth = Math.round(targetWidth * scale);
-            targetHeight = Math.round(targetHeight * scale);
-          }
-
-          const sources = await desktopCapturer.getSources({
-            types: ['screen'],
-            thumbnailSize: { width: targetWidth, height: targetHeight }
-          });
-
-          if (sources && sources.length > 0) {
-            let matched = null;
-            if (targetDisplay) {
-              const targetIdStr = String(targetDisplay.id);
-              matched = sources.find((s) => (
-                s.display_id === targetIdStr ||
-                s.id === `screen:${targetIdStr}:0` ||
-                (typeof s.id === 'string' && s.id.startsWith(`screen:${targetIdStr}`))
-              ));
-            }
-
-            if (!matched && displayId != null) {
-              matched = sources.find((s) => s.display_id === String(displayId));
-            }
-
-            if (!matched) {
-              matched = sources[0];
-            }
-
-            if (matched && matched.thumbnail && !matched.thumbnail.isEmpty()) {
-              // Frame validation: verify image is not a completely black or empty frame
-              const bitmap = matched.thumbnail.toBitmap();
-              let nonBlackPixels = 0;
-              const step = 16;
-              for (let i = 0; i < bitmap.length; i += step) {
-                if (bitmap[i] > 10 || bitmap[i + 1] > 10 || bitmap[i + 2] > 10) {
-                  nonBlackPixels++;
-                }
-              }
-              const sampledCount = bitmap.length / step;
-              if (nonBlackPixels > 0 || sampledCount === 0) {
-                imageBuffer = matched.thumbnail.toJPEG(88);
-              } else {
-                console.warn('[ScreenManager] desktopCapturer returned a black frame, falling back');
-              }
-            }
-          }
-        } catch (capturerErr) {
-          console.warn('[ScreenManager] desktopCapturer capture failed, trying fallback:', capturerErr.message);
-        }
-      }
-
-      // 2. In-memory buffer fallback via screenshot-desktop
-      if (!imageBuffer || imageBuffer.length === 0) {
-        try {
-          const fallback = await screenshot({ format: 'png' });
-          if (fallback && fallback.length > 0) {
-            imageBuffer = fallback;
-          }
-        } catch (fallbackErr) {
-          console.warn('[ScreenManager] screenshot-desktop in-memory fallback failed:', fallbackErr.message);
-        }
-      }
-
-      if (!imageBuffer || imageBuffer.length === 0) {
-        throw new Error('Screen capture produced an empty or unavailable image. Ensure the screen is not protected or sleeping.');
-      }
-
-      if (imageBuffer.length < 500) {
-        throw new Error('Screen content is protected or unavailable.');
-      }
-
-      const mimeType = imageBuffer[0] === 0xff && imageBuffer[1] === 0xd8 ? 'image/jpeg' : 'image/png';
-      return {
-        data: imageBuffer.toString('base64'),
-        mimeType,
-        byteLength: imageBuffer.length,
-        timestamp: new Date().toISOString()
-      };
-    } finally {
-      try {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.setOpacity(currentOpacity);
-          if (wasVisible && !mainWindow.isVisible()) {
-            mainWindow.showInactive();
-          }
-          if (wasFocused && !mainWindow.isFocused()) {
-            mainWindow.focus();
-          }
-        }
-      } catch (_) {}
-      screenshotInProgress = false;
-    }
+    const appEnvironment = getAppEnvironment?.() || {};
+    return runExclusiveCapture(displayId, Math.min(appEnvironment.screenshotDelay || 150, 300));
   }
 
   return {
@@ -480,5 +427,6 @@ function createScreenshotManager({
 }
 
 module.exports = {
+  buildVisionImageParts,
   createScreenshotManager
 };

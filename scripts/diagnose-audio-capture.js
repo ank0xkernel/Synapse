@@ -159,9 +159,11 @@ function readAppState() {
 
 function checkAssemblyKey(state) {
   return new Promise((resolve) => {
-    const apiKey = state?.assemblyAiApiKey;
+    // Saved keys are encrypted in the macOS Keychain store, which plain Node
+    // cannot open; pass the key in ASSEMBLY_AI_API_KEY to test it here.
+    const apiKey = state?.assemblyAiApiKey || process.env.ASSEMBLY_AI_API_KEY;
     if (!apiKey) {
-      fail('AssemblyAI API key not configured', 'Add it in Synapse → Settings.');
+      fail('AssemblyAI API key not available to this script', 'Synapse keeps saved keys in the macOS Keychain. Run with ASSEMBLY_AI_API_KEY=<key> to test the key here.');
       resolve(false);
       return;
     }

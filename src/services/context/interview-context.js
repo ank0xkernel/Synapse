@@ -18,6 +18,7 @@ const { buildJdProfile, matchCandidateToJd, deriveFullTechnologyStatus } = requi
  */
 
 const STORE_DIR_NAME = 'cache';
+const PACKAGED_STORE_DIR_NAME = 'state';
 const STORE_FILE_NAME = 'interview-context.json';
 
 const FIELDS = Object.freeze({
@@ -85,14 +86,38 @@ function defaults() {
   };
 }
 
-/** Must be called once at startup so packaged builds write to userData. */
+/**
+ * Must be called once at startup so packaged builds write to userData/state.
+ * Not userData/cache: on case-insensitive APFS that is Chromium's HTTP "Cache"
+ * directory. A brief saved there by an older build is moved over once.
+ */
 function configure(app) {
-  const baseDir = app && app.isPackaged
-    ? app.getPath('userData')
-    : path.join(__dirname, '..', '..', '..');
-
-  storePath = path.join(baseDir, STORE_DIR_NAME, STORE_FILE_NAME);
+  if (!(app && app.isPackaged)) {
+    storePath = path.join(__dirname, '..', '..', '..', STORE_DIR_NAME, STORE_FILE_NAME);
+    return storePath;
+  }
+  const userData = app.getPath('userData');
+  storePath = path.join(userData, PACKAGED_STORE_DIR_NAME, STORE_FILE_NAME);
+  const legacyPath = path.join(userData, STORE_DIR_NAME, STORE_FILE_NAME);
+  if (!fs.existsSync(storePath) && fs.existsSync(legacyPath)) {
+    try {
+      fs.mkdirSync(path.dirname(storePath), { recursive: true });
+      fs.renameSync(legacyPath, storePath);
+      console.log(`[InterviewContext] Moved the brief from ${legacyPath} to ${storePath}`);
+    } catch (error) {
+      console.error(`[InterviewContext] Could not move ${legacyPath}: ${error.message}; reading it in place.`);
+      storePath = legacyPath;
+    }
+  }
   return storePath;
+}
+
+// A crash mid-write leaves the previous brief, never a truncated one.
+function writeAtomic(file, contents) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, contents, { encoding: 'utf8', mode: 0o600 });
+  fs.renameSync(tmp, file);
 }
 
 function getStorePath() {
@@ -267,7 +292,7 @@ function load() {
     if (parsed.structuredProfile && parsed.profileVersion !== PROFILE_VERSION) {
       // Rebuild from the saved text only; keep the user's original updatedAt.
       const rebuilt = { ...sanitize({ ...defaults(), ...parsed }), updatedAt: parsed.updatedAt || null };
-      fs.writeFileSync(file, JSON.stringify(rebuilt, null, 2), 'utf8');
+      writeAtomic(file, JSON.stringify(rebuilt, null, 2));
       cached = rebuilt;
       cachedMtimeMs = fs.statSync(file).mtimeMs;
       return cached;
@@ -275,8 +300,15 @@ function load() {
     cached = { ...defaults(), ...parsed };
     cachedMtimeMs = stat.mtimeMs;
     return cached;
-  } catch (_) {
-    // No file yet, or unreadable — an empty brief is a valid state.
+  } catch (error) {
+    // No file yet: an empty brief is a valid state. A file that exists but
+    // does not parse is moved aside, so the next save cannot overwrite the
+    // user's resume and job description with an empty brief unnoticed.
+    if (error.code !== 'ENOENT' && fs.existsSync(file)) {
+      const aside = `${file}.corrupt-${Date.now()}`;
+      try { fs.renameSync(file, aside); } catch (_) { /* keep running on the cached copy */ }
+      console.error(`[InterviewContext] ${file} could not be read (${error.message}); moved to ${aside}`);
+    }
     cached = cached || defaults();
     return cached;
   }
@@ -286,8 +318,7 @@ function save(input) {
   const file = getStorePath();
   const clean = sanitize(input);
 
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(clean, null, 2), 'utf8');
+  writeAtomic(file, JSON.stringify(clean, null, 2));
 
   cached = clean;
   try {

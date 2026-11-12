@@ -11,13 +11,13 @@
  * Target 6: Installed bundle signature & TCC stability verification
  */
 
-const { app, desktopCapturer, screen } = require('electron');
+const { app, desktopCapturer, screen, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { execFileSync } = require('child_process');
 
 const GeminiService = require('../src/services/ai/gemini-service');
-const { loadAppState } = require('../src/services/state/app-state');
+const { configureSecretStore, loadAppState } = require('../src/services/state/app-state');
 const { createScreenshotManager } = require('../src/main-process/features/assistant/screenshot-manager');
 
 async function runLiveVerification() {
@@ -39,6 +39,8 @@ async function runLiveVerification() {
   }
 
   try {
+    // API keys live in the Keychain-backed store, not app-state.json.
+    configureSecretStore(app, safeStorage);
     const state = loadAppState(app);
     const geminiApiKey = state?.geminiApiKey;
     const modelName = state?.geminiModel || 'gemini-3.5-flash-lite';

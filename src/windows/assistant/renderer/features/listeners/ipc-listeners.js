@@ -87,6 +87,8 @@ export function setupIpcListeners({
             showLoadingOverlay(status.message || 'Analyzing with AI...');
         } else if (status.stage === 'complete' || status.stage === 'error') {
             hideLoadingOverlay();
+            // Button-driven captures report their own errors; the hotkey has no other channel.
+            if (status.stage === 'error' && status.source === 'hotkey' && status.message) showFeedback(status.message, 'error');
         }
     });
 

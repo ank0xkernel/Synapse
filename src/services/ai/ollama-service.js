@@ -46,6 +46,12 @@ class OllamaService {
     console.log('OllamaService initialized:', this.modelName, 'at', this.baseUrl);
   }
 
+  // Callers check `service.model` (GeminiService's field) before every
+  // request; without this every Ollama screen analysis failed that check.
+  get model() {
+    return this.modelName;
+  }
+
   updateConfiguration(options = {}) {
     const previousProgrammingLanguage = this.programmingLanguage;
     const nextBaseUrl = String(options.baseUrl ?? this.baseUrl).replace(/\/+$/, '');
@@ -127,12 +133,13 @@ class OllamaService {
       const prompt = typeof request.data === 'string'
         ? request.data
         : this._extractTextFromParts(request.data);
+      const images = this._extractImagesFromParts(request.data);
 
       if (typeof request.onChunk === 'function') {
-        return await this._streamChat(prompt, request);
+        return await this._streamChat(prompt, request, images);
       }
 
-      return await this._chat(prompt);
+      return await this._chat(prompt, images);
     } catch (error) {
       console.error(`Ollama request error (attempt ${retryCount + 1}):`, error.message);
 
@@ -166,18 +173,65 @@ class OllamaService {
     return String(data || '');
   }
 
-  _buildMessages(prompt) {
+  /** Base64 image data from Gemini-style inlineData parts (Ollama takes raw base64). */
+  _extractImagesFromParts(data) {
+    if (!Array.isArray(data)) return [];
+    return data
+      .filter((part) => part?.inlineData?.data && /^image\//.test(part.inlineData.mimeType || 'image/'))
+      .map((part) => part.inlineData.data);
+  }
+
+  _buildMessages(prompt, images = []) {
+    const user = { role: 'user', content: prompt };
+    if (images.length) user.images = images;
     return [
       { role: 'system', content: 'You are a helpful AI assistant.' },
-      { role: 'user', content: prompt }
+      user
     ];
   }
 
-  async _chat(prompt) {
-    const url = `${this.baseUrl}/api/chat`;
-    const messages = this._buildMessages(prompt);
+  /**
+   * Whether the selected model accepts images, from Ollama's /api/show:
+   * `capabilities` lists "vision" on Ollama 0.6+; older servers expose a CLIP
+   * or mllama projector family instead. Cached per model.
+   */
+  async supportsVision() {
+    const model = this.modelName;
+    if (this._visionCache && this._visionCache.model === model) return this._visionCache.value;
+    const response = await fetch(`${this.baseUrl}/api/show`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model }),
+      signal: AbortSignal.timeout(10000)
+    });
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '');
+      throw new Error(`Ollama API error ${response.status} while reading model "${model}": ${errorText}`);
+    }
+    const info = await response.json();
+    const capabilities = Array.isArray(info.capabilities) ? info.capabilities : null;
+    const families = [...(info.details?.families || []), info.details?.family].filter(Boolean).map(String);
+    const value = capabilities
+      ? capabilities.includes('vision')
+      : families.some((family) => /clip|mllama|vision/i.test(family)) || Boolean(info.projector_info);
+    this._visionCache = { model, value };
+    return value;
+  }
 
-    console.log(`[Ollama API] Non-streaming request started (model: ${this.modelName})`);
+  /** Throws a clear error instead of letting a text-only model answer as if it had seen the image. */
+  async assertVision(imageCount) {
+    if (!imageCount) return;
+    if (await this.supportsVision()) return;
+    const error = new Error(`The Ollama model "${this.modelName}" cannot read images, so it cannot analyse the screen. Pull a vision model (for example llama3.2-vision or qwen2.5vl) and select it in Settings, or switch the provider to Gemini.`);
+    error.code = 'MODEL_NO_VISION';
+    throw error;
+  }
+
+  async _chat(prompt, images = []) {
+    const url = `${this.baseUrl}/api/chat`;
+    const messages = this._buildMessages(prompt, images);
+
+    console.log(`[Ollama API] Non-streaming request started (model: ${this.modelName}, images: ${images.length})`);
 
     const response = await fetch(url, {
       method: 'POST',
@@ -186,7 +240,9 @@ class OllamaService {
         model: this.modelName,
         messages,
         stream: false
-      })
+      }),
+      // Local models can be slow to load; this bounds a hung server, not a slow answer.
+      signal: AbortSignal.timeout(300000)
     });
 
     if (!response.ok) {
@@ -201,11 +257,11 @@ class OllamaService {
     return responseText;
   }
 
-  async _streamChat(prompt, request) {
+  async _streamChat(prompt, request, images = []) {
     const url = `${this.baseUrl}/api/chat`;
-    const messages = this._buildMessages(prompt);
+    const messages = this._buildMessages(prompt, images);
 
-    console.log(`[Ollama API] Streaming request started (model: ${this.modelName})`);
+    console.log(`[Ollama API] Streaming request started (model: ${this.modelName}, images: ${images.length})`);
 
     const response = await fetch(url, {
       method: 'POST',
@@ -214,7 +270,8 @@ class OllamaService {
         model: this.modelName,
         messages,
         stream: true
-      })
+      }),
+      signal: AbortSignal.timeout(300000)
     });
 
     if (!response.ok) {
@@ -311,8 +368,9 @@ class OllamaService {
   }
 
   async generateMultimodal(parts, options = {}) {
-    // Ollama doesn't support inline image data the same way Gemini does.
-    // We extract text parts and pass them as a text-only prompt.
+    // Images go to the model as Ollama `images` when it can read them;
+    // a text-only model gets a clear MODEL_NO_VISION error instead.
+    await this.assertVision(this._extractImagesFromParts(parts).length);
     return new Promise((resolve, reject) => {
       const request = {
         type: 'multimodal',
@@ -340,11 +398,7 @@ class OllamaService {
     });
 
     const streamOptions = { onChunk: options.onChunk };
-    // For Ollama we pass the prompt as text; image data is not forwarded
-    const result = await this.generateText(
-      `${prompt}\n\n[Note: ${imageParts.length} screenshot(s) were captured but image analysis requires a vision-capable model. Respond based on the text context provided.]`,
-      streamOptions
-    );
+    const result = await this.generateMultimodal([{ text: prompt }, ...imageParts], streamOptions);
 
     this.addToHistory('assistant', `Screenshot analysis: ${result}`);
     return result;
@@ -388,10 +442,7 @@ class OllamaService {
     });
 
     const streamOptions = { onChunk: options.onChunk };
-    const result = await this.generateText(
-      `${prompt}\n\n[Note: ${imageParts.length} screenshot(s) were captured but image analysis requires a vision-capable model.]`,
-      streamOptions
-    );
+    const result = await this.generateMultimodal([{ text: prompt }, ...imageParts], streamOptions);
 
     this.addToHistory('assistant', `Ask AI: ${result}`);
     return result;

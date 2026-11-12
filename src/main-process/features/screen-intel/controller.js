@@ -180,9 +180,11 @@ function createScreenIntelController({
       }
       activeDisplay = resolveDisplay(displayId);
       const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
-      const source = sources.find((s) => s.display_id === String(activeDisplay.id)) || sources[0];
+      // Never monitor a different display than the one chosen.
+      const source = sources.find((s) => s.display_id === String(activeDisplay.id)) || (sources.length === 1 ? sources[0] : null);
+      log(`[ScreenIntel] monitoring display=${activeDisplay.id} ${activeDisplay.bounds.width}x${activeDisplay.bounds.height}@${activeDisplay.scaleFactor}x source=${source ? source.id : 'none'} of ${sources.length}`);
       if (!source) {
-        const error = new Error('No screen is available to capture.');
+        const error = new Error(`Display ${activeDisplay.id} is not among the ${sources.length} capturable screens.`);
         error.code = 'CAPTURE_UNAVAILABLE';
         throw error;
       }

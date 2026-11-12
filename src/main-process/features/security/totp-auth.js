@@ -26,14 +26,67 @@ const ALLOWED_DRIFT_STEPS = 1;
 
 let sharedInstance = null;
 
-function resolveSecretPath(app) {
+function resolveSecretPath() {
   const os = require('os');
   return path.join(os.homedir(), '.synapse-totp-secret');
 }
 
-/** Loads the persisted secret, creating one on first run. */
+/**
+ * The Keychain-backed store for the secret (Electron safeStorage), or null
+ * outside a ready Electron app (tests, scripts).
+ */
+function openSecureStore(app) {
+  let electron = null;
+  try { electron = require('electron'); } catch (_) { return null; }
+  const electronApp = app || electron?.app;
+  const safeStorage = electron?.safeStorage;
+  if (!electronApp?.isReady?.() || !safeStorage?.isEncryptionAvailable?.()) return null;
+  const { createCredentialStore } = require('../../../services/web-sync/credential-store');
+  const dir = electronApp.isPackaged ? path.join(electronApp.getPath('userData'), 'state') : path.join(__dirname, '..', '..', '..', '..', SECRET_DIR_NAME);
+  return createCredentialStore({ safeStorage, filePath: path.join(dir, 'totp-secret.bin') });
+}
+
+const isSecret = (value) => typeof value === 'string' && /^[0-9a-f]{40}$/i.test(value);
+
+/**
+ * Loads the pairing secret from the Keychain-backed store. A plaintext secret
+ * left in the home folder by an older build is moved in once, so paired phones
+ * keep working; it is deleted only after the encrypted copy is written.
+ */
 function loadOrCreateSecret(app) {
-  const secretPath = resolveSecretPath(app);
+  const store = openSecureStore(app);
+  if (!store) return loadOrCreatePlaintextSecret();
+
+  const stored = store.load();
+  if (stored && isSecret(stored.secret)) return stored.secret;
+  if (store.locked()) {
+    // The Keychain refused this build: keep the plaintext path working rather
+    // than minting a new secret that would unpair every phone.
+    console.error(`[TotpAuth] Keychain did not release the pairing secret (${store.locked()}).`);
+    return loadOrCreatePlaintextSecret();
+  }
+
+  const legacyPath = resolveSecretPath();
+  let secret = null;
+  try {
+    const legacy = fs.readFileSync(legacyPath, 'utf8').trim();
+    if (isSecret(legacy)) secret = legacy;
+  } catch (_) { /* no legacy secret */ }
+  secret = secret || crypto.randomBytes(20).toString('hex');
+
+  try {
+    store.save({ secret });
+    fs.rmSync(legacyPath, { force: true });
+    console.log('[TotpAuth] Pairing secret is stored in the macOS Keychain store.');
+  } catch (error) {
+    console.error(`[TotpAuth] Could not store the pairing secret securely (${error.message}).`);
+  }
+  return secret;
+}
+
+/** Fallback when no Keychain store is available. */
+function loadOrCreatePlaintextSecret() {
+  const secretPath = resolveSecretPath();
 
   try {
     const existing = fs.readFileSync(secretPath, 'utf8').trim();

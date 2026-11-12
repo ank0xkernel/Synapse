@@ -839,6 +839,10 @@ function applyApiKeyAvailabilityFromSettings(settings) {
         return;
     }
 
+    if (settings.apiKeyStorage?.locked) {
+        showFeedback('Your API keys are saved, but the macOS Keychain did not release them. Restart Synapse and choose "Always Allow" when macOS asks.', 'error');
+    }
+
     // Ollama doesn't require API keys, so treat it as always configured
     if (settings.aiProvider === 'ollama') {
         hasGeminiApiKeysConfigured = true;
@@ -1019,10 +1023,13 @@ async function toggleMasterTranscription() {
 async function takeStealthScreenshot() {
     try {
         showFeedback('Taking screenshot...', 'info');
-        await window.electronAPI.takeStealthScreenshot();
+        const result = await window.electronAPI.takeStealthScreenshot();
+        if (result?.error) throw new Error(result.error);
     } catch (error) {
         console.error('Screenshot error:', error);
-        showFeedback('Screenshot failed', 'error');
+        // IPC prefixes "Error invoking remote method '…': Error: "; show the cause only.
+        const reason = String(error?.message || '').replace(/^Error invoking remote method '[^']+': (\w*Error: )?/, '');
+        showFeedback(reason ? `Screenshot failed: ${reason}` : 'Screenshot failed', 'error');
     }
 }
 

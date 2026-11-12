@@ -1,4 +1,6 @@
+const { nativeImage } = require('electron');
 const { resolveResponseModeId, listResponseModes } = require('../../../services/ai/response-modes');
+const { buildVisionImageParts } = require('./screenshot-manager');
 
 function registerAssistantIpc({
   ipcMain,
@@ -86,6 +88,12 @@ function registerAssistantIpc({
       waitedMs: waited.waitedMs,
       problemId: context?.problem?.id || screenIntel.getProblem?.()?.id || null
     };
+  }
+
+  // Outside Electron (the Node test rigs) there is no nativeImage: the frame
+  // then goes to the model as the JPEG it arrived as, without crops.
+  function decodeFrame(liveFrame) {
+    return nativeImage?.createFromBuffer ? nativeImage.createFromBuffer(Buffer.from(liveFrame.jpeg)) : null;
   }
 
   function cancelledResult(job, extra = {}) {
@@ -372,11 +380,25 @@ function registerAssistantIpc({
         sendToRenderer('ai-stream-end', { actionId: 'screenIntelligence' });
         return cancelledResult(job);
       }
-      const liveFrame = screen?.frame || null;
+      // A live frame is drawn from the monitoring stream at request time; the
+      // preload refuses one from a stalled stream, which lands here as null
+      // and falls through to a fresh one-shot capture.
+      const liveFrame = screen?.frame?.jpeg ? screen.frame : null;
       const screenContext = liveFrame ? screen.context : null;
-      const capture = liveFrame
-        ? { data: Buffer.from(liveFrame.jpeg).toString('base64'), mimeType: liveFrame.mime }
+      const frame = liveFrame
+        ? {
+          image: decodeFrame(liveFrame),
+          meta: { captureId: `live-${liveFrame.t || Date.now()}`, displayId: String(liveFrame.displayId ?? ''), width: liveFrame.width, height: liveFrame.height, source: 'monitoring-stream', capturedAt: liveFrame.t || Date.now() }
+        }
         : await screenshotManager.captureScreenInMemory({ displayId: payload?.displayId });
+      if (frame.image && frame.image.isEmpty()) {
+        throw Object.assign(new Error('The captured frame could not be decoded.'), { code: 'CAPTURE_EMPTY_FRAME' });
+      }
+      const frameImageParts = frame.image
+        ? buildVisionImageParts(frame.image)
+        : [{ inlineData: { data: Buffer.from(liveFrame.jpeg).toString('base64'), mimeType: liveFrame.mime || 'image/jpeg' } }];
+      const payloadBytes = frameImageParts.reduce((sum, p) => sum + (p.inlineData ? p.inlineData.data.length : 0), 0);
+      console.log(`[analyze-screen] frame=${frame.meta.captureId} source=${frame.meta.source} display=${frame.meta.displayId} ${frame.meta.width}x${frame.meta.height} age=${Date.now() - frame.meta.capturedAt}ms images=${frameImageParts.filter((p) => p.inlineData).length} base64=${Math.round(payloadBytes / 1024)}KB evidence=${screenContext?.imageParts?.length || 0}`);
 
       if (!liveFrame && screenIntel && payload?.continuous !== false) {
         // Failures surface through the screen-intel:state event; the one-shot
@@ -387,13 +409,10 @@ function registerAssistantIpc({
       sendToRenderer('screen-capture-status', { stage: 'processing', message: 'Processing image...' });
 
       const imageParts = [
-        {
-          inlineData: {
-            data: capture.data,
-            mimeType: capture.mimeType
-          }
-        },
-        ...(screenContext?.imageParts || [])
+        ...frameImageParts,
+        ...(screenContext?.imageParts?.length
+          ? [{ text: '[Further images: crops read earlier in this session about the same problem]' }, ...screenContext.imageParts]
+          : [])
       ];
 
       sendToRenderer('screen-capture-status', { stage: 'analyzing', message: 'Analyzing with AI...' });
@@ -417,6 +436,7 @@ function registerAssistantIpc({
             contextStringOverride: payload?.contextString || '',
             responseMode,
             onChunk,
+            screenshotCount: 1,
             tag: 'screenIntelligence'
           }
         );
@@ -463,9 +483,14 @@ function registerAssistantIpc({
       } else if (isPerm) {
         userMessage = error.message || 'Screen Recording permission is not granted. Enable Synapse in System Settings → Privacy & Security → Screen & System Audio Recording.';
       } else if (isInitFailed) {
-        userMessage = 'Screen capture could not initialize despite permission being available.';
+        userMessage = error.message || 'Screen capture could not initialize despite permission being available.';
       } else if (isUnavailable) {
         userMessage = 'Screen capture is unavailable. Ensure your display is connected and active.';
+      } else if (error?.code === 'MODEL_NO_VISION') {
+        userMessage = error.message;
+      } else if (/^(CAPTURE_|WINDOW_UNAVAILABLE)/.test(String(error?.code || ''))) {
+        // Capture failed before any model call: report it as a capture failure, not an AI error.
+        userMessage = `Screen capture failed: ${error.message}`;
       } else {
         userMessage = mapGeminiErrorMessage(error, 'Screen analysis failed');
       }

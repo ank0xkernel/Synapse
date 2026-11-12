@@ -309,11 +309,41 @@ async function runTests() {
     assert(managerSrc.includes('image/jpeg'), 'Must support image/jpeg mimeType');
   });
 
-  // 25. AppState fallback seeding prevents key loss in packaged app
-  await test('25. AppState fallback: seeds existing Gemini credentials from dev cache into packaged state if unconfigured', () => {
-    const appStateSrc = fs.readFileSync(path.join(__dirname, '../src/services/state/app-state.js'), 'utf8');
-    assert(appStateSrc.includes('candidatePaths') || appStateSrc.includes('devStatePath'), 'app-state.js must support fallback seeding');
-    assert(appStateSrc.includes('sanitizedState.geminiApiKey'), 'Must verify geminiApiKey in fallback candidates');
+  // 25. Keys from an older packaged build's state file are migrated, not lost
+  // (full key-storage behavior: tests/test-app-state-secrets.mjs).
+  await test('25. AppState migration: keys in the legacy userData/cache state file survive the move to the Keychain store', () => {
+    const os = require('os');
+    const { configureSecretStore, loadAppState } = require('../src/services/state/app-state');
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'synapse-state-'));
+    const app = { isPackaged: true, getPath: () => userData };
+    fs.mkdirSync(path.join(userData, 'cache'));
+    fs.writeFileSync(path.join(userData, 'cache', 'app-state.json'), JSON.stringify({ geminiApiKey: 'legacy-key', geminiModel: 'm' }));
+    const safeStorage = {
+      isEncryptionAvailable: () => true,
+      encryptString: (s) => Buffer.from(`enc:${s}`),
+      decryptString: (b) => b.toString().replace(/^enc:/, '')
+    };
+    configureSecretStore(app, safeStorage);
+    const state = loadAppState(app);
+    assert(state.geminiApiKey === 'legacy-key', 'Migrated key must load');
+    assert(state.geminiModel === 'm', 'Other settings must migrate');
+    fs.rmSync(userData, { recursive: true, force: true });
+  });
+
+  // 25b. A denial must never be upgraded to a grant because a thumbnail came back:
+  // without permission macOS returns a wallpaper-only image.
+  await test('25b. ScreenPermissionManager: a denied preflight stays denied even when desktopCapturer returns an image', async () => {
+    const { createScreenPermissionManager } = require('../src/main-process/features/assistant/screen-permission-manager');
+    let probed = false;
+    const manager = createScreenPermissionManager({
+      systemPreferences: { getMediaAccessStatus: () => 'denied' },
+      desktopCapturer: { getSources: async () => { probed = true; return [{ id: 'screen:1:0', thumbnail: { isEmpty: () => false } }]; } },
+      screen: { getAllDisplays: () => [{ id: 1, bounds: { width: 1920, height: 1080 } }] }
+    });
+    const cap = await manager.validateCaptureCapability({ forceFresh: true });
+    assert(cap.authorized === false, 'Denied preflight must not be authorized');
+    assert(cap.state === 'DENIED', `Expected DENIED, got ${cap.state}`);
+    assert(probed === false, 'Must not call getSources while denied (that re-triggers the macOS prompt)');
   });
 
   // 26. Centralized ScreenPermissionManager structured states

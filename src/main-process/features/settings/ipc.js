@@ -1,4 +1,5 @@
 const { setShortcutOverrides } = require('../../../config');
+const { getSecretStoreStatus } = require('../../../services/state/app-state');
 
 function registerSettingsIpc({
   ipcMain,
@@ -106,6 +107,8 @@ function registerSettingsIpc({
       assemblyAiApiKey,
       hasGeminiApiKeys: geminiApiKey.split(',').map((value) => value.trim()).filter(Boolean).length > 0,
       hasAssemblyAiApiKey: assemblyAiApiKey.length > 0,
+      // { available, locked }: locked means keys are saved but the Keychain refused them.
+      apiKeyStorage: getSecretStoreStatus(),
       geminiModel: geminiRuntime.getActiveGeminiModel(),
       geminiModels: geminiRuntime.getGeminiModels(),
       defaultGeminiModel: geminiRuntime.getDefaultGeminiModel(),
