@@ -3,8 +3,10 @@
 const DEFAULT_IMAGE_BUDGET = 64 * 1024 * 1024;
 const OVERLAY_KINDS = new Set(['stale', 'inaccessible', 'uncaptured']);
 const INFLIGHT = new Set(['new', 'captured', 'analysing']);
-// Statuses whose rect no longer says anything about coverage.
-const DEAD = new Set(['superseded', 'cancelled']);
+// Statuses whose rect no longer says anything about coverage. 'retired' is
+// text of a problem whose panel content was replaced: kept for that problem's
+// context, but it no longer describes what is at that position.
+const DEAD = new Set(['superseded', 'cancelled', 'retired']);
 // Best first: when records overlap, the best status wins the cell.
 const RANK = ['analysed', 'analysing', 'captured', 'new', 'stale', 'failed', 'pending', 'inaccessible'];
 
@@ -76,6 +78,9 @@ function createRegionLedger({ now = Date.now, imageBudgetBytes = DEFAULT_IMAGE_B
       nextRetryAt: null,
       maskRects: [],
       error: null,
+      // Problem this region belongs to, stamped when it is known; never
+      // rewritten by a later switch (see session-problem).
+      problemId: null,
       lastUsed: 0,
       ...fields,
     };
@@ -152,7 +157,7 @@ function createRegionLedger({ now = Date.now, imageBudgetBytes = DEFAULT_IMAGE_B
     && (filter.segmentId === undefined || r.segmentId === filter.segmentId));
 
   function counts(filter = {}) {
-    const out = { analysed: 0, analysing: 0, captured: 0, new: 0, pending: 0, failed: 0, inaccessible: 0, stale: 0, superseded: 0, cancelled: 0 };
+    const out = { analysed: 0, analysing: 0, captured: 0, new: 0, pending: 0, failed: 0, inaccessible: 0, stale: 0, superseded: 0, cancelled: 0, retired: 0 };
     for (const r of list(filter)) out[r.status] += 1;
     return out;
   }
@@ -246,4 +251,4 @@ function createRegionLedger({ now = Date.now, imageBudgetBytes = DEFAULT_IMAGE_B
   };
 }
 
-module.exports = { createRegionLedger, bytesOf, spanOf, INFLIGHT, DEFAULT_IMAGE_BUDGET };
+module.exports = { createRegionLedger, bytesOf, spanOf, INFLIGHT, DEAD, DEFAULT_IMAGE_BUDGET };

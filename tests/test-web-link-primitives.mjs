@@ -103,6 +103,24 @@ await test('Without secure storage, saving refuses instead of writing plaintext'
   assert(code === 'SECURE_STORAGE_UNAVAILABLE' && !fs.existsSync(path.join(dir, 'none.bin')));
 });
 
+await test('A saved link the Keychain will not open reports "locked", keeps the file, and is never shown as unlinked', () => {
+  const { createWebSync } = require(path.join(__dirname, '../src/services/web-sync/web-sync.js'));
+  const file = path.join(dir, 'locked.bin');
+  const writer = createCredentialStore({ safeStorage: { isEncryptionAvailable: () => true, encryptString: (s) => Buffer.from(s).map((b) => b ^ 0x55) }, filePath: file });
+  writer.save({ token: 'syn_secret', account: { id: 'a', email: 'me@example.com' }, baseUrl: 'https://x.example' });
+  // A rebuilt app whose Keychain key differs: decrypt throws, like Electron's safeStorage does.
+  const deniedStorage = { isEncryptionAvailable: () => true, decryptString: () => { throw new Error('Error while decrypting the ciphertext provided to safeStorage.decryptString.'); } };
+  const store = createCredentialStore({ safeStorage: deniedStorage, filePath: file });
+  assert(store.load() === null && /decrypting/.test(store.locked()), 'load fails and says why');
+  const empty = { load: () => null, available: () => true, clear() {}, save() {}, locked: () => null };
+  const sync = createWebSync({ credentialStore: store, cacheStore: empty, openExternal() {}, applyBundle() {}, clearWebContext() {} });
+  const snap = sync.snapshot();
+  assert(snap.status === 'locked', `status ${snap.status}`);
+  assert(/Keychain/.test(snap.error) && /Always Allow/.test(snap.error), snap.error);
+  assert(sync.remote.linked() === false && /Keychain/.test(sync.remote.locked()), 'conversation sync sees locked, not unlinked');
+  assert(fs.existsSync(file), 'the saved link is kept so approving Keychain access restores it');
+});
+
 fs.rmSync(dir, { recursive: true, force: true });
 console.log(`\nWeb link primitive tests: ${passed} passed, ${failed} failed (${passed + failed} total)`);
 process.exit(failed > 0 ? 1 : 0);

@@ -1,3 +1,4 @@
+import { persistMessage } from '../conversations/conversation-history.js';
 import { renderMarkdown } from './markdown.js';
 
 const ICONS = {
@@ -151,7 +152,7 @@ export function createChatUiManager({
 
         const shouldAutoScroll = isChatNearBottom();
 
-        const timestampDate = new Date();
+        const timestampDate = options.timestamp instanceof Date ? options.timestamp : new Date();
         const record = messageStore.add(type, content, {
             id: options.id,
             timestamp: timestampDate,
@@ -213,6 +214,9 @@ export function createChatUiManager({
             updateJumpToLatestVisibility();
         }
 
+        // Answers are saved when their stream ends (renderer.js), restored messages are already saved.
+        if (options.persist !== false && type !== 'ai-response') persistMessage(record);
+
         onMessagesChanged?.(messageStore.getMessages());
         updateUi?.();
 
@@ -240,9 +244,12 @@ export function createChatUiManager({
         }
 
         chatManualInput.style.height = 'auto';
-        const nextHeight = Math.min(chatManualInput.scrollHeight, maxChatInputHeight);
+        // CSS lowers the cap on short windows so the feed keeps its room; scroll past whichever cap is lower.
+        const cssCap = parseFloat(getComputedStyle(chatManualInput).maxHeight);
+        const cap = Number.isFinite(cssCap) ? Math.min(maxChatInputHeight, cssCap) : maxChatInputHeight;
+        const nextHeight = Math.min(chatManualInput.scrollHeight, cap);
         chatManualInput.style.height = `${Math.max(24, nextHeight)}px`;
-        chatManualInput.style.overflowY = chatManualInput.scrollHeight > maxChatInputHeight ? 'auto' : 'hidden';
+        chatManualInput.style.overflowY = chatManualInput.scrollHeight > cap ? 'auto' : 'hidden';
         updateChatComposerHeight();
     }
 

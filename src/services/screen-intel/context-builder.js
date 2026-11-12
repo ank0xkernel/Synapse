@@ -77,8 +77,35 @@ function splitRootLines(lines, geo, records, labels) {
   return { own, items };
 }
 
-function buildEpoch(ledger, epoch, containers) {
+/**
+ * Line filter for one problem. `attribute(record, y)` names the owner of a
+ * line (problem id, 'held' for content under an undecided boundary, or null).
+ * Returns null when no filtering is asked for.
+ */
+function lineKeeper({ attribute, activeProblemId }) {
+  if (typeof attribute !== 'function') return null;
+  return (rec, line) => {
+    const owner = attribute(rec, line.y);
+    if (owner === 'held') return 'held';
+    if (activeProblemId) return owner === activeProblemId ? 'keep' : 'other';
+    return owner ? 'other' : 'keep';
+  };
+}
+
+function buildEpoch(ledger, epoch, containers, keeper = null) {
   const records = ledger.list({ epoch });
+  // Retired text (a panel that now shows other content) only ever serves the problem it belongs to.
+  const usable = (r) => (r.status === 'analysed' || (keeper && r.status === 'retired')) && !r.duplicateOf;
+  const filtered = { held: 0, other: 0 };
+  const linesOf = (r) => {
+    const all = mapLines(r);
+    if (!keeper) return all;
+    return all.filter((l) => {
+      const verdict = keeper(r, l);
+      if (verdict !== 'keep') filtered[verdict] += 1;
+      return verdict === 'keep';
+    });
+  };
   const ids = Array.from(new Set(records.map((r) => r.containerId)));
   const geo = ids.map((id) => {
     const known = containers.find((c) => c.id === id);
@@ -97,9 +124,10 @@ function buildEpoch(ledger, epoch, containers) {
       const items = [];
       for (const segId of segIds) {
         if (gaps.some((x) => x.toSegmentId === segId)) items.push({ marker: true, text: GAP_MARKER, pos: -Infinity, seg: segId });
-        const segRecords = records.filter((r) => r.containerId === g.id && r.segmentId === segId && r.status === 'analysed' && !r.duplicateOf)
+        const segRecords = records.filter((r) => r.containerId === g.id && r.segmentId === segId && usable(r))
           .sort((a, b) => a.seq - b.seq);
-        let lines = dedupeLines(segRecords.flatMap(mapLines));
+        const before = { ...filtered };
+        let lines = dedupeLines(segRecords.flatMap(linesOf));
         if (g.id === 'root') {
           const split = splitRootLines(lines, geo, records, labels);
           lines = split.own;
@@ -108,6 +136,10 @@ function buildEpoch(ledger, epoch, containers) {
         for (const block of toBlocks(lines)) {
           items.push({ ...block, pos: axis === 'x' ? block.contentRect.x : block.y0, seg: segId });
         }
+        const held = filtered.held - before.held;
+        const other = filtered.other - before.other;
+        if (held) items.push({ marker: true, text: `[… ${held} line(s) under a heading that may start a different problem are not included; they are kept until that is decided …]`, pos: Infinity, seg: segId });
+        if (other) items.push({ marker: true, text: `[… ${other} line(s) belonging to other problems were left out …]`, pos: Infinity, seg: segId });
         const seg = cov.find((s) => s.id === segId);
         for (const cell of (seg ? seg.cells : [])) {
           const text = cellMarker(cell, axis);
@@ -120,7 +152,7 @@ function buildEpoch(ledger, epoch, containers) {
       const visible = g.viewport && g.id !== 'root' ? ` · visible now: ${axis}=${Math.round(v0)}..${Math.round(v1)}` : '';
       return { containerId: g.id, label: labels.get(g.id).label + visible, axis, center, items, cov, gaps: gaps.length };
     });
-  return { epoch, sections };
+  return { epoch, sections, filtered };
 }
 
 function renderSection(section) {
@@ -143,7 +175,7 @@ function itemsLength(ep) { return renderEpoch(ep).length; }
  * buildContext({ ledger, containers, currentEpoch, charBudget, focus })
  * Pure function of ledger records and container facts.
  */
-function problemHeader(problem, excludedCount) {
+function problemHeader(problem, excludedCount, candidate) {
   // Bracketed like the other structural markers; the title stays in the UI so
   // no screen text is repeated into the prompt.
   const lines = ['=== ACTIVE PROBLEM ==='];
@@ -154,23 +186,31 @@ function problemHeader(problem, excludedCount) {
   } else {
     lines.push('[The current screen has too little instruction text to tell which problem it belongs to. Do not assume it continues an earlier problem.]');
   }
+  if (candidate) lines.push('[A heading on screen may start a different problem. Text under it is not included below. Answer only the active problem unless the user asks about the other one.]');
   if (excludedCount) lines.push('[Earlier screens of other problems were removed on purpose. Never reuse their code, instructions or test cases.]');
   return lines.join('\n');
 }
 
-function buildContext({ ledger, containers = [], currentEpoch = 0, charBudget = 12000, focus = null, includeEpoch = () => false, problem = null } = {}) {
+function buildContext({
+  ledger, containers = [], currentEpoch = 0, charBudget = 12000, focus = null, includeEpoch = () => false, problem = null,
+  attribute = null, activeProblemId = null, candidate = null, savedDigest = '',
+} = {}) {
   const notes = [];
-  const epochNums = Array.from(new Set(ledger.all().filter((r) => r.status === 'analysed' || r.epoch === currentEpoch).map((r) => r.epoch)));
+  const keeper = lineKeeper({ attribute, activeProblemId });
+  const epochNums = Array.from(new Set(ledger.all().filter((r) => r.status === 'analysed' || r.status === 'retired' || r.epoch === currentEpoch).map((r) => r.epoch)));
   if (!epochNums.includes(currentEpoch)) epochNums.push(currentEpoch);
-  const current = buildEpoch(ledger, currentEpoch, containers);
+  const current = buildEpoch(ledger, currentEpoch, containers, keeper);
   const otherEpochs = epochNums.filter((e) => e !== currentEpoch);
-  const excluded = otherEpochs.filter((e) => !includeEpoch(e));
+  const hasText = (ep) => ep.sections.some((s) => s.items.some((i) => !i.marker));
+  // With a line filter an earlier screen counts only for the lines of this problem (none when no problem is known).
+  const built = otherEpochs.map((e) => (keeper ? (activeProblemId ? buildEpoch(ledger, e, [], keeper) : null) : (includeEpoch(e) ? buildEpoch(ledger, e, []) : null)));
+  const excluded = otherEpochs.filter((e, i) => !built[i] || !hasText(built[i]));
   if (excluded.length) notes.push(`${excluded.length} earlier screen(s) showing other or unidentified content were left out.`);
-  let previous = otherEpochs.filter((e) => includeEpoch(e)).sort((a, b) => b - a)
-    .map((e) => buildEpoch(ledger, e, [])).filter((ep) => ep.sections.some((s) => s.items.some((i) => !i.marker)));
+  let previous = built.filter((ep) => ep && hasText(ep)).sort((a, b) => b.epoch - a.epoch);
+  const saved = !previous.length && savedDigest ? String(savedDigest).slice(0, Math.max(0, Math.floor(charBudget / 3))) : '';
 
   const overhead = 1000;
-  const size = () => itemsLength(current) + previous.reduce((n, ep) => n + itemsLength(ep) + 30, 0) + overhead;
+  const size = () => itemsLength(current) + previous.reduce((n, ep) => n + itemsLength(ep) + 30, 0) + saved.length + overhead;
   while (previous.length && size() > charBudget) {
     const dropped = previous.pop();
     notes.push(`Dropped earlier screen (epoch ${dropped.epoch}) to fit the context budget.`);
@@ -210,11 +250,14 @@ function buildContext({ ledger, containers = [], currentEpoch = 0, charBudget = 
   if (uncovered) notes.push(`${uncovered} range(s) inside seen content were never captured.`);
 
   const out = [];
-  if (problem) out.push(problemHeader(problem, excluded.length));
+  if (problem) out.push(problemHeader(problem, excluded.length, candidate));
   out.push('=== SCREEN CONTEXT (current screen) ===', renderEpoch(current));
   if (previous.length) {
     out.push('=== Previously seen (earlier screens of this same problem, may no longer be visible) ===');
     for (const ep of previous) out.push(renderEpoch(ep));
+  }
+  if (saved) {
+    out.push('=== Saved from an earlier session (this problem as it was read before; it may be outdated and is not on screen now) ===', saved);
   }
   out.push('=== COVERAGE ===');
   out.push(coverage.complete
@@ -232,7 +275,9 @@ function buildContext({ ledger, containers = [], currentEpoch = 0, charBudget = 
     markers: s.items.filter((i) => i.marker).map((i) => i.text),
   }));
   const regionIds = Array.from(new Set(sections.flatMap((s) => s.blocks.flatMap((b) => b.regionIds))));
-  const withImage = (id) => ledger.get(id) && ledger.get(id).imageRef;
+  // With a line filter, only crops whose text is in this context are evidence for it.
+  const kept = new Set(regionIds);
+  const withImage = (id) => ledger.get(id) && ledger.get(id).imageRef && (!keeper || kept.has(id));
   const viewportIds = [];
   for (const s of current.sections) {
     const known = containers.find((c) => c.id === s.containerId);

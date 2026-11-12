@@ -4,7 +4,7 @@ const { mapLines } = require('./context-lines');
 const { detectSegmentMerge } = require('./context-builder');
 const { intersects, contains, intersection, FLIGHT } = require('./session-geometry');
 
-function createContinuity({ getRun, cancelJobs, toPending }) {
+function createContinuity({ getRun, cancelJobs, toPending, remapCuts = () => {} }) {
 function tryMerge(run, rec) {
   for (const gap of run.ledger.openGaps({ containerId: rec.containerId, epoch: rec.epoch })) {
     if (gap.toSegmentId !== rec.segmentId) continue;
@@ -17,6 +17,7 @@ function tryMerge(run, rec) {
     const dx = axis === 'x' ? merge.offset.x : 0;
     const dy = axis === 'x' ? 0 : merge.offset.y;
     run.ledger.remapSegment(rec.containerId, rec.epoch, gap.toSegmentId, gap.fromSegmentId, dx, dy);
+    remapCuts(run, rec.containerId, rec.epoch, gap.toSegmentId, gap.fromSegmentId, axis === 'x' ? dx : dy);
     run.aliases.set(`${rec.containerId}:${rec.epoch}:${gap.toSegmentId}`, { to: gap.fromSegmentId, dx, dy });
     run.ledger.closeGap(gap);
     if (c && c.segmentId === gap.toSegmentId) Object.assign(c, shiftContainer(c, gap.fromSegmentId, dx, dy));
@@ -48,7 +49,7 @@ function supersede(run, fresh, mode) {
     if (contains(fresh.contentRect, old.contentRect)) {
       if (inflight) cancelJobs(run, old.id);
       run.ledger.releaseImage(old.id);
-      run.ledger.setStatus(old.id, 'superseded', { nextRetryAt: null });
+      run.ledger.setStatus(old.id, 'superseded', { nextRetryAt: null, supersededBy: fresh.id });
     } else if (mode === 'stale' && inflight) {
       cancelJobs(run, old.id);
       toPending(run, old, 'INVALIDATED', 'Content changed while it was being analysed; needs recapture.');

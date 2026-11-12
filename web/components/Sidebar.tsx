@@ -11,7 +11,7 @@ type Item = readonly [href: string, label: string, icon: IconName];
 const GROUPS: readonly { id: string; label?: string; items: readonly Item[] }[] = [
   { id: 'home', items: [['/dashboard', 'Dashboard', 'dashboard']] },
   { id: 'material', label: 'Your material', items: [['/resumes', 'Resumes', 'resume'], ['/profile', 'Profile', 'profile'], ['/jobs', 'Job descriptions', 'job'], ['/projects', 'Projects', 'code']] },
-  { id: 'interviews', label: 'Interviews', items: [['/sessions', 'Sessions', 'session'], ['/prep', 'Prep', 'prep']] },
+  { id: 'interviews', label: 'Interviews', items: [['/conversations', 'Conversations', 'session'], ['/sessions', 'Sessions', 'session'], ['/prep', 'Prep', 'prep']] },
   { id: 'app', label: 'Desktop app', items: [['/desktop', 'Desktop', 'desktop'], ['/settings', 'Settings', 'settings']] }
 ];
 

@@ -193,3 +193,86 @@ Returns the stored PDF for on-demand preview. When the website keeps files in pr
 - Authorization codes and device tokens are stored as sha256 only.
 - Every query is scoped to the token's user id; another account's session or resume id answers `404`.
 - Revocation takes effect on the next request.
+
+## 5. Conversation sync
+
+Conversations and their messages live in Neon on the website and in a local file on each desktop (`<userData>/conversations/history.json`). The desktop pushes its changes and pulls everything else through one endpoint, authenticated exactly as section 2 (device token; cookies ignored). The website's own pages use cookie-authenticated routes over the same tables (`/api/conversations…`, `/api/preferences`).
+
+### 5.1 Data model
+
+- **Conversation:** `id` (uuid, chosen by the client that creates it), `title` (≤ 200), `summary` (≤ 4000), `source` (`web` | `desktop`), `created_at`, `edited_at` (when the title or summary last changed, as reported by the editing client and clamped to server time), `updated_at` (server time of any change, read by the cursor), `deleted_at`.
+- **Message:** `id` (uuid, client-chosen), `conversation_id`, `role` (`user` | `assistant` | `transcript` | `screen`), `content` (1 to 100 000 chars), `meta` (JSON object ≤ 4000 bytes, opaque to the server), `created_at` (client time, clamped to server time). Messages are append-only.
+- **Settings:** `{ "model"?: "<gemini model id>", "responseMode"?: "quick" | "professional" | "technical" | "star" | "detailed" }` plus `updated_at`.
+
+The desktop stores transcripts (`meta.speaker` is `host` or `me`), typed context, screen text and answers, with `meta.type` set to the chat type and `meta.interrupted: true` on an answer cut short. It never sends images, system notices, or Mode C's per-message "in context" toggles.
+
+### 5.2 `POST /api/desktop/v1/sync` (push)
+
+Body (≤ 4 MB; the desktop sends at most 500 conversations and 500 messages, about 3 MB, per batch):
+
+```json
+{
+  "conversations": [
+    { "id": "<uuid>", "title": "…", "summary": "", "created_at": "ISO-8601", "edited_at": "ISO-8601" },
+    { "id": "<uuid>", "deleted": true }
+  ],
+  "messages": [
+    { "id": "<uuid>", "conversation_id": "<uuid>", "role": "transcript", "content": "…", "meta": { "speaker": "host" }, "created_at": "ISO-8601" }
+  ],
+  "settings": { "data": { "responseMode": "star" }, "updated_at": "ISO-8601" }
+}
+```
+
+All three keys are optional. Conversations and messages apply in one transaction, conversations first, so a new conversation and its first messages can share a batch.
+
+`200`:
+
+```json
+{ "ok": true, "refused": ["<uuid>"], "inserted": 2 }
+```
+
+- A message whose `id` already exists is skipped. Resending a whole batch after a timeout is safe and inserts nothing twice.
+- `refused` lists conversation ids that belong to another account or were already deleted. The desktop deletes those locally.
+- A message for a deleted or foreign conversation is dropped silently and not counted in `inserted`.
+- `400` (validation) and `413` (too large) mean the batch will never be accepted. The desktop logs the error and drops that batch, so it cannot block later changes. `401` follows section 2.
+
+### 5.3 `GET /api/desktop/v1/sync?cursor=<opaque>` (pull)
+
+Omit `cursor` on the first sync. Always send back the `cursor` from the previous answer unchanged. It is base64url JSON holding server times only, never the desktop's clock.
+
+`200`:
+
+```json
+{
+  "ok": true,
+  "cursor": "<opaque>",
+  "more": false,
+  "conversations": [ { "id": "…", "title": "…", "summary": "…", "source": "web", "created_at": "…", "edited_at": "…", "updated_at": "…", "deleted_at": null } ],
+  "messages": [ { "id": "…", "conversation_id": "…", "seq": "41", "role": "assistant", "content": "…", "meta": {}, "created_at": "…" } ],
+  "settings": { "settings": { "responseMode": "star" }, "updated_at": "…" }
+}
+```
+
+- First sync: every live conversation and all messages. Later syncs: rows whose `updated_at` is after the previous pull's start time minus 60 seconds. The overlap re-sends a few rows so a transaction that committed late is never missed; clients merge by `id`.
+- Messages come in pages of 500, ordered by (`updated_at`, `id`). While `more` is `true`, pull again at once with the new cursor. Conversations arrive whole on the first page of a pull.
+- `400 "Invalid cursor…"`: drop the cursor and pull from the start.
+- Deleted conversations come as rows with `deleted_at` set (tombstones). Their messages are already gone from the server.
+
+### 5.4 Conflicts and deletes
+
+- **Title and summary:** the edit with the later `edited_at` wins. A client clock ahead of the server is clamped to server time, so it cannot win every future conflict. A title edited locally but not yet pushed is not overwritten by a pull.
+- **Messages:** never conflict. They are append-only with client ids. Display order is `created_at`, then `seq`.
+- **Delete wins:** deleting writes a tombstone and removes the messages from Neon. Later pushes for that conversation (offline edits, late messages) are refused or dropped. The other device removes it on its next pull; if that conversation is open, the chat is cleared with a notice.
+- **Settings:** the later `updated_at` wins.
+
+### 5.5 Desktop behavior
+
+1. Every saved message, rename, delete and answer-style change goes to the local file first (atomic write, mode 0600), then into an outbox in the same file. History, the open conversation and the outbox survive restarts and work with no network.
+2. Sync runs at launch, 2 seconds after a burst of local changes, every 2 minutes while linked, when the window gains focus, and on "Sync now" in History. One sync runs at a time. Order: push the whole outbox, then pull until `more` is `false`.
+3. Network failure: status `offline`, outbox kept, retry after 5 s, doubling to at most 5 minutes. `401`: status `auth-expired`, outbox kept for after re-linking. A pushed item leaves the outbox only after a `2xx`, and a conversation renamed again during the push stays queued.
+4. Not linked: status `unlinked`; history is saved on this Mac only and pushed after linking.
+5. The device token stays in the main process (section 1, Keychain via `safeStorage`). The history file is plain JSON on purpose: if the Keychain key changes after a rebuild, the history must still be readable.
+
+### 5.6 Website chat
+
+`POST /api/conversations/:id/messages` with `{ "id": "<uuid>", "content": "…" }` creates the conversation on its first message, saves the user message, asks Gemini with the last 30 messages, and saves the reply under an id derived from the user message id. Retrying with the same `id` returns the stored reply and does not call Gemini again. Without `GEMINI_API_KEY` the answer is `503`; on a provider failure it is `502`. In both cases the user message is already saved.

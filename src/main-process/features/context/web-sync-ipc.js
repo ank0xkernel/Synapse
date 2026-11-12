@@ -22,6 +22,21 @@ function registerWebSyncIpc({ ipcMain, app, shell, safeStorage, sendToWindow }) 
 
   const removePreviews = () => fs.rmSync(previewDir, { recursive: true, force: true });
 
+  // Keychain key check for the log: was last launch's probe readable (same key), and is a new one writable?
+  // A failed read after a rebuild explains a "locked" web link. The probe holds no secret.
+  try {
+    const probeFile = path.join(dir, 'keychain-probe.bin');
+    let previous = 'none';
+    if (fs.existsSync(probeFile)) {
+      try { previous = safeStorage.decryptString(fs.readFileSync(probeFile)) === 'synapse-probe' ? 'readable (same key)' : 'mismatch'; } catch (_) { previous = 'UNREADABLE (key changed)'; }
+    }
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(probeFile, safeStorage.encryptString('synapse-probe'), { mode: 0o600 });
+    console.log(`[web-sync] keychain probe from last launch: ${previous}; new probe written`);
+  } catch (error) {
+    console.log(`[web-sync] keychain probe failed: ${error.message}`);
+  }
+
   const webSync = createWebSync({
     credentialStore,
     cacheStore,

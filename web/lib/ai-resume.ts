@@ -34,13 +34,13 @@ export async function buildProfile(text: string): Promise<{ profile: Profile; me
 /** Why the AI path was not used; recorded so the UI can say so instead of failing silently. */
 export class AiResumeUnavailable extends Error {}
 
-async function generate(parts: string | Part[], opts: { json: boolean; timeoutMs: number; maxTokens: number }): Promise<string> {
+export async function generate(parts: string | Part[], opts: { json: boolean; timeoutMs: number; maxTokens: number; model?: string; temperature?: number }): Promise<string> {
   const key = process.env.GEMINI_API_KEY?.trim();
   if (!key || key === '""' || key === "''" || key.length < 5) throw new AiResumeUnavailable('GEMINI_API_KEY is not configured');
 
   // Bounded deadline to ensure execution finishes comfortably within serverless function budget (maxDuration = 60s)
   const overallDeadline = Date.now() + Math.min(opts.timeoutMs, 45_000);
-  const preferredModel = aiModel();
+  const preferredModel = opts.model || aiModel();
   const modelsToTry = [
     preferredModel,
     'gemini-3.5-flash-lite',
@@ -70,7 +70,7 @@ async function generate(parts: string | Part[], opts: { json: boolean; timeoutMs
         {
           model: modelName,
           generationConfig: {
-            temperature: 0,
+            temperature: opts.temperature ?? 0,
             maxOutputTokens: opts.maxTokens,
             ...(opts.json ? { responseMimeType: 'application/json' } : {})
           }

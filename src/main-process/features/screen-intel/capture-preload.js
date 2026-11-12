@@ -227,6 +227,14 @@ ipcRenderer.on('mc:recapture', (_event, { requestId, containerId, contentRect })
   ipcRenderer.send('mc:reply', { requestId, value: run ? run.engine.requestRecapture({ containerId, contentRect }) : false });
 });
 
+ipcRenderer.on('mc:begin-epoch', (_event, { requestId, epoch }) => {
+  ipcRenderer.send('mc:reply', { requestId, value: run ? run.engine.beginEpoch(epoch) : null });
+});
+
+ipcRenderer.on('mc:forget-outside', (_event, { requestId, containerId }) => {
+  ipcRenderer.send('mc:reply', { requestId, value: run ? run.engine.forgetOutsideView(containerId) : false });
+});
+
 ipcRenderer.on('mc:latest', async (_event, { requestId, maxWidth = 2048 }) => {
   let value = null;
   try {

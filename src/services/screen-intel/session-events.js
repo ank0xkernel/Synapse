@@ -4,10 +4,16 @@ const { contains, FLIGHT } = require('./session-geometry');
 
 function createEventHandlers(ctx) {
   const { now, log, refresh, enqueueRecord, enforceBudget, recoverPending, supersede, normalise, cancelJobs, notifySystem } = ctx;
-function adoptEpoch(epoch) {
+  const stampFor = ctx.stampFor || (() => null);
+/**
+ * Moves the session to a newer screen. A scene change cancels work on the
+ * screen that is gone; an explicit problem switch (preserveInflight) lets it
+ * finish, because that content is real and belongs to the previous problem.
+ */
+function adoptEpoch(epoch, { preserveInflight = false } = {}) {
   const R = ctx.run();
   if (!Number.isFinite(epoch) || epoch <= R.epoch) return;
-  for (const rec of R.ledger.list({}).filter((r) => r.epoch < epoch)) {
+  for (const rec of preserveInflight ? [] : R.ledger.list({}).filter((r) => r.epoch < epoch)) {
     if (FLIGHT.includes(rec.status)) {
       cancelJobs(R, rec.id);
       R.ledger.releaseImage(rec.id);
@@ -19,17 +25,24 @@ function adoptEpoch(epoch) {
   R.epoch = epoch;
   R.containers.clear();
   R.motion.clear();
+  if (ctx.onEpochAdopted) ctx.onEpochAdopted(R, epoch);
 }
+
+/** A region of the screen left by an explicit problem switch, captured before the switch: kept for the previous problem. */
+const lateForPreviousProblem = (R, ev) => R.lateEpoch !== undefined && ev.epoch === R.lateEpoch && Number.isFinite(ev.t) && ev.t <= R.lateUntil;
 
 function onRegion(ev0) {
   const R = ctx.run();
   const ev = normalise(ev0);
-  if (ev.epoch < R.epoch) { R.metrics.oldEpochDropped += 1; return; }
-  adoptEpoch(ev.epoch);
+  const late = ev.epoch < R.epoch && lateForPreviousProblem(R, ev);
+  if (ev.epoch < R.epoch && !late) { R.metrics.oldEpochDropped += 1; return; }
+  if (!late) adoptEpoch(ev.epoch);
   if (R.error && R.error.kind === 'engine') R.error = null;
   const t = now();
-  let c = R.containers.get(ev.containerId);
-  if (!c) {
+  let c = late ? null : R.containers.get(ev.containerId);
+  if (late) {
+    // Its panel belongs to the previous screen: no container bookkeeping here.
+  } else if (!c) {
     const r = ev.contentRect;
     c = { id: ev.containerId, screenRect: ev.screenRect, axis: 'y', scroll: { x: 0, y: 0 }, segmentId: ev.segmentId, epoch: ev.epoch,
       viewport: { ...r }, extent: { x0: r.x, y0: r.y, x1: r.x + r.w, y1: r.y + r.h }, synthetic: true };
@@ -44,6 +57,7 @@ function onRegion(ev0) {
     sessionId: R.sessionId, captureId: ev.captureId, containerId: ev.containerId, segmentId: ev.segmentId, epoch: ev.epoch,
     kind: ev.kind, displayId: ev.displayId ?? R.displayId, windowId: ev.windowId ?? null, screenRect: ev.screenRect,
     contentRect: ev.contentRect, overlap: ev.overlap || { top: 0, bottom: 0, left: 0, right: 0 }, capturedAt: t,
+    problemId: stampFor(R, ev.epoch),
   });
   R.frameCaptured = true;
   R.lastCaptureAt = t;
@@ -113,7 +127,12 @@ function handleEngineEvent(ev) {
     }
     case 'motion':
       if (ev.phase === 'start') R.motion.add(ev.containerId || '*');
-      else { R.motion.delete(ev.containerId || '*'); if (!ev.containerId) R.motion.clear(); recoverPending(); }
+      else {
+        R.motion.delete(ev.containerId || '*');
+        if (!ev.containerId) R.motion.clear();
+        recoverPending();
+        if (ctx.onMotionSettled) ctx.onMotionSettled(R, ev.containerId || null);
+      }
       break;
     case 'gap': R.ledger.addGap({ containerId: ev.containerId, fromSegmentId: ev.fromSegmentId, toSegmentId: ev.toSegmentId, reason: ev.reason, epoch: R.epoch }); break;
     case 'stale': onStale(ev); break;

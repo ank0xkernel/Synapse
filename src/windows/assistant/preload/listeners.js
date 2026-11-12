@@ -151,6 +151,10 @@ function createEventActions(ipcRenderer) {
     label: 'onWebSyncState'
   });
 
+  const onConversationsStatus = createEventListener(ipcRenderer, { channel: 'conversations:status', label: 'onConversationsStatus' });
+  const onConversationsRemote = createEventListener(ipcRenderer, { channel: 'conversations:remote', label: 'onConversationsRemote' });
+  const onConversationsSettings = createEventListener(ipcRenderer, { channel: 'conversations:settings', label: 'onConversationsSettings' });
+
   // Continuous screen intelligence snapshots (main window only).
   const onScreenIntelState = createEventListener(ipcRenderer, {
     channel: 'screen-intel:state',
@@ -160,6 +164,9 @@ function createEventActions(ipcRenderer) {
   return {
     onScreenIntelState,
     onWebSyncState,
+    onConversationsStatus,
+    onConversationsRemote,
+    onConversationsSettings,
     onNativeSystemAudioFrame,
     onNativeSystemAudioStatus,
     onScreenshotTakenStealth,

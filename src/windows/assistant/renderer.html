@@ -115,6 +115,9 @@
         <button id="show-mobile-code-btn" class="icon-btn mobile-server-pill idle" type="button" aria-label="Show phone pairing code" data-tip="Pairing code" data-tip-align="end" style="display: none;">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="m10.8 12.2 7.7-7.7"/><path d="m16 7 2 2"/></svg>
         </button>
+        <button id="history-btn" class="icon-btn" type="button" aria-label="Conversation history" data-tip="History" data-tip-align="end">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg>
+        </button>
         <button id="context-btn" class="icon-btn" type="button" aria-label="Resume and interview context" data-tip="Resume & context" data-tip-align="end">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6"/><path d="M9 17h4"/></svg>
         </button>
@@ -158,9 +161,18 @@
         </div>
         <div id="screen-intel-chips" class="screen-intel-chips"></div>
         <button id="screen-intel-retry" class="btn btn-ghost btn-sm" type="button" hidden>Retry</button>
+        <button id="screen-intel-new-problem" class="btn btn-ghost btn-sm screen-intel-new-problem" type="button" aria-label="New problem" title="Start a new problem. Earlier problems and answers are kept.">
+          <svg class="screen-intel-new-problem-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false"><rect x="2" y="2" width="12" height="12" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 5v6M5 8h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          <span class="screen-intel-new-problem-label">New problem</span>
+        </button>
         <button id="screen-intel-pause" class="btn btn-ghost btn-sm" type="button">Pause</button>
         <button id="screen-intel-stop" class="btn btn-ghost btn-sm" type="button">Stop</button>
         <button id="screen-intel-toggle" class="btn btn-ghost btn-sm" type="button" aria-expanded="false" aria-controls="screen-intel-details">Details</button>
+      </div>
+      <div id="screen-intel-candidate" class="screen-intel-candidate" hidden>
+        <span id="screen-intel-candidate-text" class="screen-intel-candidate-text" role="status" aria-live="polite"></span>
+        <button id="screen-intel-candidate-new" class="btn btn-ghost btn-sm" type="button">Start new problem</button>
+        <button id="screen-intel-candidate-same" class="btn btn-ghost btn-sm" type="button">Same problem</button>
       </div>
       <div id="screen-intel-details" class="screen-intel-details" hidden>
         <dl class="screen-intel-facts">
@@ -172,6 +184,10 @@
           <div><dt>Analysis took</dt><dd id="screen-intel-duration"></dd></div>
         </dl>
         <p id="screen-intel-error" class="screen-intel-error" hidden></p>
+        <div class="screen-intel-problems-block">
+          <h3 class="screen-intel-subhead" id="screen-intel-problems-title">Problems</h3>
+          <ul id="screen-intel-problems" class="screen-intel-problems" aria-labelledby="screen-intel-problems-title"></ul>
+        </div>
         <div id="screen-intel-maps" class="screen-intel-maps"></div>
         <ul id="screen-intel-regions" class="screen-intel-regions"></ul>
         <div class="screen-intel-actions">
@@ -303,6 +319,24 @@
             <div id="monitor-log-list" class="monitor-log-list" aria-label="Event log"></div>
           </div>
         </section>
+      </div>
+    </aside>
+
+    <!-- Conversation history (saved locally, synced to the website when linked) -->
+    <aside id="history-panel" class="sheet hidden" role="dialog" aria-labelledby="history-title">
+      <header class="sheet-header">
+        <h2 id="history-title" class="sheet-title" tabindex="-1" data-autofocus>History</h2>
+        <button id="history-sync" class="btn btn-ghost btn-sm" type="button">Sync now</button>
+        <button id="close-history" class="icon-btn" type="button" aria-label="Close history">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </header>
+      <div class="sheet-body">
+        <p id="history-sync-status" class="field-help history-status" role="status" aria-live="polite"></p>
+        <div class="sheet-actions">
+          <button id="history-new" class="btn btn-primary btn-sm" type="button">New conversation</button>
+        </div>
+        <ul id="history-list" class="history-list" aria-label="Saved conversations"></ul>
       </div>
     </aside>
 

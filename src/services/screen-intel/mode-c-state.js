@@ -70,4 +70,20 @@ function createStateMachine({ onChange, initial = STATES.IDLE, now = Date.now } 
   };
 }
 
-module.exports = { STATES, TRANSITIONS, createStateMachine };
+/** The only place the state is decided. Pure function of live facts. */
+function deriveState(f) {
+  if (!f.started) return STATES.IDLE;
+  if (f.stopped) return STATES.STOPPED;
+  if (f.paused) return STATES.PAUSED;
+  if (f.engineError || f.quotaWait) return STATES.ANALYSIS_FAILED;
+  if (!f.frameCaptured) return STATES.INITIAL_CAPTURE;
+  if (f.busy) return f.initialSettled ? STATES.PROCESSING_NEW_CONTENT : STATES.INITIAL_ANALYSIS;
+  if (f.capturing) return STATES.CAPTURING_NEW_CONTENT;
+  if (f.motion) return STATES.SCROLL_DETECTED;
+  if (f.failed > 0) return STATES.ANALYSIS_FAILED;
+  if (f.pending > 0) return STATES.ANALYSIS_PENDING;
+  if (f.viewAnalysed) return STATES.VIEW_FULLY_ANALYSED;
+  return f.initialSettled ? STATES.MONITORING : STATES.INITIAL_ANALYSIS;
+}
+
+module.exports = { STATES, TRANSITIONS, createStateMachine, deriveState };
