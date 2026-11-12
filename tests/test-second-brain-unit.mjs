@@ -57,10 +57,23 @@ function assertEqual(actual, expected, msg) {
   if (actual !== expected) throw new Error(`${msg || 'mismatch'}: expected ${expected}, got ${actual}`);
 }
 
+
+// These cases read the developer's own project repositories (paths in
+// src/services/second-brain/config.js). Where none of them exist, as on CI
+// runners, the cases are reported as skipped, never counted as passed.
+const LOCAL_REPOS = (() => { projectRegistry.discoverProjects(); return projectRegistry.getDiscoveredProjects().length > 0; })();
+let skipped = 0;
+function localTest(name, fn) {
+  if (LOCAL_REPOS) return test(name, fn);
+  skipped += 1;
+  console.log(`  - SKIPPED ${name} (needs the developer's local project repositories)`);
+  return undefined;
+}
+
 console.log('=== SECOND BRAIN UNIT TESTS ===\n');
 
 // 1. Project Registry
-test('1. Project Registry discovers all 10 priority repositories on local disk', () => {
+localTest('1. Project Registry discovers all 10 priority repositories on local disk', () => {
   const projects = projectRegistry.discoverProjects();
   assertTrue(projects.length >= 10, 'Expected at least 10 projects defined');
   const discovered = projectRegistry.getDiscoveredProjects();
@@ -277,6 +290,6 @@ test('10. Hybrid Retriever detects project target and applies Reciprocal Rank Fu
   assertEqual(retriever.detectProjectTarget('What is React?'), null, 'Generic question should have no target');
 });
 
-console.log(`\nResults: ${passed} passed, ${failed} failed`);
+console.log(`\nResults: ${passed} passed, ${failed} failed, ${skipped} skipped`);
 if (failed > 0) process.exit(1);
 

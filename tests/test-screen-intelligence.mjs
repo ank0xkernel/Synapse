@@ -22,6 +22,24 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 
+// Under plain Node, require('electron') only returns the binary's path string;
+// nothing here calls Electron APIs. CI skips the binary download
+// (ELECTRON_SKIP_BINARY_DOWNLOAD), and then the package throws on load
+// instead, so the module gets that same plain-Node value.
+{
+  const electronId = require.resolve('electron');
+  try {
+    require('electron');
+  } catch {
+    const Module = require('node:module');
+    const stub = new Module(electronId);
+    stub.filename = electronId;
+    stub.loaded = true;
+    stub.exports = '';
+    require.cache[electronId] = stub;
+  }
+}
+
 const prompts = require(path.join(__dirname, '../src/services/ai/prompts.js'));
 const { createScreenshotManager } = require(path.join(__dirname, '../src/main-process/features/assistant/screenshot-manager.js'));
 const config = require(path.join(__dirname, '../src/config.js'));

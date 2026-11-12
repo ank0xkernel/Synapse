@@ -26,6 +26,7 @@ const require = createRequire(import.meta.url);
 
 const { secondBrainService } = require('../src/services/second-brain/second-brain-service');
 const prompts = require('../src/services/ai/prompts.js');
+const { projectRegistry } = require('../src/services/second-brain/project-registry');
 
 let passed = 0;
 let failed = 0;
@@ -65,7 +66,20 @@ console.log('=== REALISTIC Q&A & EVIDENCE GROUNDING TESTS ===\n');
 await secondBrainService.initialize();
 
 // Test 1: Jumpstart Go
-test('1. Jumpstart Go: Retrieves real-time voice announcements, Web Audio, and Capacitor architecture', () => {
+
+// These cases read the developer's own project repositories (paths in
+// src/services/second-brain/config.js). Where none of them exist, as on CI
+// runners, the cases are reported as skipped, never counted as passed.
+const LOCAL_REPOS = (() => { projectRegistry.discoverProjects(); return projectRegistry.getDiscoveredProjects().length > 0; })();
+let skipped = 0;
+function localTest(name, fn) {
+  if (LOCAL_REPOS) return test(name, fn);
+  skipped += 1;
+  console.log(`  - SKIPPED ${name} (needs the developer's local project repositories)`);
+  return undefined;
+}
+
+localTest('1. Jumpstart Go: Retrieves real-time voice announcements, Web Audio, and Capacitor architecture', () => {
   const res = secondBrainService.query('How did you implement real-time announcements in Jumpstart Go?');
   assertTrue(res.targetProjectId === 'jumpstart_go', 'Must identify jumpstart_go');
   assertTrue(res.results.length > 0, 'Must return code evidence');
@@ -78,7 +92,7 @@ test('1. Jumpstart Go: Retrieves real-time voice announcements, Web Audio, and C
 });
 
 // Test 2: Novaris
-test('2. Novaris: Retrieves GitHub API repository analysis, AST scanning, and Gemini verification', () => {
+localTest('2. Novaris: Retrieves GitHub API repository analysis, AST scanning, and Gemini verification', () => {
   const res = secondBrainService.query('How does Novaris perform repository analysis?');
   assertTrue(res.targetProjectId === 'novaris', 'Must identify novaris');
   assertTrue(res.results.length > 0, 'Must return code evidence');
@@ -88,7 +102,7 @@ test('2. Novaris: Retrieves GitHub API repository analysis, AST scanning, and Ge
 });
 
 // Test 3: Gems Lord
-test('3. Gems Lord: Retrieves pricing, atomic inventory lock, and Express/Prisma backend architecture', () => {
+localTest('3. Gems Lord: Retrieves pricing, atomic inventory lock, and Express/Prisma backend architecture', () => {
   const res = secondBrainService.query('What backend technologies did you use in Gems Lord and how does checkout work?');
   assertTrue(res.targetProjectId === 'gems_lord', 'Must identify gems_lord');
   assertTrue(res.results.length > 0, 'Must return code evidence');
@@ -141,7 +155,7 @@ test('8. AI / LLM Usage: Detects multi-project AI architectures (Novaris, Synaps
 });
 
 // Test 9: Hardest Technical Challenges
-test('9. Technical Challenges: Grounds technical trade-offs in verified architectural code', () => {
+localTest('9. Technical Challenges: Grounds technical trade-offs in verified architectural code', () => {
   const resJumpstart = secondBrainService.query('What were the hardest challenges in Jumpstart Go?');
   assertTrue(resJumpstart.targetProjectId === 'jumpstart_go', 'Must identify Jumpstart Go');
   assertTrue(resJumpstart.results.some((r) => r.filePath.includes('sound') || r.filePath.includes('duty')), 'Must ground challenge in Web Audio unlock or duty queue');
@@ -183,5 +197,5 @@ test('12. Gemini Prompt Integration: Injects project evidence block only when re
   assertFalse(promptGeneric.includes('=== VERIFIED PROJECT & ENGINEERING EVIDENCE ==='), 'Generic question must NOT contain project evidence block');
 });
 
-console.log(`\nRealistic Q&A Results: ${passed} passed, ${failed} failed`);
+console.log(`\nRealistic Q&A Results: ${passed} passed, ${failed} failed, ${skipped} skipped`);
 if (failed > 0) process.exit(1);
