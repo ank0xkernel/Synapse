@@ -83,7 +83,11 @@ async function runTests() {
     assert(css.includes('height: var(--control-h);'), 'Height must match var(--control-h)');
     assert(css.includes('.analyze-screen-btn.analyzing'), 'Missing .analyzing state in app.css');
     assert(css.includes('.app.compact-mode #analyze-screen-btn'), 'Button must hide in compact mode');
-    assert(css.includes('.listen-label, .analyze-screen-label { display: none; }'), 'Label must collapse at 820px viewport');
+    // The label collapses when the title bar itself runs short of room (it needs about 1064 px with labels;
+    // the old 820px viewport breakpoint left 821-1064 px overlapping). Rendered check: npm run test:layout:live.
+    const collapse = /@container topbar \(max-width: (\d+)px\) \{[^}]*\.analyze-screen-label \{ display: none; \}/.exec(css);
+    assert(collapse, 'Analyze Screen label must collapse through the title-bar container query');
+    assert(Number(collapse[1]) >= 1064, `Label must collapse before the bar runs out of room (collapses at ${collapse?.[1]}px, needs 1064px)`);
   });
 
   // 3. Screen Recording permission check: Already granted

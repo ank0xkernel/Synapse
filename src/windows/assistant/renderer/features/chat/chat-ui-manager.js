@@ -244,9 +244,12 @@ export function createChatUiManager({
         }
 
         chatManualInput.style.height = 'auto';
-        const nextHeight = Math.min(chatManualInput.scrollHeight, maxChatInputHeight);
+        // CSS lowers the cap on short windows so the feed keeps its room; scroll past whichever cap is lower.
+        const cssCap = parseFloat(getComputedStyle(chatManualInput).maxHeight);
+        const cap = Number.isFinite(cssCap) ? Math.min(maxChatInputHeight, cssCap) : maxChatInputHeight;
+        const nextHeight = Math.min(chatManualInput.scrollHeight, cap);
         chatManualInput.style.height = `${Math.max(24, nextHeight)}px`;
-        chatManualInput.style.overflowY = chatManualInput.scrollHeight > maxChatInputHeight ? 'auto' : 'hidden';
+        chatManualInput.style.overflowY = chatManualInput.scrollHeight > cap ? 'auto' : 'hidden';
         updateChatComposerHeight();
     }
 

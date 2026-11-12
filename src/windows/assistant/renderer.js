@@ -216,7 +216,9 @@ function paintMobileServerPill() {
 
     const showCodeBtn = document.getElementById('show-mobile-code-btn');
     if (showCodeBtn) {
-        showCodeBtn.style.display = mobileServerStatus.listening ? 'inline-flex' : 'none';
+        // '' hands display back to .icon-btn (inline-grid centres the icon); the title bar's
+        // narrow-width rules can then still hide it.
+        showCodeBtn.style.display = mobileServerStatus.listening ? '' : 'none';
     }
 }
 

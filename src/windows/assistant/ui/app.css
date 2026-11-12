@@ -112,10 +112,30 @@ body.window-resizing * { cursor: inherit !important; }
 }
 .topbar button, .topbar select, .topbar label { -webkit-app-region: no-drag; }
 
+/*
+ * Title-bar layout contract. Three regions: status (start), actions (center),
+ * utilities (end). No control ever shrinks: every item is flex: none, so a
+ * label can never be squeezed under its neighbour. When the bar is too narrow,
+ * the container queries below drop labels in a fixed order (see "Title bar:
+ * progressive collapse"). Only the center region may take up slack; if content
+ * still does not fit it scrolls instead of overlapping, and the layout audit
+ * (src/main-process/dev/layout-audit.js) fails when that fallback engages.
+ */
+.topbar { container: topbar / inline-size; }
 .topbar-start, .topbar-end, .action-buttons { display: flex; align-items: center; gap: var(--space-1); }
-.topbar-start { gap: var(--space-2); min-width: 0; }
-.topbar-center { flex: 1; display: flex; justify-content: center; min-width: 0; }
+.topbar-start, .topbar-end { flex: none; }
+.topbar-start { gap: var(--space-2); }
+.topbar-center {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  justify-content: safe center;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.topbar-center::-webkit-scrollbar { display: none; }
 .action-buttons { gap: var(--space-2); }
+.topbar-start > *, .topbar-end > *, .action-buttons > *, .listen-group > *, .source-group > * { flex: none; }
 
 /* The Synapse app tile (assets/brand), inlined as a data URI in renderer.html. */
 .brand-mark {
@@ -493,7 +513,8 @@ option { background: var(--surface-2); color: var(--text-1); }
 }
 .code-lang { font-family: var(--font-mono); text-transform: lowercase; }
 .code-copy {
-  height: 22px;
+  min-width: 44px;
+  height: 24px;
   padding: 0 var(--space-2);
   border: 0;
   border-radius: var(--radius-sm);
@@ -972,27 +993,50 @@ select.input {
 .app.compact-mode .compact-mode-icon-shrink { display: none; }
 .app.compact-mode .compact-mode-icon-expand { display: block !important; }
 
-/* ── Responsive: 600px minimum window width ───────────────────────────── */
-@media (max-width: 820px) {
-  .session-sep, .timer { display: none; }
-  .listen-label, .analyze-screen-label { display: none; }
+/* ── Title bar: progressive collapse ──────────────────────────────────────
+ * Sized from measured natural widths (CSS px, busy state with every optional
+ * control shown): status 207, actions 493, utilities 320, gaps and padding 44.
+ * Steps, in order: icon-only Analyze Screen, then icon-only Listen and no
+ * timer, then the status label moves to the chip's tooltip, then brand and
+ * divider go and spacing tightens, then the phone shortcuts (also in Session
+ * status) go, then controls step down to 28 px. Every action stays on screen
+ * at the 600 x 380 minimum window. Thresholds are in the bar's own width.
+ */
+@container topbar (max-width: 1080px) {
+  .analyze-screen-label { display: none; }
+  .analyze-screen-btn { width: var(--control-h); padding: 0; justify-content: center; }
+}
+@container topbar (max-width: 960px) {
+  .listen-label, .session-sep, .timer { display: none; }
   .listen-btn { padding: 0 6px; }
-  .analyze-screen-btn { padding: 0 6px; }
-  .sheet { width: 100%; border-left: 0; }
 }
-@media (max-width: 720px) {
-  /* State stays visible as a colored dot; the label is in the tooltip. */
-  .session-state { padding: 0 8px; }
+@container topbar (max-width: 860px) {
+  /* State stays visible as a colored dot; the label is in the chip's tooltip and live region. */
   .session-label { display: none; }
-  .topbar { gap: var(--space-2); }
-  .topbar-center { justify-content: flex-start; }
+  .session-state { padding: 0 8px; }
 }
-@media (max-width: 680px) {
-  .brand-mark, .toolbar-divider, #mobile-server-pill { display: none; }
-  .response-mode-select { max-width: 112px; }
+@container topbar (max-width: 740px) {
+  .brand-mark, .toolbar-divider { display: none; }
+  .action-buttons { gap: var(--space-1); }
+}
+@container topbar (max-width: 670px) {
+  /* Same actions as the Phone companion box in Session status, which stays reachable. */
+  #mobile-server-pill, #show-mobile-code-btn { display: none !important; }
+}
+@container topbar (max-width: 600px) {
+  .topbar-end, .action-buttons { gap: 2px; }
+  .response-mode-select { padding: 0 22px 0 10px; background-position: right 5px center; }
+  .topbar-end .icon-btn, .action-buttons > .icon-btn, .analyze-screen-btn { width: 28px; height: 28px; }
+  .response-mode-select { height: 28px; }
+}
+
+@media (max-width: 820px) {
+  .sheet { width: 100%; border-left: 0; }
 }
 @media (max-height: 420px) {
   .chat-empty-keys, .chat-empty-body { display: none; }
+  /* Two lines, then the draft scrolls: the feed keeps room for the answer. */
+  .chat-manual-input { max-height: 42px; }
 }
 
 /* Iridescent Cloud Edge: compact Operate surfaces, no compositing effects. */
@@ -1032,10 +1076,20 @@ input, textarea { caret-color: var(--accent-text); }
 .app.compact-mode .context-strip { display: none; }
 @media (max-width: 720px) {
   .topbar { gap: 4px; padding-inline: 8px; }
-  .action-buttons { gap: 4px; }
   .chat-messages { padding: 16px 12px 8px; }
   .context-job { display: none; }
   .sheet-header, .sheet-body { padding: 16px; }
+}
+@media (max-width: 600px) {
+  /* A container cannot query itself, so the bar's own padding steps down with the viewport. */
+  .topbar { padding-inline: 6px; }
+}
+@media (max-width: 545px) {
+  /* Narrower than the fully collapsed bar needs (about 540 CSS px; reached at the
+     600 px minimum window with ⌘+ zoom): utilities wrap to a second row instead of
+     any control being dropped or scrolled away. */
+  .app:not(.compact-mode) .topbar { flex-wrap: wrap; height: auto; min-height: 60px; row-gap: 4px; padding-block: 6px; }
+  .app:not(.compact-mode) .topbar-end { order: 3; flex-basis: 100%; justify-content: flex-end; }
 }
 @media (max-height: 420px) {
   .chat-empty-title { font-size: 24px; margin: 0; }
