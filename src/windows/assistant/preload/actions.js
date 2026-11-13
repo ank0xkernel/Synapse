@@ -109,6 +109,28 @@ function createInvokeActions(ipcRenderer) {
       fallback: (error) => ({ error: error.message })
     })])),
 
+    // Workbench: project-aware tasks with approved execution (main-process workbench ipc).
+    ...Object.fromEntries([
+      ['workbenchListProjects', 'workbench:list-projects'],
+      ['workbenchAddProject', 'workbench:add-project'],
+      ['workbenchRemoveProject', 'workbench:remove-project'],
+      ['workbenchSuggestProject', 'workbench:suggest-project'],
+      ['workbenchConfirmProject', 'workbench:confirm-project'],
+      ['workbenchStartTask', 'workbench:start-task'],
+      ['workbenchApprove', 'workbench:approve'],
+      ['workbenchReject', 'workbench:reject'],
+      ['workbenchCancel', 'workbench:cancel'],
+      ['workbenchFixFailures', 'workbench:fix-failures'],
+      ['workbenchOpenInEditor', 'workbench:open-in-editor'],
+      ['workbenchGetRun', 'workbench:get-run'],
+      ['workbenchHistory', 'workbench:history'],
+      ['workbenchListRuns', 'workbench:list-runs']
+    ].map(([label, channel]) => [label, invokeWithFallback(ipcRenderer, {
+      channel,
+      label,
+      fallback: (error) => ({ success: false, error: error.message, code: 'IPC_FAILED' })
+    })])),
+
     clearStealth: invokeWithFallback(ipcRenderer, {
       channel: 'clear-stealth',
       label: 'clearStealth',

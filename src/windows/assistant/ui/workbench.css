@@ -1,0 +1,56 @@
+/* Workbench sheet: projects, tasks, approved actions. Uses the shared tokens only. */
+.workbench .sheet-body { display: grid; gap: var(--space-5); align-content: start; }
+.wb-section { min-width: 0; }
+.wb-subhead { margin: 0 0 var(--space-2); font-size: var(--text-sm); font-weight: var(--weight-semibold); color: var(--text-1); cursor: default; }
+summary.wb-subhead { cursor: pointer; }
+.wb-minor { margin: var(--space-3) 0 var(--space-1); font-size: var(--text-xs); font-weight: var(--weight-semibold); color: var(--text-2); text-transform: uppercase; letter-spacing: var(--tracking-caps); }
+.wb-list { list-style: none; margin: 0 0 var(--space-3); padding: 0; display: grid; gap: var(--space-2); }
+.wb-project, .wb-candidate { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--surface-2); flex-wrap: wrap; }
+.wb-project[data-active="true"] { border-color: var(--accent-border); background: var(--accent-soft); }
+.wb-project-text { display: grid; min-width: 0; flex: 1 1 160px; }
+.wb-project-name { font-weight: var(--weight-medium); color: var(--text-1); display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
+.wb-path, .wb-mono, .wb-command, .wb-diff, .wb-output { font-family: var(--font-mono); }
+.wb-path { font-size: var(--text-xs); color: var(--text-3); overflow-wrap: anywhere; }
+.wb-empty { color: var(--text-3); font-size: var(--text-sm); }
+.wb-row { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: var(--space-2) 0; }
+.wb-suggestion { margin: var(--space-2) 0; display: grid; gap: var(--space-2); }
+.wb-suggestion-text { margin: 0; color: var(--text-1); font-size: var(--text-sm); }
+.wb-check { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); color: var(--text-1); }
+.wb-check input { width: 16px; height: 16px; accent-color: var(--accent); }
+.wb-request { min-height: 84px; }
+.wb-stage { margin: var(--space-2) 0 0; padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--info-soft); color: var(--text-1); font-size: var(--text-sm); overflow-wrap: anywhere; }
+.wb-stage[data-stage="failed"] { background: var(--danger-soft); color: var(--danger); }
+.wb-stage[data-stage="done"] { background: var(--positive-soft); }
+.wb-run-project { margin: 0 0 var(--space-2); color: var(--text-3); font-size: var(--text-xs); overflow-wrap: anywhere; }
+.wb-card { border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: var(--space-3); margin-bottom: var(--space-3); background: var(--surface-2); min-width: 0; font-size: var(--text-sm); }
+.wb-card p { margin: var(--space-1) 0; overflow-wrap: anywhere; }
+.wb-card-head { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.wb-card-title { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; color: var(--text-1); }
+.wb-pill { display: inline-block; padding: 2px 8px; border: 1px solid var(--border); border-radius: var(--radius-full); font-size: var(--text-xs); line-height: 1.4; color: var(--text-2); font-weight: var(--weight-medium); }
+.wb-pill[data-tone="positive"] { border-color: var(--positive); color: var(--positive); background: var(--positive-soft); }
+.wb-pill[data-tone="warning"] { border-color: var(--warning); color: var(--warning); background: var(--warning-soft); }
+.wb-pill[data-tone="danger"] { border-color: var(--danger); color: var(--danger); background: var(--danger-soft); }
+.wb-pill[data-tone="info"], .wb-pill[data-tone="busy"] { border-color: var(--info); color: var(--info); background: var(--info-soft); }
+.wb-error { color: var(--danger); }
+.wb-missing { margin-top: var(--space-2); padding: var(--space-2) var(--space-3); border-left: 3px solid var(--warning); background: var(--warning-soft); border-radius: var(--radius-sm); }
+.wb-bullets { margin: var(--space-1) 0; padding-left: var(--space-4); overflow-wrap: anywhere; }
+.wb-evidence-line { color: var(--text-3); font-size: var(--text-xs); overflow-wrap: anywhere; }
+.wb-evidence-group { margin-bottom: var(--space-2); }
+.wb-evidence-group[data-kind="inference"] .wb-evidence-label { color: var(--warning); }
+.wb-statement { white-space: pre-wrap; }
+.wb-command, .wb-diff, .wb-output { margin: var(--space-2) 0; padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); background: var(--surface-3); color: var(--text-1); font-size: var(--text-xs); line-height: 1.5; overflow-x: auto; user-select: text; }
+.wb-command, .wb-output { white-space: pre-wrap; overflow-wrap: anywhere; }
+.wb-output { max-height: 200px; overflow-y: auto; }
+.wb-diff { max-height: 320px; overflow: auto; white-space: pre; }
+.wb-diff-line { display: block; }
+.wb-diff-add { background: var(--positive-soft); color: var(--positive); }
+.wb-diff-del { background: var(--danger-soft); color: var(--danger); }
+.wb-diff-hunk { color: var(--info); }
+.wb-diff-meta, .wb-diff-note { color: var(--text-3); }
+.wb-risks { display: flex; flex-wrap: wrap; gap: var(--space-1); margin: var(--space-1) 0; }
+.wb-answer-body { user-select: text; overflow-wrap: anywhere; }
+.wb-answer-body .code-copy { display: none; }
+.wb-history-item { font-size: var(--text-sm); overflow-wrap: anywhere; }
+.workbench summary:focus-visible, .workbench .wb-check input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.workbench details > summary { cursor: pointer; color: var(--text-2); font-size: var(--text-xs); }
+@media (prefers-reduced-motion: reduce) { .workbench * { animation: none !important; transition: none !important; } }

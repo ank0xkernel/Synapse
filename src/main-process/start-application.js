@@ -39,6 +39,7 @@ const appProtocol = require('./shared/app-protocol');
 const { createGeminiRuntime } = require('./features/assistant/gemini-runtime');
 const { createScreenshotManager } = require('./features/assistant/screenshot-manager');
 const { createScreenIntelController } = require('./features/screen-intel/controller');
+const { registerWorkbenchIpc } = require('./features/workbench/ipc');
 const { registerAssistantIpc } = require('./features/assistant/ipc');
 const { registerContextIpc } = require('./features/context/context-ipc');
 const { registerWebSyncIpc } = require('./features/context/web-sync-ipc');
@@ -188,6 +189,7 @@ async function startApplication() {
 
   let screenshotManager = null;
   let screenIntel = null;
+  let workbench = null;
   let webSyncControl = null;
   let conversationsControl = null;
   let windowController = null;
@@ -380,6 +382,7 @@ async function startApplication() {
     conversationsControl?.cleanup();
     assemblyAiService.dispose();
     screenIntel?.dispose();
+    workbench?.dispose();
     screenshotManager.cleanupTransientResources();
     windowController.unregisterShortcuts();
     mobileServer.close();
@@ -657,6 +660,20 @@ async function startApplication() {
     });
     conversationsControl.problems.onBeforeCurrentChange(() => screenIntel?.saveProblems());
     conversationsControl.problems.onCurrentChange((saved) => screenIntel?.loadProblems(saved));
+
+    // Project-aware tasks: reads the screen through screenIntel, edits and runs
+    // commands only after per-action approval in this window.
+    workbench = registerWorkbenchIpc({
+      app,
+      ipcMain,
+      dialog,
+      desktopCapturer,
+      getMainWindow: () => windowController.getMainWindow(),
+      sendToWindow: baseSendToRenderer,
+      geminiRuntime,
+      getScreenIntel: () => screenIntel,
+      screenshotManager
+    });
 
     // Point the brief at userData in packaged builds before anything reads it.
     console.log(`[Startup] Interview brief: ${interviewContext.configure(app)}`);

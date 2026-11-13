@@ -411,7 +411,7 @@ const SCENES = {
         await check(`${w}x${h} ${state} feed`);
       }
       fs.writeFileSync(fileFor(w, h), (await win.webContents.capturePage()).toPNG());
-      for (const sheet of ['history-btn', 'context-btn', 'status-btn', 'settings-btn']) {
+      for (const sheet of ['history-btn', 'context-btn', 'status-btn', 'settings-btn', 'workbench-btn']) {
         await run((id) => document.getElementById(id).click(), sheet);
         await sleep(350);
         await check(`${w}x${h} busy ${sheet.replace('-btn', '')} sheet`);
