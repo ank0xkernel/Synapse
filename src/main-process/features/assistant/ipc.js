@@ -65,7 +65,7 @@ function registerAssistantIpc({
    * is gone: it is left out rather than offered as "the current problem".
    * Waits briefly for a just-changed screen.
    */
-  async function collectScreenContext({ wait = true } = {}) {
+  async function collectScreenContext({ wait = true, withImages = true } = {}) {
     const screenIntel = getScreenIntel();
     if (!screenIntel || !screenIntel.getSnapshot || !screenIntel.isActive()) return null;
     const waited = wait ? await screenIntel.waitForCurrentView({ timeoutMs: SCREEN_VIEW_WAIT_MS }) : { ready: true, waitedMs: 0 };
@@ -73,13 +73,14 @@ function registerAssistantIpc({
     // while the frame was being grabbed, read both again (once); if it is
     // still moving, send the frame with the text marked as not current.
     const problemKey = () => { const p = screenIntel.getProblem?.(); return p ? `${p.id}|${p.status}|${p.changedAt}` : 'none'; };
+    const grabFrame = async () => (withImages ? screenIntel.getLatestFrame() : null);
     let key = problemKey();
-    let context = screenIntel.getPromptContext();
-    let frame = await screenIntel.getLatestFrame();
+    let context = screenIntel.getPromptContext({ withImages });
+    let frame = await grabFrame();
     if (problemKey() !== key) {
       key = problemKey();
-      context = screenIntel.getPromptContext();
-      frame = await screenIntel.getLatestFrame();
+      context = screenIntel.getPromptContext({ withImages });
+      frame = await grabFrame();
       if (problemKey() !== key) context = null;
     }
     return {
@@ -587,7 +588,13 @@ function registerAssistantIpc({
       // Registered before the wait so cancel-ask-ai or a problem change
       // during it reaches this request.
       askJob = beginAnswerJob('askAi', null);
-      const screen = await collectScreenContext();
+      // An Ollama model that cannot read images refuses any image part
+      // (MODEL_NO_VISION). The answer then gets the screen as text only,
+      // with context text that does not mention images.
+      const activeService = geminiRuntime.getActiveAiProvider() === 'ollama' ? geminiRuntime.getService?.() : null;
+      const modelSeesImages = !activeService || typeof activeService.supportsVision !== 'function'
+        || await activeService.supportsVision().catch(() => false);
+      const screen = await collectScreenContext({ withImages: modelSeesImages });
       if (!askJob.problemId) askJob.problemId = screen?.problemId || null;
       if (askJob.cancelled) {
         if (latencyId) latencyTracker.abandon(latencyId);

@@ -347,7 +347,7 @@ function ipcRig({ abortable = true, problemId = 'p1', viewAnalysed = true } = {}
   });
   const invoke = (ch, payload) => handlers[ch]({}, payload);
   const chunks = (actionId) => sent.filter(([ch, p]) => ch === 'ai-stream-chunk' && p.actionId === actionId).map(([, p]) => p.text);
-  return { api, invoke, pending, calls, sent, screen, chunks };
+  return { api, invoke, pending, calls, sent, screen, chunks, service };
 }
 
 const origLog = console.log;
@@ -463,6 +463,26 @@ await test('ask with a fully read view still attaches the evidence crops its scr
   assert.equal(call.opts.screenshotCount, 1);
   rig.pending[0].finish('ok');
   assert.equal((await run).usedScreenshots, true);
+});
+
+await test('Ollama model without vision: ask gets the screen as text only, and the text is built without image claims', async () => {
+  const rig = ipcRig({ abortable: false, viewAnalysed: false });
+  const crop = { inlineData: { data: 'Y3JvcA==', mimeType: 'image/jpeg' } };
+  const asked = [];
+  const base = rig.screen.getPromptContext;
+  rig.screen.getPromptContext = (opts = {}) => { asked.push(opts); return { ...base(), imageParts: opts.withImages === false ? [] : [crop] }; };
+  let frames = 0;
+  rig.screen.getLatestFrame = async () => { frames += 1; return { jpeg: Buffer.from('frame'), mime: 'image/jpeg' }; };
+  rig.service.supportsVision = async () => false;
+  const run = quiet(() => rig.invoke('ask-ai-with-session-context', { transcriptContext: 'Host: what does this code do?' }));
+  await flush();
+  assert.equal(rig.calls[0].kind, 'ask', 'a text-only model must not be sent images');
+  assert.equal(rig.calls[0].opts.screenshotCount, 0);
+  assert.deepEqual(asked.map((o) => o.withImages), [false]);
+  assert.equal(frames, 0, 'no live frame is grabbed for a model that cannot read it');
+  assert.match(rig.calls[0].opts.contextString, /SCREEN SESSION CONTEXT/);
+  rig.pending[0].finish('ok');
+  assert.equal((await run).usedScreenshots, false);
 });
 
 await test('empty image reply: the text-only retry says no screenshots are attached and the result says none were used', async () => {

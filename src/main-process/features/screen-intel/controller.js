@@ -340,13 +340,17 @@ function createScreenIntelController({
     return imageRef && imageRef.jpeg ? `data:${imageRef.mime || 'image/jpeg'};base64,${Buffer.from(imageRef.jpeg).toString('base64')}` : null;
   }
 
-  /** Text read so far plus the original crops worth showing the model. Null when nothing has been read. */
-  function getPromptContext({ charBudget = CONTEXT_CHAR_BUDGET } = {}) {
+  /**
+   * Text read so far plus the original crops worth showing the model. Null
+   * when nothing has been read. withImages: false for a model that cannot
+   * read images, so the text does not promise crops that will not be sent.
+   */
+  function getPromptContext({ charBudget = CONTEXT_CHAR_BUDGET, withImages = true } = {}) {
     const snapshot = session.getSnapshot();
     if (!snapshot.sessionId || snapshot.counts.analysed === 0) return null;
     const context = session.buildContext({ charBudget });
     const imageParts = [];
-    for (const regionId of context.imageRegionIds.slice(0, MAX_EVIDENCE_IMAGES)) {
+    for (const regionId of withImages ? context.imageRegionIds.slice(0, MAX_EVIDENCE_IMAGES) : []) {
       const region = session.getRegion(regionId);
       if (region && region.imageRef && region.imageRef.jpeg) {
         imageParts.push({ inlineData: { data: Buffer.from(region.imageRef.jpeg).toString('base64'), mimeType: region.imageRef.mime || 'image/jpeg' } });
