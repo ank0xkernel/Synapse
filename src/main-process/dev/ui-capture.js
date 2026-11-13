@@ -92,7 +92,7 @@ const SCENES = {
     });
     await disableAutoAnswer(win);
     send('screen-intel:state', snap({ id: 'p1', title: 'Campus FAQ Bot', status: 'identified', changedAt: t - 60000 },
-      { code: 'VIEW_ANALYSED_FIRST', text: 'Current screen fully analysed.', hint: 'Scroll to analyse more content.' }));
+      { code: 'VIEW_ANALYSED_FIRST', text: 'Current screen fully analysed.', hint: 'Scroll to analyse more.' }));
     await sleep(200);
     assert(await run(() => !document.getElementById('screen-intel').hidden), 'Screen intelligence bar stayed hidden');
     assert(await run(() => document.getElementById('screen-intel-primary').textContent === 'Current screen fully analysed.'), 'Bar message not rendered');

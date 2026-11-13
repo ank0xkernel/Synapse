@@ -83,15 +83,40 @@ function createScreenSession({ ocr, engineControl, now = Date.now, emitState, on
   function fail(run, code, message) { run.error = { kind: 'engine', code, message }; if (run === R) refresh(); }
 
   // ---- derivation ---------------------------------------------------------------
+  /**
+   * A panel's first screenful is usually read as part of the full-screen root
+   * capture, before the panel scrolls and becomes a container. The engine
+   * seeds the container's coverage from that capture (seedFromRoot) and never
+   * captures it again, so it counts here too, mapped the same way: content =
+   * screen - origin at zero scroll. Only analysed root text in this epoch.
+   */
+  function rootCellsFor(c, axis) {
+    if (c.id === 'root' || !c.screenRect) return [];
+    const origin = c.origin || c.screenRect;
+    const [s0, s1] = spanOf(c.screenRect, axis);
+    const cross = axis === 'x' ? 'y' : 'x';
+    const [c0, c1] = spanOf(c.screenRect, cross);
+    const shift = axis === 'x' ? origin.x : origin.y;
+    return R.ledger.list({ containerId: 'root', epoch: R.epoch, status: 'analysed' })
+      .filter((r) => r.contentRect && r.epoch === c.epoch)
+      .filter((r) => { const [a, b] = spanOf(r.contentRect, cross); return Math.min(b, c1) - Math.max(a, c0) >= 0.9 * (c1 - c0); })
+      .map((r) => { const [a, b] = spanOf(r.contentRect, axis); return { start: Math.max(a, s0) - shift, end: Math.min(b, s1) - shift, status: 'analysed' }; })
+      .filter((cell) => cell.end > cell.start);
+  }
+
   function viewAnalysed() {
     if (!R.frameCaptured || R.queue.depth + R.queue.runningCount > 0 || !R.containers.size || R.needsUpdate) return false;
     for (const c of R.containers.values()) {
       const axis = c.axis === 'x' ? 'x' : 'y';
       const seg = R.ledger.coverage(c.id, { epoch: R.epoch, axis }).find((s) => s.id === c.segmentId);
-      if (!seg || !c.viewport) return false;
+      if (!c.viewport) return false;
+      // Any own cell in view that is not analysed (failed, stale, pending)
+      // still blocks below, even where root text covers the same range.
+      const cells = [...rootCellsFor(c, axis), ...(seg ? seg.cells : [])].sort((a, b) => a.start - b.start);
+      if (!cells.length) return false;
       const [v0, v1] = spanOf(c.viewport, axis);
       let cursor = v0;
-      for (const cell of seg.cells) {
+      for (const cell of cells) {
         if (cell.end <= v0 || cell.start >= v1) continue;
         if (cell.status !== 'analysed' && cell.status !== 'inaccessible') return false;
         if (cell.start > cursor + TOL) return false;
@@ -411,6 +436,9 @@ function createScreenSession({ ocr, engineControl, now = Date.now, emitState, on
       if (run === R) { run.error = null; refresh(); }
     } catch (error) {
       log('engine-restart-failed', error);
+      // Screen Recording revoked while running surfaces here: the stream ends
+      // and reopening it is refused. Report the permission, not "analysis failed".
+      if (error && /PERMISSION/i.test(error.code || '')) { await notifySystem('permission-revoked'); return; }
       fail(run, 'ENGINE_RESTART_FAILED', (error && error.message) || String(error));
     }
   }

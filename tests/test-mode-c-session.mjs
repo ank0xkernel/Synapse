@@ -155,7 +155,7 @@ await test('initial capture -> analysis -> VIEW_ANALYSED_FIRST only after OCR re
   await h.release(0, { lines: [ln('Hello world', 0.1, 0.1)], engine: 'fake', durationMs: 7 });
   snap = h.snap();
   assert.equal(snap.state, STATES.VIEW_FULLY_ANALYSED);
-  assert.deepEqual([snap.message.code, snap.message.text, snap.message.hint], ['VIEW_ANALYSED_FIRST', 'Current screen fully analysed.', 'Scroll to analyse more content.']);
+  assert.deepEqual([snap.message.code, snap.message.text, snap.message.hint], ['VIEW_ANALYSED_FIRST', 'Current screen fully analysed.', 'Scroll to analyse more.']);
   assert.equal(snap.view, 'analysed');
   assert.equal(snap.counts.analysed, 1);
   assert.equal(snap.lastAnalysisDurationMs, 7);
@@ -733,6 +733,45 @@ await test('capture-window-lost restarts the engine on the same session; engine 
   const snap = h.snap();
   assert.equal(snap.state, STATES.ANALYSIS_FAILED);
   assert.equal(snap.error.code, 'ENGINE_RESTART_FAILED');
+});
+
+await test('a panel scrolled back to its first screenful counts as analysed: that range was read in the root capture', async () => {
+  const h = harness();
+  await h.start();
+  h.send(container({ id: 'root', screen: FULL, viewport: FULL }));
+  h.send(region({ rect: FULL, lines: [ln('panel intro', 0.3, 0.1)] }));
+  await flush();
+  const screen = { x: 200, y: 0, w: 800, h: 800 };
+  const panel = (y) => ({ ...container({ id: 'c1', screen, seg: 1, viewport: { x: 0, y, w: 800, h: 800 } }).container, origin: { x: 200, y: 0 } });
+  // The panel scrolled by 300: the engine captures only the newly revealed 800..1100.
+  h.send({ type: 'container', container: panel(300) });
+  h.send(region({ c: 'c1', seg: 1, kind: 'scroll', screen: { x: 200, y: 500, w: 800, h: 300 }, rect: { x: 0, y: 800, w: 800, h: 300 }, lines: [ln('panel more', 0.3, 0.5)] }));
+  await flush();
+  assert.equal(h.snap().state, STATES.VIEW_FULLY_ANALYSED, 'scrolled view: root 300..800 plus own 800..1100');
+  h.send({ type: 'container', container: panel(0) });
+  await flush();
+  assert.equal(h.snap().state, STATES.VIEW_FULLY_ANALYSED, 'scrolled back to the top: 0..800 is root text, nothing left to read');
+  // Root text outside the panel's columns is not evidence for it.
+  const h2 = harness();
+  await h2.start();
+  h2.send(container({ id: 'root', screen: FULL, viewport: FULL }));
+  h2.send(region({ rect: { x: 0, y: 0, w: 150, h: 800 }, lines: [ln('sidebar', 0.05, 0.1)] }));
+  h2.send({ type: 'container', container: { ...container({ id: 'c1', screen, seg: 1, viewport: { x: 0, y: 0, w: 800, h: 800 } }).container, origin: { x: 200, y: 0 } } });
+  await flush();
+  assert.notEqual(h2.snap().state, STATES.VIEW_FULLY_ANALYSED);
+});
+
+await test('permission revoked mid-session: the stream restart is refused and the session reports PERMISSION, not a generic failure', async () => {
+  const h = harness();
+  await h.start();
+  h.send(region({ rect: FULL, lines: [ln('x', 0.1, 0.1)] }));
+  await flush();
+  h.engine.start = async () => { throw Object.assign(new Error('Screen Recording permission is not granted.'), { code: 'PERMISSION' }); };
+  await h.s.notifySystem('capture-window-lost');
+  const snap = h.snap();
+  assert.equal(snap.state, STATES.STOPPED);
+  assert.equal(snap.message.code, 'PERMISSION');
+  assert.equal(snap.error.code, 'PERMISSION');
 });
 
 await test('engine start failure rejects and is reported, not swallowed', async () => {

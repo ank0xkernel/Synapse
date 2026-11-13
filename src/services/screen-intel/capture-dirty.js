@@ -71,4 +71,46 @@ function isCaretLike(net, opts) {
   return net.count <= opts.caretMaxPixels && (net.bbox.w <= opts.caretMaxThickness || net.bbox.h <= opts.caretMaxThickness);
 }
 
-module.exports = { makeDirty, mergeDirty, near, netChange, isCaretLike };
+/**
+ * True when a settled in-place change swapped the area's content for other
+ * content (another page, another problem) rather than editing it. A text page
+ * is mostly background, so a swap changes only a modest share of all tiles;
+ * what gives it away is that nearly every tile holding ink, before or after,
+ * changed. Typing, appended output or a toggled widget leave most existing
+ * ink as it was. Tiles of `tile` px, sampled every second pixel.
+ */
+function isReplacement(d, gray, width, { tile, threshold, ink, minTiles, minInkFraction }) {
+  const cols = Math.floor(d.rect.w / tile);
+  const rows = Math.floor(d.rect.h / tile);
+  if (cols * rows < minTiles) return false;
+  let inked = 0;
+  let changed = 0;
+  for (let ty = 0; ty < rows; ty += 1) {
+    for (let tx = 0; tx < cols; tx += 1) {
+      let loB = 255;
+      let hiB = 0;
+      let loA = 255;
+      let hiA = 0;
+      let diffs = 0;
+      for (let y = ty * tile; y < (ty + 1) * tile; y += 2) {
+        const row = (d.rect.y + y) * width + d.rect.x;
+        for (let x = tx * tile; x < (tx + 1) * tile; x += 2) {
+          const b = d.before[y * d.rect.w + x];
+          const a = gray[row + x];
+          if (b < loB) loB = b;
+          if (b > hiB) hiB = b;
+          if (a < loA) loA = a;
+          if (a > hiA) hiA = a;
+          if (a - b > threshold || b - a > threshold) diffs += 1;
+        }
+      }
+      if (hiB - loB > ink || hiA - loA > ink) {
+        inked += 1;
+        if (diffs >= 2) changed += 1;
+      }
+    }
+  }
+  return inked > 0 && changed >= minInkFraction * inked;
+}
+
+module.exports = { makeDirty, mergeDirty, near, netChange, isCaretLike, isReplacement };

@@ -4,7 +4,7 @@ const { STATES } = require('./mode-c-state');
 
 const MESSAGES = Object.freeze({
   INITIAL: { code: 'INITIAL', text: 'Analysing current screen', hint: '' },
-  VIEW_ANALYSED_FIRST: { code: 'VIEW_ANALYSED_FIRST', text: 'Current screen fully analysed.', hint: 'Scroll to analyse more content.' },
+  VIEW_ANALYSED_FIRST: { code: 'VIEW_ANALYSED_FIRST', text: 'Current screen fully analysed.', hint: 'Scroll to analyse more.' },
   NEW_CONTENT: { code: 'NEW_CONTENT', text: 'New content detected. Analysing...', hint: '' },
   NEW_ANALYSED: { code: 'NEW_ANALYSED', text: 'New content analysed.', hint: 'Scroll to continue.' },
   UNCAPTURED: { code: 'UNCAPTURED', text: "Screen movement detected, but new content hasn't been captured yet.", hint: '', action: 'retry' },

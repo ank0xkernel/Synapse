@@ -575,5 +575,33 @@ await test('performance: unchanged and scrolling frames on 1280x800', () => {
   assert(scrollAvg < 75, `scrolling avg ${scrollAvg}`);
 });
 
+await test('page swapped in place is a replacement; appended output, an edited line or a small widget are not', () => {
+  const dt = require('../src/services/screen-intel/capture-dirty.js');
+  const W = 640;
+  const H = 480;
+  // Text-like page: dark glyph runs on white, one run per "line" of 24px.
+  const page = (lines, seed) => {
+    const g = new Uint8Array(W * H).fill(250);
+    for (const [i, len] of lines) {
+      for (let y = i * 24 + 6; y < i * 24 + 18; y += 1) {
+        for (let x = 20; x < 20 + len; x += 1) if (((x * 7 + y * 3 + seed) % 11) < 6) g[y * W + x] = 30;
+      }
+    }
+    return g;
+  };
+  const linesA = Array.from({ length: 16 }, (_, i) => [i, 200 + ((i * 97) % 380)]);
+  const linesB = Array.from({ length: 12 }, (_, i) => [i + 2, 180 + ((i * 53) % 400)]);
+  const opts = { tile: 16, threshold: 12, ink: fa.INK_THRESHOLD, minTiles: (0.05 * W * H) / 256, minInkFraction: 0.6 };
+  const dirty = (before, rect = { x: 0, y: 0, w: W, h: H }) => dt.makeDirty('c1', rect, before, W, 0);
+  const a = page(linesA, 1);
+  assert(dt.isReplacement(dirty(a), page(linesB, 5), W, opts), 'another page in the same place');
+  assert(!dt.isReplacement(dirty(a), page([...linesA, [17, 300], [18, 240]], 1), W, opts), 'output appended below existing text');
+  const edited = page(linesA, 1);
+  for (let y = 8 * 24 + 6; y < 8 * 24 + 18; y += 1) for (let x = 20; x < 300; x += 1) edited[y * W + x] = 250; // line 9 deleted
+  assert(!dt.isReplacement(dirty(a), edited, W, opts), 'one line edited');
+  const small = { x: 0, y: 0, w: 96, h: 96 };
+  assert(!dt.isReplacement(dirty(a, small), page(linesB, 5), W, opts), 'area below the minimum size');
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
