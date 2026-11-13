@@ -347,7 +347,7 @@ function ipcRig({ abortable = true, problemId = 'p1', viewAnalysed = true } = {}
   });
   const invoke = (ch, payload) => handlers[ch]({}, payload);
   const chunks = (actionId) => sent.filter(([ch, p]) => ch === 'ai-stream-chunk' && p.actionId === actionId).map(([, p]) => p.text);
-  return { api, invoke, pending, calls, sent, screen, chunks };
+  return { api, invoke, pending, calls, sent, screen, chunks, service };
 }
 
 const origLog = console.log;
@@ -416,6 +416,9 @@ await test('cancel-analyze-screen stops the running answer', async () => {
   const result = await run;
   assert.equal(result.cancelled, true);
   assert.equal(result.reason, 'user');
+  const stages = rig.sent.filter(([ch]) => ch === 'screen-capture-status').map(([, p]) => p.stage);
+  assert.equal(stages[stages.length - 1], 'cancelled', `status must end in cancelled, got ${stages.join(' > ')}`);
+  assert.ok(!rig.sent.some(([ch]) => ch === 'analysis-result'), 'a cancelled run sends no final result');
 });
 
 await test('ask right after a switch: waits for the view, sends the new screen text and attaches the live frame while unread', async () => {
@@ -445,6 +448,56 @@ await test('ask with a fully read view sends text only; with monitoring stopped 
   assert.ok(!/SCREEN SESSION CONTEXT/.test(rig.calls[1].opts.contextString), 'a stopped session leaked old screen text');
   rig.pending[1].finish('ok');
   await run2;
+});
+
+await test('ask with a fully read view still attaches the evidence crops its screen text refers to', async () => {
+  const rig = ipcRig({ viewAnalysed: true });
+  const crop = { inlineData: { data: Buffer.from('crop').toString('base64'), mimeType: 'image/jpeg' } };
+  const base = rig.screen.getPromptContext;
+  rig.screen.getPromptContext = () => ({ ...base(), imageParts: [crop] });
+  const run = quiet(() => rig.invoke('ask-ai-with-session-context', { transcriptContext: 'Host: explain' }));
+  await flush();
+  const call = rig.calls[0];
+  assert.equal(call.kind, 'ask-images');
+  assert.deepEqual(call.parts, [crop], 'the live frame must not ride along once the view is read; the crop must');
+  assert.equal(call.opts.screenshotCount, 1);
+  rig.pending[0].finish('ok');
+  assert.equal((await run).usedScreenshots, true);
+});
+
+await test('Ollama model without vision: ask gets the screen as text only, and the text is built without image claims', async () => {
+  const rig = ipcRig({ abortable: false, viewAnalysed: false });
+  const crop = { inlineData: { data: 'Y3JvcA==', mimeType: 'image/jpeg' } };
+  const asked = [];
+  const base = rig.screen.getPromptContext;
+  rig.screen.getPromptContext = (opts = {}) => { asked.push(opts); return { ...base(), imageParts: opts.withImages === false ? [] : [crop] }; };
+  let frames = 0;
+  rig.screen.getLatestFrame = async () => { frames += 1; return { jpeg: Buffer.from('frame'), mime: 'image/jpeg' }; };
+  rig.service.supportsVision = async () => false;
+  const run = quiet(() => rig.invoke('ask-ai-with-session-context', { transcriptContext: 'Host: what does this code do?' }));
+  await flush();
+  assert.equal(rig.calls[0].kind, 'ask', 'a text-only model must not be sent images');
+  assert.equal(rig.calls[0].opts.screenshotCount, 0);
+  assert.deepEqual(asked.map((o) => o.withImages), [false]);
+  assert.equal(frames, 0, 'no live frame is grabbed for a model that cannot read it');
+  assert.match(rig.calls[0].opts.contextString, /SCREEN SESSION CONTEXT/);
+  rig.pending[0].finish('ok');
+  assert.equal((await run).usedScreenshots, false);
+});
+
+await test('empty image reply: the text-only retry says no screenshots are attached and the result says none were used', async () => {
+  const rig = ipcRig({ viewAnalysed: false });
+  const run = quiet(() => rig.invoke('ask-ai-with-session-context', { transcriptContext: 'Host: what is on screen?' }));
+  await flush();
+  assert.equal(rig.calls[0].kind, 'ask-images');
+  rig.pending[0].finish('');
+  await flush();
+  const retry = rig.calls[1];
+  assert.equal(retry.kind, 'ask');
+  assert.equal(retry.opts.screenshotCount, 0, 'text-only prompt claimed attached screenshots');
+  rig.pending[1].finish('answer from text');
+  const result = await run;
+  assert.equal(result.usedScreenshots, false);
 });
 
 await test('quota exhaustion is reported as an error, not a cancellation; slow answer then switch is cancelled', async () => {
@@ -593,6 +646,104 @@ await test('cancel during a stall is a cancellation, not a timeout, and leaves n
 });
 
 console.log('renderer: answers about other problems');
+
+await test('New Problem: nothing earlier reaches the AI, stamped or not, and no later identification brings it back', () => {
+  let current = null;
+  const store = createMessageStore({ getActiveProblemId: () => current });
+  const bundle = () => buildFilteredAiContextBundle({ messages: store.getMessages(), isMessageIncludedForAi: store.isIncludedForAi, charBudget: 10000, emitTruncationLog: false });
+  store.add('ai-response', 'unstamped answer about two sum');
+  current = 'p1';
+  const stamped = store.add('ai-response', 'stamped answer about two sum');
+  store.add('voice-system', 'interviewer asks about two sum');
+  store.add('screenshot', 'Screenshot captured', { screenshotId: 'ss-1' });
+  store.startNewProblem();
+  current = null;
+  const after = bundle();
+  assert.equal(after.contextString, '', `old context leaked: ${after.contextString}`);
+  assert.deepEqual(after.enabledScreenshotIds, [], 'old screenshots still attached');
+  // The new problem gets identified, then an old answer's problem is assigned late.
+  assert.equal(store.excludeOtherProblems('p2').restored.length, 0);
+  store.assignProblem(stamped.id, 'p2', 'p2');
+  assert.ok(!bundle().contextString.includes('two sum'), 'a late identification restored old context');
+  current = 'p2';
+  store.add('ai-response', 'answer about merge intervals');
+  assert.ok(bundle().contextString.includes('merge intervals'));
+  // The user can still bring an old message back on purpose.
+  store.toggleInclusion(stamped.id);
+  assert.ok(bundle().contextString.includes('stamped answer'));
+});
+
+await test('Reanalyze: re-reads the screen first, answers without the earlier answer, compares, and refuses a different problem unless confirmed', async () => {
+  const rig = ipcRig({ problemId: 'p1' });
+  const order = [];
+  rig.screen.getProblem = () => ({ id: rig.screen.problemId, status: 'identified', title: 'Two Sum' });
+  rig.screen.refreshView = async () => { order.push('refresh'); return { requested: 3, settled: true }; };
+  rig.service.generateText = async (prompt) => { order.push('compare'); rig.comparePrompt = prompt; return 'Both analyses agree.'; };
+  const previousAnswer = 'EARLIER ANSWER: use a nested loop, O(n^2).';
+
+  rig.screen.problemId = 'p2';
+  const refused = await quiet(() => rig.invoke('reanalyze-screen', { problemId: 'p1', previousAnswer, contextString: 'transcript only' }));
+  assert.equal(refused.code, 'PROBLEM_CHANGED');
+  assert.equal(refused.problem.id, 'p2');
+  assert.equal(rig.calls.length, 0, 'nothing analysed before the user confirms');
+
+  const run = quiet(() => rig.invoke('reanalyze-screen', { problemId: 'p1', previousAnswer, contextString: 'transcript only', force: true }));
+  await flush();
+  assert.deepEqual(order, ['refresh'], 'the view is re-read before the new answer starts');
+  const call = rig.calls[0];
+  assert.equal(call.kind, 'screen');
+  assert.ok(!JSON.stringify(call).includes('EARLIER ANSWER'), 'the earlier answer leaked into the independent analysis');
+  rig.pending[0].finish('Use a hash map, O(n).');
+  const result = await run;
+  assert.equal(result.success, true);
+  assert.equal(result.comparison, 'Both analyses agree.');
+  assert.deepEqual(result.refreshed, { requested: 3, settled: true });
+  assert.match(rig.comparePrompt, /EARLIER ANSWER/);
+  assert.match(rig.comparePrompt, /hash map/);
+
+  rig.service.generateText = async () => { throw new Error('network down'); };
+  const run2 = quiet(() => rig.invoke('reanalyze-screen', { problemId: 'p2', previousAnswer }));
+  await flush();
+  rig.pending[1].finish('Hash map again.');
+  const second = await run2;
+  assert.equal(second.success, true, 'the fresh answer stands even when the comparison fails');
+  assert.equal(second.comparison, null);
+  assert.ok(second.comparisonError, 'comparison failure is reported, not hidden');
+});
+
+await test('Copy: success only when the system clipboard reads back the exact text; failures are reported', async () => {
+  const setup = (clipboard) => {
+    const handlers = {};
+    registerAssistantIpc({
+      ipcMain: { handle: (ch, fn) => { handlers[ch] = fn; }, on: () => {} },
+      screenshotManager: {}, windowController: {}, geminiRuntime: {}, assemblyAiService: {}, sendToRenderer: () => {},
+      quitApplication: () => {}, mobileServer: null, clipboard
+    });
+    return (text) => handlers['clipboard:write-text']({}, text);
+  };
+  let stored = '';
+  const write = setup({ writeText: (t) => { stored = t; }, readText: () => stored });
+  const answer = '## Approach\n\n```python\ndef f(x):\n    return x * 2\n```\n\n- item\n\n$O(n \\log n)$';
+  assert.deepEqual(await write(answer), { success: true, chars: answer.length });
+  assert.equal(stored, answer, 'formatting, code and maths must survive byte for byte');
+  const lossy = setup({ writeText: () => {}, readText: () => 'something else' });
+  assert.equal((await lossy('x')).code, 'VERIFY_FAILED');
+  assert.equal((await write('')).code, 'EMPTY');
+  assert.equal((await setup(undefined)('x')).code, 'UNAVAILABLE');
+});
+
+await test('New Problem in main: running answers stop, their late chunks never reach the window', async () => {
+  const rig = ipcRig();
+  const run = quiet(() => rig.invoke('analyze-screen', {}));
+  await flush();
+  rig.pending[0].chunk('old ');
+  rig.api.resetForNewProblem();
+  rig.pending[0].chunk('late chunk');
+  const result = await run;
+  assert.equal(result.cancelled, true);
+  assert.equal(result.reason, 'new-problem');
+  assert.deepEqual(rig.chunks('screenIntelligence'), ['old ']);
+});
 
 await test('answers about the previous problem leave the AI context; returning restores them; user choices stick', () => {
   let current = 'p1';

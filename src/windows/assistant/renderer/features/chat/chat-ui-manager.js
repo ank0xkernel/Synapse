@@ -37,7 +37,8 @@ export function createChatUiManager({
     addMonitorLog,
     isAutoScrollEnabled = () => true,
     onStopAnswer = () => {},
-    onRegenerateAnswer = () => {}
+    onRegenerateAnswer = () => {},
+    onReanalyzeAnswer = () => {}
 }) {
     // Answers stream token by token. Rendering on every chunk re-parses and
     // re-lays out the whole answer each time; coalescing to one render per
@@ -95,9 +96,16 @@ export function createChatUiManager({
         if (!renderFrame) renderFrame = requestAnimationFrame(flushRenders);
     }
 
+    // Main-process clipboard (works without window focus, verified by reading
+    // back); the DOM API only when that bridge is missing.
     async function copyText(text, label = 'Copied') {
         try {
-            await navigator.clipboard.writeText(text);
+            if (window.electronAPI?.writeClipboardText) {
+                const result = await window.electronAPI.writeClipboardText(text);
+                if (!result?.success) throw new Error(result?.error || 'Clipboard write failed');
+            } else {
+                await navigator.clipboard.writeText(text);
+            }
             showFeedback?.(label, 'success');
         } catch (_) {
             showFeedback?.('Could not copy', 'error');
@@ -116,6 +124,7 @@ export function createChatUiManager({
         const messageId = action.closest('[data-message-id]')?.dataset.messageId;
         if (action.dataset.answerAction === 'stop') onStopAnswer(messageId);
         if (action.dataset.answerAction === 'regenerate') onRegenerateAnswer(messageId);
+        if (action.dataset.answerAction === 'reanalyze') onReanalyzeAnswer(messageId);
     });
 
     /** Marks an answer as streaming (shows Stop) or settled (shows Regenerate where supported). */
@@ -163,6 +172,8 @@ export function createChatUiManager({
 
         const messageDiv = document.createElement('div');
         messageDiv.className = `chat-message ${type}-message`;
+        // Screen answers can be reanalysed against a fresh read of the screen.
+        if (type === 'ai-response' && String(content).startsWith('**[Screen Analysis]**')) messageDiv.classList.add('is-screen-answer');
         messageDiv.dataset.messageId = record.id;
         if (record.canToggleAi) {
             messageDiv.classList.add('ai-toggleable');
@@ -188,6 +199,7 @@ export function createChatUiManager({
         const answerActionsHtml = isAnswer
             ? `<button class="message-action answer-stop" data-answer-action="stop" type="button" aria-label="Stop generating">${ICONS.stop}<span>Stop</span></button>`
               + `<button class="message-action answer-regenerate" data-answer-action="regenerate" type="button" aria-label="Regenerate answer">${ICONS.regenerate}<span>Regenerate</span></button>`
+              + `<button class="message-action answer-reanalyze" data-answer-action="reanalyze" type="button" aria-label="Reanalyze the screen and check this answer">${ICONS.regenerate}<span>Reanalyze</span></button>`
             : '';
         const copyHtml = `<button class="message-copy-btn message-action" data-message-id="${record.id}" type="button" aria-label="Copy message">${ICONS.copy}</button>`;
         const messageActionsHtml = `<span class="message-actions">${toggleHtml}${answerActionsHtml}${copyHtml}</span>`;

@@ -202,7 +202,21 @@ const SECOND_BRAIN_CONFIG = {
   secretPatterns: SECRET_PATTERNS
 };
 
+/**
+ * Where the index and memory are stored. A packaged build's source sits inside
+ * the read-only app.asar, so it writes to userData/state instead; development
+ * keeps the project cache/ folder.
+ */
+function resolveStoreDir() {
+  const path = require('path');
+  let app = null;
+  try { ({ app } = require('electron')); } catch (_) { /* plain Node (tests) */ }
+  if (app && app.isPackaged) return path.join(app.getPath('userData'), 'state', SECOND_BRAIN_CONFIG.storeDirName);
+  return path.join(__dirname, '..', '..', '..', 'cache', SECOND_BRAIN_CONFIG.storeDirName);
+}
+
 module.exports = {
+  resolveStoreDir,
   SECOND_BRAIN_CONFIG,
   KNOWN_PROJECTS,
   SUPPORTED_EXTENSIONS,

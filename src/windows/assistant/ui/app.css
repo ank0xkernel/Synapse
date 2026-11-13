@@ -448,6 +448,9 @@ option { background: var(--surface-2); color: var(--text-1); }
 .answer-stop, .answer-regenerate { display: none; }
 .chat-message[data-streaming] .answer-stop { display: inline-flex; color: var(--text-1); background: var(--surface-3); }
 .chat-message.is-regenerable .answer-regenerate { display: inline-flex; }
+.answer-reanalyze { display: none; }
+.chat-message.is-screen-answer:not([data-streaming]):not(.is-superseded) .answer-reanalyze { display: inline-flex; }
+.chat-message.is-superseded .message-content { opacity: 0.6; }
 
 .message-content {
   font-size: var(--text-md);
@@ -1019,9 +1022,10 @@ select.input {
   .brand-mark, .toolbar-divider { display: none; }
   .action-buttons { gap: var(--space-1); }
 }
-@container topbar (max-width: 670px) {
+@container topbar (max-width: 700px) {
   /* Same actions as the Phone companion box in Session status, which stays reachable. */
   #mobile-server-pill, #show-mobile-code-btn { display: none !important; }
+  .topbar-end { gap: 2px; }
 }
 @container topbar (max-width: 600px) {
   .topbar-end, .action-buttons { gap: 2px; }
@@ -1084,8 +1088,8 @@ input, textarea { caret-color: var(--accent-text); }
   /* A container cannot query itself, so the bar's own padding steps down with the viewport. */
   .topbar { padding-inline: 6px; }
 }
-@media (max-width: 545px) {
-  /* Narrower than the fully collapsed bar needs (about 540 CSS px; reached at the
+@media (max-width: 600px) {
+  /* Narrower than the fully collapsed bar needs (about 575 CSS px; reached at the
      600 px minimum window with ⌘+ zoom): utilities wrap to a second row instead of
      any control being dropped or scrolled away. */
   .app:not(.compact-mode) .topbar { flex-wrap: wrap; height: auto; min-height: 60px; row-gap: 4px; padding-block: 6px; }

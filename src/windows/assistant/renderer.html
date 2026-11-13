@@ -26,6 +26,7 @@
   <link rel="stylesheet" href="ui/tokens.css">
   <link rel="stylesheet" href="ui/app.css">
   <link rel="stylesheet" href="ui/screen-intel.css">
+  <link rel="stylesheet" href="ui/workbench.css">
 </head>
 <body class="theme-dark">
   <div id="app" class="app">
@@ -114,6 +115,9 @@
         </button>
         <button id="show-mobile-code-btn" class="icon-btn mobile-server-pill idle" type="button" aria-label="Show phone pairing code" data-tip="Pairing code" data-tip-align="end" style="display: none;">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="m10.8 12.2 7.7-7.7"/><path d="m16 7 2 2"/></svg>
+        </button>
+        <button id="workbench-btn" class="icon-btn" type="button" aria-label="Projects" data-tip="Projects" data-tip-align="end">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
         </button>
         <button id="history-btn" class="icon-btn" type="button" aria-label="Conversation history" data-tip="History" data-tip-align="end">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg>
@@ -318,6 +322,49 @@
             </div>
             <div id="monitor-log-list" class="monitor-log-list" aria-label="Event log"></div>
           </div>
+        </section>
+      </div>
+    </aside>
+
+    <!-- Workbench: projects, tasks and approved actions -->
+    <aside id="workbench-panel" class="sheet sheet-wide workbench hidden" role="dialog" aria-labelledby="workbench-title">
+      <header class="sheet-header">
+        <h2 id="workbench-title" class="sheet-title" tabindex="-1" data-autofocus>Projects</h2>
+        <button id="close-workbench" class="icon-btn" type="button" aria-label="Close projects">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </header>
+      <div id="workbench-body" class="sheet-body">
+        <section class="wb-section" aria-labelledby="wb-projects-title">
+          <h3 id="wb-projects-title" class="wb-subhead">Projects</h3>
+          <ul id="wb-project-list" class="wb-list" aria-label="Registered projects"></ul>
+          <div class="wb-row">
+            <button id="wb-add" class="btn btn-ghost btn-sm" type="button">Add project</button>
+            <button id="wb-suggest" class="btn btn-ghost btn-sm" type="button">Suggest from screen</button>
+          </div>
+          <div id="wb-suggestion" class="wb-suggestion" role="status" aria-live="polite" hidden></div>
+          <p id="wb-projects-note" class="field-help" role="status" aria-live="polite"></p>
+        </section>
+        <section class="wb-section" aria-labelledby="wb-task-title">
+          <h3 id="wb-task-title" class="wb-subhead">Task</h3>
+          <div class="field">
+            <label class="field-label" for="wb-request">What should Synapse do?</label>
+            <textarea id="wb-request" class="input textarea wb-request" rows="3"></textarea>
+          </div>
+          <label class="wb-check"><input id="wb-use-screen" type="checkbox" checked> <span>Use what's on screen</span></label>
+          <div class="wb-row">
+            <button id="wb-start" class="btn btn-primary btn-sm" type="button" disabled>Start</button>
+            <button id="wb-cancel" class="btn btn-ghost btn-sm" type="button" hidden>Cancel</button>
+          </div>
+          <p id="wb-start-hint" class="field-help"></p>
+          <p id="wb-stage" class="wb-stage" role="status" aria-live="polite" hidden></p>
+        </section>
+        <section id="wb-run" class="wb-section" aria-label="Current run" hidden></section>
+        <section class="wb-section" aria-labelledby="wb-history-title">
+          <details id="wb-history">
+            <summary id="wb-history-title" class="wb-subhead">History</summary>
+            <ul id="wb-history-list" class="wb-list" aria-label="Workbench history"></ul>
+          </details>
         </section>
       </div>
     </aside>
@@ -679,5 +726,6 @@
   <script type="module" src="renderer/features/command-bar/command-bar.js"></script>
   <script type="module" src="renderer/features/auto-answer/auto-answer.js"></script>
   <script type="module" src="renderer/features/screen-intel/screen-intel-bar.js"></script>
+  <script type="module" src="renderer/features/workbench/workbench-panel.js"></script>
 </body>
 </html>

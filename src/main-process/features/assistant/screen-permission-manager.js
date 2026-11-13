@@ -88,6 +88,9 @@ function createScreenPermissionManager({
     }
 
     if (status === 'granted') {
+      if (lastObservedMediaStatus !== 'granted') {
+        console.log(`[ScreenPermissionManager] Screen Recording preflight: granted (${describeIdentity()})`);
+      }
       lastObservedMediaStatus = 'granted';
       userDirectedToSettings = false;
       return {
@@ -100,6 +103,9 @@ function createScreenPermissionManager({
     }
 
     if (status === 'not-determined') {
+      if (lastObservedMediaStatus !== status) {
+        console.log(`[ScreenPermissionManager] Screen Recording preflight: not-determined (${describeIdentity()})`);
+      }
       lastObservedMediaStatus = 'not-determined';
       return {
         state: PERMISSION_STATES.NOT_DETERMINED,
@@ -110,10 +116,15 @@ function createScreenPermissionManager({
       };
     }
 
-    // Status is 'denied' or 'restricted'
-    // If the user was previously directed to System Settings, macOS requires an app restart
-    // before Mach port capture rights are updated for this process.
-    const restartRequired = userDirectedToSettings || (lastObservedMediaStatus === 'not-determined');
+    // 'denied', 'restricted' or 'unknown'. On macOS 11+ Electron answers 'screen'
+    // with CGPreflightScreenCaptureAccess(), which reports this process's grant
+    // as of launch: a toggle flipped while Synapse runs only takes effect after
+    // a relaunch. So once the user was sent to System Settings, a denial means
+    // "restart to apply", not "still off".
+    const restartRequired = userDirectedToSettings;
+    if (status !== lastObservedMediaStatus) {
+      console.warn(`[ScreenPermissionManager] Screen Recording preflight: ${status} (${describeIdentity()})`);
+    }
     lastObservedMediaStatus = status;
 
     return {
@@ -121,16 +132,22 @@ function createScreenPermissionManager({
       status: 'denied',
       authorized: false,
       message: restartRequired
-        ? 'Screen recording permission was enabled in System Settings, but macOS requires Synapse to restart before capture can activate.'
-        : 'Screen recording permission is not granted. Enable Synapse under System Settings → Privacy & Security → Screen & System Audio Recording.',
+        ? 'If you just turned on Screen Recording for Synapse, macOS applies it only after Synapse restarts.'
+        : 'macOS reports that Synapse does not have Screen Recording permission, so captures would contain only the wallpaper. Turn on Synapse under System Settings → Privacy & Security → Screen & System Audio Recording, then restart Synapse. If it is already on, remove Synapse from that list with the minus button and add it again.',
       restartRequired
     };
   }
 
+  // Which binary macOS is judging. TCC keys a grant to the code signature, so
+  // this is what to compare when a granted toggle does not take effect.
+  function describeIdentity() {
+    return `exe=${process.execPath} packaged=${Boolean(app?.isPackaged)}`;
+  }
+
   /**
-   * Deep capability validation: probes actual capture through desktopCapturer.
-   * Distinguishes permission refusal from initialization failures or display unavailability.
-   * Also catches cases where desktopCapturer succeeds despite a false-negative status.
+   * Deep capability validation. When the OS reports the permission granted,
+   * probes desktopCapturer to tell initialization failures and missing
+   * displays apart from a working capture. A denial is returned as is.
    */
   async function validateCaptureCapability({ forceFresh = false } = {}) {
     const now = Date.now();
@@ -163,38 +180,23 @@ function createScreenPermissionManager({
       return preflight;
     }
 
-    // Active probe with desktopCapturer
-    if (desktopCapturer && typeof desktopCapturer.getSources === 'function') {
+    // The OS preflight is the authority. A probe must never turn a denial into
+    // a grant: without permission macOS still hands back a non-empty image
+    // (wallpaper and menu bar, every app window removed), so "got a thumbnail"
+    // proves nothing. Probing while denied would also re-trigger the system
+    // prompt on every attempt.
+    if (preflight.status === 'granted' && desktopCapturer && typeof desktopCapturer.getSources === 'function') {
       try {
         const probeSources = await desktopCapturer.getSources({
           types: ['screen'],
           thumbnailSize: { width: 16, height: 16 }
         });
-
-        if (probeSources && probeSources.length > 0) {
-          const hasValidThumbnail = probeSources.some((s) => s.thumbnail && !s.thumbnail.isEmpty());
-          if (hasValidThumbnail) {
-            // Screen capture capability is genuinely verified and functioning
-            const res = {
-              state: PERMISSION_STATES.GRANTED,
-              status: 'granted',
-              authorized: true,
-              message: 'Screen capture capability verified.',
-              restartRequired: false
-            };
-            lastCapabilityValidation = res;
-            lastCapabilityValidationTime = now;
-            return res;
-          }
-        }
-
-        // If probeSources returned empty or completely empty thumbnails:
-        if (preflight.status === 'granted') {
+        if (!probeSources || !probeSources.some((s) => s.thumbnail && !s.thumbnail.isEmpty())) {
           const res = {
             state: PERMISSION_STATES.CAPTURE_INITIALIZATION_FAILED,
-            status: 'denied',
+            status: 'granted',
             authorized: false,
-            message: 'Screen capture initialization failed to acquire display sources despite permission being granted.',
+            message: 'Screen Recording is granted, but macOS returned no capturable display.',
             restartRequired: false
           };
           lastCapabilityValidation = res;
@@ -203,18 +205,16 @@ function createScreenPermissionManager({
         }
       } catch (probeErr) {
         console.warn('[ScreenPermissionManager] Capture probe error:', probeErr.message);
-        if (preflight.status === 'granted') {
-          const res = {
-            state: PERMISSION_STATES.CAPTURE_INITIALIZATION_FAILED,
-            status: 'denied',
-            authorized: false,
-            message: `Screen capture could not initialize: ${probeErr.message}`,
-            restartRequired: false
-          };
-          lastCapabilityValidation = res;
-          lastCapabilityValidationTime = now;
-          return res;
-        }
+        const res = {
+          state: PERMISSION_STATES.CAPTURE_INITIALIZATION_FAILED,
+          status: 'granted',
+          authorized: false,
+          message: `Screen capture could not initialize: ${probeErr.message}`,
+          restartRequired: false
+        };
+        lastCapabilityValidation = res;
+        lastCapabilityValidationTime = now;
+        return res;
       }
     }
 

@@ -33,6 +33,7 @@ function buildSnapshot(run, { state, message, view, now, maxRegions }) {
       const axis = c.axis === 'x' ? 'x' : 'y';
       return {
         id: c.id,
+        axis,
         label: labels.get(c.id).label,
         screenRect: c.screenRect,
         viewport: c.viewport,

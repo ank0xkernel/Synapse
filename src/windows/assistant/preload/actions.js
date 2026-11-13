@@ -35,13 +35,13 @@ function createInvokeActions(ipcRenderer) {
     checkScreenRecordingPermission: invokeWithFallback(ipcRenderer, {
       channel: 'check-screen-recording-permission',
       label: 'checkScreenRecordingPermission',
-      fallback: () => ({ status: 'unknown', authorized: true, state: 'GRANTED' })
+      fallback: (error) => ({ status: 'unknown', authorized: false, state: 'UNKNOWN', message: `Permission check failed: ${error.message}` })
     }),
 
     validateScreenCaptureCapability: invokeWithFallback(ipcRenderer, {
       channel: 'validate-screen-capture-capability',
       label: 'validateScreenCaptureCapability',
-      fallback: () => ({ status: 'unknown', authorized: true, state: 'GRANTED' })
+      fallback: (error) => ({ status: 'unknown', authorized: false, state: 'UNKNOWN', message: `Permission check failed: ${error.message}` })
     }),
 
     openScreenRecordingSettings: invokeWithFallback(ipcRenderer, {
@@ -107,6 +107,31 @@ function createInvokeActions(ipcRenderer) {
       channel,
       label,
       fallback: (error) => ({ error: error.message })
+    })])),
+
+    // Workbench (project-aware tasks with approved execution), the verified
+    // clipboard and Reanalyze.
+    ...Object.fromEntries([
+      ['workbenchListProjects', 'workbench:list-projects'],
+      ['workbenchAddProject', 'workbench:add-project'],
+      ['workbenchRemoveProject', 'workbench:remove-project'],
+      ['workbenchSuggestProject', 'workbench:suggest-project'],
+      ['workbenchConfirmProject', 'workbench:confirm-project'],
+      ['workbenchStartTask', 'workbench:start-task'],
+      ['workbenchApprove', 'workbench:approve'],
+      ['workbenchReject', 'workbench:reject'],
+      ['workbenchCancel', 'workbench:cancel'],
+      ['workbenchFixFailures', 'workbench:fix-failures'],
+      ['workbenchOpenInEditor', 'workbench:open-in-editor'],
+      ['workbenchGetRun', 'workbench:get-run'],
+      ['workbenchHistory', 'workbench:history'],
+      ['workbenchListRuns', 'workbench:list-runs'],
+      ['writeClipboardText', 'clipboard:write-text'],
+      ['reanalyzeScreen', 'reanalyze-screen']
+    ].map(([label, channel]) => [label, invokeWithFallback(ipcRenderer, {
+      channel,
+      label,
+      fallback: (error) => ({ success: false, error: error.message, code: 'IPC_FAILED' })
     })])),
 
     clearStealth: invokeWithFallback(ipcRenderer, {

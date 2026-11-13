@@ -190,6 +190,7 @@ function snapshot(c) {
   return {
     id: c.id,
     screenRect: { ...c.screenRect },
+    origin: { ...c.origin },
     axis: c.axis,
     scroll: { ...c.scroll },
     segmentId: c.segmentId,

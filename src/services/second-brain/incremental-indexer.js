@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { SECOND_BRAIN_CONFIG } = require('./config');
+const { SECOND_BRAIN_CONFIG, resolveStoreDir } = require('./config');
 const { isSensitiveFile } = require('./security-scrubber');
 const { astAnalyzer } = require('./ast-analyzer');
 const { chunker } = require('./chunker');
@@ -20,7 +20,7 @@ class IncrementalIndexer {
   constructor(bm25Indexer, vectorIndexer, storageDir = null) {
     this.bm25Indexer = bm25Indexer;
     this.vectorIndexer = vectorIndexer;
-    this.storageDir = storageDir || path.join(__dirname, '..', '..', '..', 'cache', SECOND_BRAIN_CONFIG.storeDirName);
+    this.storageDir = storageDir || resolveStoreDir();
     this.manifestPath = path.join(this.storageDir, 'file-manifest.json');
     this.storePath = path.join(this.storageDir, 'index-store.json');
 

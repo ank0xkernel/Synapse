@@ -16,6 +16,8 @@ const DEFAULTS = {
   minChangedPixels: 3,
   tinyTiles: 2,
   sceneFraction: 0.6,
+  replaceMinFraction: 0.05,
+  replaceInkFraction: 0.6,
   minConfidence: 0.6,
   minMatchedFraction: 0.8,
   minOverlapFraction: 0.25,
@@ -386,7 +388,24 @@ function createCaptureEngine({ sessionId, display, cropFrame, emit, now = Date.n
       }
     }
     for (const d of [...S.dirty]) {
-      if (t - d.lastT >= opt.inplaceSettleMs || t - d.firstT >= opt.inplaceMaxWaitMs) finalizeDirty(d, frame, t);
+      if (t - d.lastT >= opt.inplaceSettleMs || t - d.firstT >= opt.inplaceMaxWaitMs) {
+        // Another page in the same place is a new screen, even though it
+        // changed far less than sceneFraction of all tiles. Refreshed as an
+        // edit, it would be read in bands cut through text lines at the old
+        // page's scroll offset. A scroll never gets here: once measured, the
+        // panel takes over its dirty records (newContainer, applyShift).
+        if (dt.isReplacement(d, frame.gray, S.width, {
+          tile: opt.tile,
+          threshold: opt.diffThreshold,
+          ink: fa.INK_THRESHOLD,
+          minTiles: (opt.replaceMinFraction * S.width * S.height) / (opt.tile * opt.tile),
+          minInkFraction: opt.replaceInkFraction,
+        })) {
+          startScene(t);
+          return;
+        }
+        finalizeDirty(d, frame, t);
+      }
     }
   }
 

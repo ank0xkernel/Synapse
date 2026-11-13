@@ -11,6 +11,8 @@ const {
   shell,
   systemPreferences
 } = require('electron');
+const path = require('path');
+const { execFile } = require('child_process');
 const WebSocket = require('ws');
 
 const {
@@ -26,6 +28,7 @@ const {
   setShortcutOverrides
 } = require('../config');
 const {
+  configureSecretStore,
   getAppStatePath,
   loadAppState,
   saveAppState
@@ -36,6 +39,7 @@ const appProtocol = require('./shared/app-protocol');
 const { createGeminiRuntime } = require('./features/assistant/gemini-runtime');
 const { createScreenshotManager } = require('./features/assistant/screenshot-manager');
 const { createScreenIntelController } = require('./features/screen-intel/controller');
+const { registerWorkbenchIpc } = require('./features/workbench/ipc');
 const { registerAssistantIpc } = require('./features/assistant/ipc');
 const { registerContextIpc } = require('./features/context/context-ipc');
 const { registerWebSyncIpc } = require('./features/context/web-sync-ipc');
@@ -108,6 +112,24 @@ async function ensureMicrophoneAccess() {
   }
 }
 
+/**
+ * One startup line naming the code identity macOS judges permissions by, and
+ * the permission states it reports. TCC (macOS privacy permissions) ties a grant to the code
+ * signature, so when a granted toggle "does not stick" this line shows which
+ * binary and requirement are actually running.
+ */
+function logAppIdentity() {
+  if (process.platform !== 'darwin') return;
+  const bundlePath = path.resolve(process.execPath, '..', '..', '..');
+  const states = ['screen', 'microphone'].map((type) => {
+    try { return `${type}=${systemPreferences.getMediaAccessStatus(type)}`; } catch (_) { return `${type}=unknown`; }
+  }).join(' ');
+  execFile('/usr/bin/codesign', ['-dr', '-', bundlePath], { timeout: 5000 }, (error, stdout, stderr) => {
+    const requirement = `${stdout || ''}${stderr || ''}`.split('\n').find((line) => line.startsWith('designated')) || (error ? `unreadable (${error.message})` : 'none');
+    console.log(`[Identity] bundle=${bundlePath} id=${app.getName()} packaged=${app.isPackaged} ${requirement} | ${states}`);
+  });
+}
+
 async function startApplication() {
   // One overlay per machine. Without this every launch opened another window
   // bound to the same shortcuts and the same port 7823, so you ended up with
@@ -167,6 +189,7 @@ async function startApplication() {
 
   let screenshotManager = null;
   let screenIntel = null;
+  let workbench = null;
   let webSyncControl = null;
   let conversationsControl = null;
   let windowController = null;
@@ -269,9 +292,15 @@ async function startApplication() {
     getAppEnvironment: () => appEnvironment,
     emitSttDebug: assemblyAiService.emitSttDebug,
     sendToRenderer,
+    // The capture hotkey has no caller to report to: failures go to the
+    // window's status line instead of an unhandled rejection.
     onTakeStealthScreenshot: async () => {
-      if (screenshotManager) {
+      if (!screenshotManager) return;
+      try {
         await screenshotManager.takeStealthScreenshot();
+      } catch (error) {
+        if (error.code === 'CAPTURE_IN_PROGRESS') return;
+        sendToRenderer('screen-capture-status', { stage: 'error', source: 'hotkey', message: `Screenshot failed: ${error.message}` });
       }
     }
   });
@@ -353,6 +382,7 @@ async function startApplication() {
     conversationsControl?.cleanup();
     assemblyAiService.dispose();
     screenIntel?.dispose();
+    workbench?.dispose();
     screenshotManager.cleanupTransientResources();
     windowController.unregisterShortcuts();
     mobileServer.close();
@@ -403,14 +433,23 @@ async function startApplication() {
    * cross the IPC boundary just to answer "is anything loaded at all".
    */
   // Real permission state for the onboarding and status screens.
+  // Read fresh from the OS on every call (no cached booleans). Screen Recording
+  // and Microphone are separate TCC entries. System audio has no preflight API
+  // on macOS: it is proven only by the native helper's audio test, so it is
+  // reported separately by probeNativeSystemAudio, never inferred from these.
   ipcMain.handle('get-media-access-status', () => {
-    const screenPerm = screenshotManager?.checkScreenRecordingPermission?.();
+    const screenPerm = screenshotManager.checkScreenRecordingPermission();
+    let microphone = 'granted';
+    if (process.platform === 'darwin') {
+      try { microphone = systemPreferences.getMediaAccessStatus('microphone'); } catch (_) { microphone = 'unknown'; }
+    }
     return {
-      microphone: process.platform === 'darwin' ? systemPreferences.getMediaAccessStatus('microphone') : 'granted',
-      screen: screenPerm?.status || 'granted',
-      screenAuthorized: screenPerm?.authorized ?? true,
-      screenState: screenPerm?.state || 'GRANTED',
-      screenRestartRequired: screenPerm?.restartRequired || false
+      microphone,
+      screen: screenPerm.status,
+      screenAuthorized: screenPerm.authorized === true,
+      screenState: screenPerm.state,
+      screenMessage: screenPerm.message,
+      screenRestartRequired: Boolean(screenPerm.restartRequired)
     };
   });
   ipcMain.handle('request-microphone-access', async () => ({ granted: await ensureMicrophoneAccess() }));
@@ -593,7 +632,12 @@ async function startApplication() {
       return;
     }
 
+    // API keys live in the Keychain-backed store; safeStorage needs app ready.
+    const secretStatus = configureSecretStore(app, safeStorage);
+    console.log(`[AppState] Keychain key store: available=${secretStatus.available}`);
     loadPersistedAppState();
+    console.log(`[AppState] Gemini key ${geminiRuntime.hasApiKeys() ? 'restored' : 'missing'}; provider=${geminiRuntime.getActiveAiProvider()}`);
+    logAppIdentity();
 
     // Continuous screen intelligence. Its state goes to this window only
     // (baseSendToRenderer): screen content is never broadcast to the phone.
@@ -611,11 +655,32 @@ async function startApplication() {
       isAssistantHiddenFromCapture: () => appEnvironment?.hideFromScreenCapture === true,
       // A different problem on screen makes in-flight answers obsolete.
       onProblemChange: (problem) => assistantIpc.onScreenProblemChange(problem),
+      // New Problem: answers, provider history, screenshots and screen-based
+      // workbench runs of the previous problem stop before the new one starts.
+      onNewProblem: () => {
+        assistantIpc.resetForNewProblem();
+        screenshotManager.clearStealth();
+        workbench?.cancelActiveRuns('new-problem');
+      },
       // Problems persist with the open conversation (desktop only, never synced).
       problemStore: conversationsControl.problems
     });
     conversationsControl.problems.onBeforeCurrentChange(() => screenIntel?.saveProblems());
     conversationsControl.problems.onCurrentChange((saved) => screenIntel?.loadProblems(saved));
+
+    // Project-aware tasks: reads the screen through screenIntel, edits and runs
+    // commands only after per-action approval in this window.
+    workbench = registerWorkbenchIpc({
+      app,
+      ipcMain,
+      dialog,
+      desktopCapturer,
+      getMainWindow: () => windowController.getMainWindow(),
+      sendToWindow: baseSendToRenderer,
+      geminiRuntime,
+      getScreenIntel: () => screenIntel,
+      screenshotManager
+    });
 
     // Point the brief at userData in packaged builds before anything reads it.
     console.log(`[Startup] Interview brief: ${interviewContext.configure(app)}`);

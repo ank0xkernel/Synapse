@@ -161,8 +161,15 @@ function createEventActions(ipcRenderer) {
     label: 'onScreenIntelState'
   });
 
+  // Workbench run snapshots: { type: 'run', run } on every run change.
+  const onWorkbenchEvent = createEventListener(ipcRenderer, {
+    channel: 'workbench:event',
+    label: 'onWorkbenchEvent'
+  });
+
   return {
     onScreenIntelState,
+    onWorkbenchEvent,
     onWebSyncState,
     onConversationsStatus,
     onConversationsRemote,

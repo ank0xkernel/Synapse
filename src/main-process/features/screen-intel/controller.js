@@ -63,6 +63,7 @@ function createScreenIntelController({
   geminiRuntime,
   isAssistantHiddenFromCapture = () => false,
   onProblemChange = () => {},
+  onNewProblem = () => {},
   problemStore = null,
   log = console.log
 }) {
@@ -180,9 +181,11 @@ function createScreenIntelController({
       }
       activeDisplay = resolveDisplay(displayId);
       const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
-      const source = sources.find((s) => s.display_id === String(activeDisplay.id)) || sources[0];
+      // Never monitor a different display than the one chosen.
+      const source = sources.find((s) => s.display_id === String(activeDisplay.id)) || (sources.length === 1 ? sources[0] : null);
+      log(`[ScreenIntel] monitoring display=${activeDisplay.id} ${activeDisplay.bounds.width}x${activeDisplay.bounds.height}@${activeDisplay.scaleFactor}x source=${source ? source.id : 'none'} of ${sources.length}`);
       if (!source) {
-        const error = new Error('No screen is available to capture.');
+        const error = new Error(`Display ${activeDisplay.id} is not among the ${sources.length} capturable screens.`);
         error.code = 'CAPTURE_UNAVAILABLE';
         throw error;
       }
@@ -275,6 +278,22 @@ function createScreenIntelController({
     });
   }
 
+  /**
+   * Re-reads what is in view from current pixels (session.refreshView) and
+   * waits until those regions are analysed again, or timeoutMs. Reports how
+   * many regions were requested and whether the view settled.
+   */
+  async function refreshView({ timeoutMs = 4000 } = {}) {
+    const { requested } = session.refreshView();
+    const t0 = Date.now();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    while (Date.now() - t0 < timeoutMs) {
+      if (session.getSnapshot().state === 'VIEW_FULLY_ANALYSED') return { requested, settled: true, waitedMs: Date.now() - t0 };
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return { requested, settled: false, waitedMs: Date.now() - t0 };
+  }
+
   const fromCapture = (event) => captureWindow && !captureWindow.isDestroyed() && event.sender === captureWindow.webContents;
 
   ipcMain.on('mc:started', (event, { sessionId, error }) => {
@@ -338,13 +357,17 @@ function createScreenIntelController({
     return imageRef && imageRef.jpeg ? `data:${imageRef.mime || 'image/jpeg'};base64,${Buffer.from(imageRef.jpeg).toString('base64')}` : null;
   }
 
-  /** Text read so far plus the original crops worth showing the model. Null when nothing has been read. */
-  function getPromptContext({ charBudget = CONTEXT_CHAR_BUDGET } = {}) {
+  /**
+   * Text read so far plus the original crops worth showing the model. Null
+   * when nothing has been read. withImages: false for a model that cannot
+   * read images, so the text does not promise crops that will not be sent.
+   */
+  function getPromptContext({ charBudget = CONTEXT_CHAR_BUDGET, withImages = true } = {}) {
     const snapshot = session.getSnapshot();
     if (!snapshot.sessionId || snapshot.counts.analysed === 0) return null;
     const context = session.buildContext({ charBudget });
     const imageParts = [];
-    for (const regionId of context.imageRegionIds.slice(0, MAX_EVIDENCE_IMAGES)) {
+    for (const regionId of withImages ? context.imageRegionIds.slice(0, MAX_EVIDENCE_IMAGES) : []) {
       const region = session.getRegion(regionId);
       if (region && region.imageRef && region.imageRef.jpeg) {
         imageParts.push({ inlineData: { data: Buffer.from(region.imageRef.jpeg).toString('base64'), mimeType: region.imageRef.mime || 'image/jpeg' } });
@@ -355,7 +378,11 @@ function createScreenIntelController({
       viewAnalysed: snapshot.view === 'analysed',
       text: [
         '=== SCREEN SESSION CONTEXT ===',
-        'Text below was read locally from the parts of the screen the user has scrolled through in this session. Attached images are the original pixels and win wherever they disagree with this text.',
+        // Callers attach imageParts with this text; the sentence must only
+        // promise images that are actually sent.
+        imageParts.length
+          ? `Text below was read locally (OCR) from the parts of the screen the user has scrolled through in this session. ${imageParts.length} crop image(s) of those regions are attached; they are the original pixels and win wherever they disagree with this text.`
+          : 'Text below was read locally (OCR) from the parts of the screen the user has scrolled through in this session. No crop images of it are attached, so OCR errors in it cannot be checked against pixels.',
         context.text
       ].join('\n'),
       imageParts,
@@ -385,7 +412,18 @@ function createScreenIntelController({
       return { ...rest, imageDataUrl: imageToDataUrl(imageRef) };
     },
     'screen-intel:get-latest-frame': async () => imageToDataUrl(await engineControl.getLatestFrame()),
-    'screen-intel:new-problem': () => session.newProblem(),
+    // Everything of the previous problem stops first (answers, provider
+    // history, screenshots); then a new screen epoch begins. Monitoring that
+    // was off starts, so the new problem always begins with a fresh capture.
+    'screen-intel:new-problem': async () => {
+      onNewProblem();
+      const result = await session.newProblem();
+      if (result && result.success && !isActive()) {
+        const started = await start({});
+        if (!started.success) return { ...result, captureError: started.error, captureCode: started.code };
+      }
+      return result;
+    },
     'screen-intel:activate-problem': (_event, id) => (typeof id === 'string' && /^p\d{1,6}$/.test(id)
       ? session.activateProblem(id) : { success: false, code: 'BAD_REQUEST', message: 'Unknown problem.' }),
     'screen-intel:resolve-candidate': (_event, request) => {
@@ -448,7 +486,7 @@ function createScreenIntelController({
   }
 
   return {
-    start, isActive, getPromptContext, waitForCurrentView, getProblem: session.getProblem,
+    start, isActive, getPromptContext, waitForCurrentView, refreshView, getProblem: session.getProblem,
     loadProblems: session.loadProblems, saveProblems: session.saveProblems,
     getLatestFrame: engineControl.getLatestFrame, getSnapshot: session.getSnapshot, session, dispose
   };

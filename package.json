@@ -1,6 +1,6 @@
 {
   "name": "synapse",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Synapse - a local-first AI practice coach and live call assistant for interview preparation",
   "main": "src/main.js",
   "scripts": {
@@ -17,6 +17,7 @@
     "test": "node scripts/run-tests.js",
     "test:screen:live": "node scripts/run-live-screen-test.js",
     "test:modec:live": "node scripts/run-live-screen-test.js tests/verify-mode-c-live.js",
+    "test:screen:universal": "node scripts/run-live-screen-test.js tests/verify-screen-universal-live.js",
     "test:layout:live": "node scripts/run-layout-test.js"
   },
   "dependencies": {
@@ -25,6 +26,7 @@
     "dotenv": "^16.3.1",
     "pdf-parse": "^1.1.1",
     "screenshot-desktop": "^1.15.0",
+    "typescript": "^5.9.3",
     "ws": "^8.19.0"
   },
   "devDependencies": {

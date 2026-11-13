@@ -31,15 +31,32 @@ module.exports = async function afterPack(context) {
   const entitlementsPath = path.join(rootDir, 'assets', 'entitlements.mac.plist');
   const inheritEntitlementsPath = path.join(rootDir, 'assets', 'entitlements.mac.inherit.plist');
 
+  // macOS remembers Screen Recording, Microphone and Keychain grants per code
+  // signature. A certificate gives every build the same identity, so grants
+  // survive rebuilds. Ad-hoc signatures have no stable identity: macOS may
+  // treat each build as a new app and ask for permission again.
+  const identity = resolveSigningIdentity();
+  const signFlags = (identifier) => (identity
+    ? ['--sign', identity, '--identifier', identifier]
+    : ['--sign', '-', '--identifier', identifier, `-r=designated => identifier "${identifier}"`]);
+  if (identity) {
+    console.log(`[after-pack] Signing with identity "${identity}"`);
+  } else {
+    console.warn('[after-pack] WARNING: no code-signing identity found; signing ad hoc. macOS may re-ask for Screen Recording and Keychain access after every rebuild. Create a "Synapse Local Signing" code-signing certificate (see BUILD_INSTRUCTIONS.md) or set SYNAPSE_SIGN_IDENTITY.');
+  }
+
   try {
     // 1. Sign embedded native helper binaries with stable identifier & requirement
-    const helperBinary = path.join(appPath, 'Contents', 'Resources', 'native', 'synapse-audio-capture');
-    if (fs.existsSync(helperBinary)) {
+    const nativeHelpers = [
+      ['synapse-audio-capture', 'com.synapse.synapse-audio-capture'],
+      ['synapse-ocr', 'com.synapse.synapse-ocr']
+    ];
+    for (const [name, identifier] of nativeHelpers) {
+      const helperBinary = path.join(appPath, 'Contents', 'Resources', 'native', name);
+      if (!fs.existsSync(helperBinary)) continue;
       execFileSync('codesign', [
         '--force',
-        '--sign', '-',
-        '--identifier', 'com.synapse.synapse-audio-capture',
-        '-r=designated => identifier "com.synapse.synapse-audio-capture"',
+        ...signFlags(identifier),
         helperBinary
       ], { stdio: 'inherit' });
       console.log(`[after-pack] Signed native helper: ${helperBinary}`);
@@ -62,9 +79,7 @@ module.exports = async function afterPack(context) {
           }
           const helperArgs = [
             '--force',
-            '--sign', '-',
-            '--identifier', helperId,
-            `-r=designated => identifier "${helperId}"`
+            ...signFlags(helperId)
           ];
           if (fs.existsSync(inheritEntitlementsPath)) {
             helperArgs.push('--entitlements', inheritEntitlementsPath);
@@ -73,7 +88,7 @@ module.exports = async function afterPack(context) {
           execFileSync('codesign', helperArgs, { stdio: 'inherit' });
           console.log(`[after-pack] Signed helper: ${entry} with identifier "${helperId}"`);
         } else if (entry.endsWith('.framework') || entry.endsWith('.dylib')) {
-          execFileSync('codesign', ['--force', '--sign', '-', fullEntryPath], { stdio: 'inherit' });
+          execFileSync('codesign', ['--force', '--sign', identity || '-', fullEntryPath], { stdio: 'inherit' });
         }
       }
     }
@@ -81,9 +96,7 @@ module.exports = async function afterPack(context) {
     // 3. Seal the top-level app bundle (without --deep to preserve nested helper identities)
     const signArgs = [
       '--force',
-      '--sign', '-',
-      '--identifier', bundleId,
-      `-r=designated => identifier "${bundleId}"`
+      ...signFlags(bundleId)
     ];
 
     if (fs.existsSync(entitlementsPath)) {
@@ -92,8 +105,21 @@ module.exports = async function afterPack(context) {
     signArgs.push(appPath);
 
     execFileSync('codesign', signArgs, { stdio: 'inherit' });
-    console.log(`[after-pack] Stable ad-hoc signed ${appPath} with requirement: designated => identifier "${bundleId}"`);
+    console.log(`[after-pack] Signed ${appPath} as ${bundleId} (${identity ? `identity "${identity}"` : 'ad hoc'})`);
   } catch (error) {
     console.warn(`[after-pack] codesign failed (non-fatal, app still runs unsigned): ${error.message}`);
   }
 };
+
+const DEFAULT_LOCAL_IDENTITY = 'Synapse Local Signing';
+
+/** SYNAPSE_SIGN_IDENTITY, else a "Synapse Local Signing" certificate in the login keychain, else null (ad hoc). */
+function resolveSigningIdentity() {
+  if (process.env.SYNAPSE_SIGN_IDENTITY) return process.env.SYNAPSE_SIGN_IDENTITY;
+  try {
+    const identities = execFileSync('security', ['find-identity', '-p', 'codesigning'], { encoding: 'utf8' });
+    return identities.includes(`"${DEFAULT_LOCAL_IDENTITY}"`) ? DEFAULT_LOCAL_IDENTITY : null;
+  } catch (_) {
+    return null;
+  }
+}

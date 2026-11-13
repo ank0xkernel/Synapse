@@ -64,7 +64,7 @@ function createCredentialStore({ safeStorage, filePath }) {
     lockedReason = null;
   }
 
-  return { available, save, load, clear, locked };
+  return { available, save, load, clear, locked, filePath };
 }
 
 module.exports = { createCredentialStore };

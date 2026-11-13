@@ -1,4 +1,6 @@
+const { nativeImage, clipboard: electronClipboard } = require('electron');
 const { resolveResponseModeId, listResponseModes } = require('../../../services/ai/response-modes');
+const { buildVisionImageParts } = require('./screenshot-manager');
 
 function registerAssistantIpc({
   ipcMain,
@@ -10,9 +12,23 @@ function registerAssistantIpc({
   quitApplication,
   mobileServer,
   latencyTracker = null,
-  getScreenIntel = () => null
+  getScreenIntel = () => null,
+  clipboard = electronClipboard
 }) {
   let chatContext = [];
+
+  // The system clipboard from the main process: works whether or not the
+  // overlay window has focus (the DOM clipboard API needs it). Success is
+  // reported only when the clipboard reads back exactly what was written.
+  ipcMain.handle('clipboard:write-text', (_event, text) => {
+    if (typeof text !== 'string' || !text.length) return { success: false, code: 'EMPTY', error: 'Nothing to copy.' };
+    if (text.length > 5 * 1024 * 1024) return { success: false, code: 'TOO_LARGE', error: 'Text is too large to copy.' };
+    if (!clipboard) return { success: false, code: 'UNAVAILABLE', error: 'The clipboard is not available.' };
+    clipboard.writeText(text);
+    return clipboard.readText() === text
+      ? { success: true, chars: text.length }
+      : { success: false, code: 'VERIFY_FAILED', error: 'The clipboard did not keep the text.' };
+  });
 
   // How long an answer waits for a just-changed screen to be read before it
   // goes ahead with the live frame attached instead.
@@ -63,7 +79,7 @@ function registerAssistantIpc({
    * is gone: it is left out rather than offered as "the current problem".
    * Waits briefly for a just-changed screen.
    */
-  async function collectScreenContext({ wait = true } = {}) {
+  async function collectScreenContext({ wait = true, withImages = true } = {}) {
     const screenIntel = getScreenIntel();
     if (!screenIntel || !screenIntel.getSnapshot || !screenIntel.isActive()) return null;
     const waited = wait ? await screenIntel.waitForCurrentView({ timeoutMs: SCREEN_VIEW_WAIT_MS }) : { ready: true, waitedMs: 0 };
@@ -71,13 +87,14 @@ function registerAssistantIpc({
     // while the frame was being grabbed, read both again (once); if it is
     // still moving, send the frame with the text marked as not current.
     const problemKey = () => { const p = screenIntel.getProblem?.(); return p ? `${p.id}|${p.status}|${p.changedAt}` : 'none'; };
+    const grabFrame = async () => (withImages ? screenIntel.getLatestFrame() : null);
     let key = problemKey();
-    let context = screenIntel.getPromptContext();
-    let frame = await screenIntel.getLatestFrame();
+    let context = screenIntel.getPromptContext({ withImages });
+    let frame = await grabFrame();
     if (problemKey() !== key) {
       key = problemKey();
-      context = screenIntel.getPromptContext();
-      frame = await screenIntel.getLatestFrame();
+      context = screenIntel.getPromptContext({ withImages });
+      frame = await grabFrame();
       if (problemKey() !== key) context = null;
     }
     return {
@@ -88,6 +105,12 @@ function registerAssistantIpc({
     };
   }
 
+  // Outside Electron (the Node test rigs) there is no nativeImage: the frame
+  // then goes to the model as the JPEG it arrived as, without crops.
+  function decodeFrame(liveFrame) {
+    return nativeImage?.createFromBuffer ? nativeImage.createFromBuffer(Buffer.from(liveFrame.jpeg)) : null;
+  }
+
   function cancelledResult(job, extra = {}) {
     return {
       success: false,
@@ -95,7 +118,7 @@ function registerAssistantIpc({
       reason: job.reason || 'cancelled',
       error: job.reason === 'problem-changed'
         ? 'The screen moved to a different problem, so this answer was stopped.'
-        : 'Answer stopped.',
+        : job.reason === 'new-problem' ? 'New problem started, so this answer was stopped.' : 'Answer stopped.',
       ...extra
     };
   }
@@ -320,7 +343,7 @@ function registerAssistantIpc({
     return { success: false, error: 'Relaunch not supported in current environment' };
   });
 
-  ipcMain.handle('analyze-screen', async (_event, payload = {}) => {
+  async function analyzeScreen(_event, payload = {}) {
     const perm = typeof screenshotManager.validateScreenCaptureCapability === 'function'
       ? await screenshotManager.validateScreenCaptureCapability()
       : (screenshotManager.checkScreenRecordingPermission?.() || { status: 'granted', authorized: true });
@@ -370,13 +393,28 @@ function registerAssistantIpc({
       if (!job.problemId) job.problemId = screen?.problemId || null;
       if (job.cancelled) {
         sendToRenderer('ai-stream-end', { actionId: 'screenIntelligence' });
+        sendToRenderer('screen-capture-status', { stage: 'cancelled', message: 'Analysis stopped' });
         return cancelledResult(job);
       }
-      const liveFrame = screen?.frame || null;
+      // A live frame is drawn from the monitoring stream at request time; the
+      // preload refuses one from a stalled stream, which lands here as null
+      // and falls through to a fresh one-shot capture.
+      const liveFrame = screen?.frame?.jpeg ? screen.frame : null;
       const screenContext = liveFrame ? screen.context : null;
-      const capture = liveFrame
-        ? { data: Buffer.from(liveFrame.jpeg).toString('base64'), mimeType: liveFrame.mime }
+      const frame = liveFrame
+        ? {
+          image: decodeFrame(liveFrame),
+          meta: { captureId: `live-${liveFrame.t || Date.now()}`, displayId: String(liveFrame.displayId ?? ''), width: liveFrame.width, height: liveFrame.height, source: 'monitoring-stream', capturedAt: liveFrame.t || Date.now() }
+        }
         : await screenshotManager.captureScreenInMemory({ displayId: payload?.displayId });
+      if (frame.image && frame.image.isEmpty()) {
+        throw Object.assign(new Error('The captured frame could not be decoded.'), { code: 'CAPTURE_EMPTY_FRAME' });
+      }
+      const frameImageParts = frame.image
+        ? buildVisionImageParts(frame.image)
+        : [{ inlineData: { data: Buffer.from(liveFrame.jpeg).toString('base64'), mimeType: liveFrame.mime || 'image/jpeg' } }];
+      const payloadBytes = frameImageParts.reduce((sum, p) => sum + (p.inlineData ? p.inlineData.data.length : 0), 0);
+      console.log(`[analyze-screen] frame=${frame.meta.captureId} source=${frame.meta.source} display=${frame.meta.displayId} ${frame.meta.width}x${frame.meta.height} age=${Date.now() - frame.meta.capturedAt}ms images=${frameImageParts.filter((p) => p.inlineData).length} base64=${Math.round(payloadBytes / 1024)}KB evidence=${screenContext?.imageParts?.length || 0}`);
 
       if (!liveFrame && screenIntel && payload?.continuous !== false) {
         // Failures surface through the screen-intel:state event; the one-shot
@@ -387,13 +425,10 @@ function registerAssistantIpc({
       sendToRenderer('screen-capture-status', { stage: 'processing', message: 'Processing image...' });
 
       const imageParts = [
-        {
-          inlineData: {
-            data: capture.data,
-            mimeType: capture.mimeType
-          }
-        },
-        ...(screenContext?.imageParts || [])
+        ...frameImageParts,
+        ...(screenContext?.imageParts?.length
+          ? [{ text: '[Further images: crops read earlier in this session about the same problem]' }, ...screenContext.imageParts]
+          : [])
       ];
 
       sendToRenderer('screen-capture-status', { stage: 'analyzing', message: 'Analyzing with AI...' });
@@ -417,6 +452,7 @@ function registerAssistantIpc({
             contextStringOverride: payload?.contextString || '',
             responseMode,
             onChunk,
+            screenshotCount: 1,
             tag: 'screenIntelligence'
           }
         );
@@ -424,6 +460,7 @@ function registerAssistantIpc({
 
       if (job.cancelled) {
         sendToRenderer('ai-stream-end', { actionId: 'screenIntelligence' });
+        sendToRenderer('screen-capture-status', { stage: 'cancelled', message: 'Analysis stopped' });
         return cancelledResult(job);
       }
       const timings = {
@@ -447,6 +484,7 @@ function registerAssistantIpc({
       if (error?.isCancelled || screenJob?.cancelled) {
         sendToRenderer('ai-stream-end', { actionId: 'screenIntelligence' });
         if (screenJob && !screenJob.cancelled) cancelAnswerJob(screenJob, 'cancelled');
+        sendToRenderer('screen-capture-status', { stage: 'cancelled', message: 'Analysis stopped' });
         return cancelledResult(screenJob || { reason: 'cancelled' });
       }
       console.error('[analyze-screen] Error details:', error);
@@ -463,9 +501,14 @@ function registerAssistantIpc({
       } else if (isPerm) {
         userMessage = error.message || 'Screen Recording permission is not granted. Enable Synapse in System Settings → Privacy & Security → Screen & System Audio Recording.';
       } else if (isInitFailed) {
-        userMessage = 'Screen capture could not initialize despite permission being available.';
+        userMessage = error.message || 'Screen capture could not initialize despite permission being available.';
       } else if (isUnavailable) {
         userMessage = 'Screen capture is unavailable. Ensure your display is connected and active.';
+      } else if (error?.code === 'MODEL_NO_VISION') {
+        userMessage = error.message;
+      } else if (/^(CAPTURE_|WINDOW_UNAVAILABLE)/.test(String(error?.code || ''))) {
+        // Capture failed before any model call: report it as a capture failure, not an AI error.
+        userMessage = `Screen capture failed: ${error.message}`;
       } else {
         userMessage = mapGeminiErrorMessage(error, 'Screen analysis failed');
       }
@@ -483,6 +526,39 @@ function registerAssistantIpc({
       };
     } finally {
       if (screenJob) endAnswerJob(screenJob);
+    }
+  }
+  ipcMain.handle('analyze-screen', analyzeScreen);
+
+  /**
+   * Reanalyze: re-reads the visible screen from current pixels, answers again
+   * through the same pipeline as Analyze without the earlier answer in its
+   * context, then compares the two. A screen that now shows a different
+   * problem is refused unless the user confirms (force).
+   */
+  ipcMain.handle('reanalyze-screen', async (event, payload = {}) => {
+    const screenIntel = getScreenIntel();
+    const monitoring = Boolean(screenIntel && screenIntel.isActive && screenIntel.isActive());
+    const current = monitoring ? screenIntel.getProblem?.() : null;
+    if (!payload.force && payload.problemId && current && current.status === 'identified' && current.id !== payload.problemId) {
+      return { success: false, code: 'PROBLEM_CHANGED', problem: { id: current.id, title: current.title || null } };
+    }
+    const refreshed = monitoring && screenIntel.refreshView ? await screenIntel.refreshView({ timeoutMs: 4000 }) : null;
+    const result = await analyzeScreen(event, { ...payload, previousAnswer: undefined });
+    if (!result || !result.success) return { ...result, refreshed };
+    const previous = typeof payload.previousAnswer === 'string' ? payload.previousAnswer.trim() : '';
+    if (!previous) return { ...result, refreshed, comparison: null };
+    try {
+      const comparison = await geminiRuntime.executeWithKeyFailover((service) => service.generateText([
+        'Two answers were written independently about the same screen. The SECOND one used a fresh read of the screen.',
+        'Say in at most 120 words whether they reach the same result. If not, list the concrete differences and which answer the screen evidence supports. If they agree, reply exactly: Both analyses agree.',
+        'Do not repeat either answer.',
+        '', '=== FIRST (earlier) ANSWER ===', previous.slice(0, 12000),
+        '', '=== SECOND (fresh) ANSWER ===', String(result.text).slice(0, 12000)
+      ].join('\n'), { tag: 'reanalyzeCompare', priority: 'realtime', generation: { maxOutputTokens: 1200, thinkingLevel: 'low' } }));
+      return { ...result, refreshed, comparison: String(comparison || '').trim() || null };
+    } catch (error) {
+      return { ...result, refreshed, comparison: null, comparisonError: mapGeminiErrorMessage(error, 'Comparison failed') };
     }
   });
 
@@ -559,16 +635,29 @@ function registerAssistantIpc({
       // Registered before the wait so cancel-ask-ai or a problem change
       // during it reaches this request.
       askJob = beginAnswerJob('askAi', null);
-      const screen = await collectScreenContext();
+      // An Ollama model that cannot read images refuses any image part
+      // (MODEL_NO_VISION). The answer then gets the screen as text only,
+      // with context text that does not mention images.
+      const activeService = geminiRuntime.getActiveAiProvider() === 'ollama' ? geminiRuntime.getService?.() : null;
+      const modelSeesImages = !activeService || typeof activeService.supportsVision !== 'function'
+        || await activeService.supportsVision().catch(() => false);
+      const screen = await collectScreenContext({ withImages: modelSeesImages });
       if (!askJob.problemId) askJob.problemId = screen?.problemId || null;
       if (askJob.cancelled) {
         if (latencyId) latencyTracker.abandon(latencyId);
         return cancelledResult(askJob, { mode, usedScreenshots: false });
       }
       const screenContextText = screen?.context?.text || '';
-      const liveScreenPart = screen?.frame && !screen.context?.viewAnalysed
-        ? { inlineData: { data: Buffer.from(screen.frame.jpeg).toString('base64'), mimeType: screen.frame.mime || 'image/jpeg' } }
-        : null;
+      // The screen context text promises its evidence crops are attached, so
+      // they always travel with it. The live frame goes too while the current
+      // view is not fully read.
+      const liveScreenParts = [
+        ...(screen?.frame?.jpeg && !screen.context?.viewAnalysed
+          ? [{ inlineData: { data: Buffer.from(screen.frame.jpeg).toString('base64'), mimeType: screen.frame.mime || 'image/jpeg' } }]
+          : []),
+        ...(screen?.context?.imageParts || [])
+      ];
+      const liveScreenPart = liveScreenParts.length ? liveScreenParts : null;
       const contextString = [
         typeof payload?.contextString === 'string' ? payload.contextString.trim() : '',
         screenContextText
@@ -621,7 +710,7 @@ function registerAssistantIpc({
         const manual = screenshotManager.hasScreenshots()
           ? (await screenshotManager.buildImagePartsFromScreenshots({ strict: false, includeIds: enabledScreenshotIds })).imageParts
           : [];
-        const imageParts = liveScreenPart ? [liveScreenPart, ...manual] : manual;
+        const imageParts = liveScreenPart ? [...liveScreenPart, ...manual] : manual;
 
         if (imageParts.length > 0) {
           usedScreenshots = true;
@@ -649,6 +738,9 @@ function registerAssistantIpc({
       }
 
       if (!text) {
+        // The answer below never saw an image: do not report that it did.
+        usedScreenshots = false;
+        usedScreenshotCount = 0;
         text = await geminiRuntime.executeWithKeyFailover((geminiService) => {
           if (!geminiService || !geminiService.model) {
             throw new Error('AI model not initialized. Please check your API key.');
@@ -661,7 +753,9 @@ function registerAssistantIpc({
             activeContext,
             relation,
             confidence,
-            screenshotCount: usedScreenshots ? usedScreenshotCount : 0,
+            // Text-only call: no image reaches the model here, even when an
+            // earlier image call returned nothing.
+            screenshotCount: 0,
             responseMode,
             onChunk,
             onTiming,
@@ -952,7 +1046,19 @@ function registerAssistantIpc({
     }
   });
 
-  return { onScreenProblemChange };
+  /**
+   * New Problem: every answer still running is about the previous problem, so
+   * it stops now (its late chunks and result are dropped by job.cancelled),
+   * and the provider-side histories that could carry it into the next
+   * prompt are emptied. Settings, keys and saved conversations are untouched.
+   */
+  function resetForNewProblem() {
+    for (const job of answerJobs.values()) cancelAnswerJob(job, 'new-problem');
+    chatContext = [];
+    geminiRuntime.getService()?.clearHistory?.();
+  }
+
+  return { onScreenProblemChange, resetForNewProblem };
 }
 
 module.exports = {

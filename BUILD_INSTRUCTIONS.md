@@ -204,6 +204,21 @@ app.setLoginItemSettings({
 - Run: `npm install electron-builder --save-dev`
 - Clear cache: `npm run build -- --win portable --clean`
 
+### macOS asks for Screen Recording or Keychain access after every rebuild:
+macOS remembers these grants per code signature. Ad-hoc builds have no stable signature, so each rebuild can look like a new app. Give builds a stable identity once:
+
+1. Open Keychain Access, then Keychain Access → Certificate Assistant → Create a Certificate.
+2. Name: `Synapse Local Signing`. Identity Type: Self Signed Root. Certificate Type: Code Signing. Create.
+3. Rebuild with `npm run build:mac`. The build log should say `Signing with identity "Synapse Local Signing"`. To use another certificate, set `SYNAPSE_SIGN_IDENTITY`.
+4. Once, after the first build signed this way, clear the old grant and grant again:
+   `tccutil reset ScreenCapture com.synapse.interviewcoach`, then launch Synapse, allow Screen Recording when asked, and restart Synapse.
+
+`security find-identity` lists a self-signed identity as `CSSMERR_TP_NOT_TRUSTED`. That is expected: `codesign` still signs with it, and the signature's designated requirement (`identifier … and certificate leaf = H"…"`) stays the same for every build made with that certificate.
+
+### Local signing versus distribution
+- **Local (self-signed):** stable permissions on the Mac that holds the certificate. Other Macs reject the app in Gatekeeper, and it is not notarized.
+- **Distribution:** needs an Apple Developer Program "Developer ID Application" certificate, hardened runtime, and notarization (`xcrun notarytool submit … --wait`, then `xcrun stapler staple`). Set `SYNAPSE_SIGN_IDENTITY` to that identity. This build does not add notarization; add it before shipping to other machines.
+
 ### .env file missing in build:
 - Check `extraResources` in package.json
 - Make sure `.env` file exists in root directory

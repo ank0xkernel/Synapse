@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { SECOND_BRAIN_CONFIG } = require('./config');
+const { SECOND_BRAIN_CONFIG, resolveStoreDir } = require('./config');
 
 /**
  * 4-Tier Personal Engineering Memory
@@ -15,7 +15,7 @@ const { SECOND_BRAIN_CONFIG } = require('./config');
 
 class EngineeringMemory {
   constructor(baseDir = null) {
-    this.baseDir = baseDir || path.join(__dirname, '..', '..', '..', 'cache', SECOND_BRAIN_CONFIG.storeDirName);
+    this.baseDir = baseDir || resolveStoreDir();
     this.memoryPath = path.join(this.baseDir, 'engineering-memory.json');
 
     this.professionalMemory = {

@@ -1116,6 +1116,8 @@ ${buildProgrammingLanguagePreference(resolvedLanguage)}
 - Screenshots attached: ${screenshotCount} (treat as ground truth when present).
 - Conversation history: ${contextString ? 'yes' : 'none'}.
 
+${SCREEN_EVIDENCE_RULES}
+
 === LANGUAGE FOR CODE ===
 If — and only if — the domain is coding, prefer ${resolvedLanguage} unless the question or the
 screen clearly demands another language. ${buildLanguageBestPractices(resolvedLanguage)}
@@ -1130,6 +1132,13 @@ ${buildContextAndEvidenceBlock(latestQuery, contextString, { activeContext, rela
 ${buildContextBlock('RELEVANT RECENT CONVERSATION', contextString)}${generalInstructions}`.trim();
 }
 
+// Shared by every prompt that may carry screen content. Nothing in Synapse
+// runs code, so the model must never claim it did.
+const SCREEN_EVIDENCE_RULES = `=== EVIDENCE RULES ===
+- Say only what the screen, the screen context text or the user actually shows. When you rely on something that is not visible (a constraint, an input format, the rest of a cut-off line), label it as an assumption.
+- Code that runs past the edge of the screen or a "[… not captured …]" marker is incomplete: say so and do not invent the missing part.
+- You cannot run code. Never say code was executed, tested or that tests passed; walkthroughs and expected outputs are your reasoning, so present them that way.`;
+
 // ─── SCREEN AI & SCREEN INTELLIGENCE ──────────────────────────────────────────
 // Analyzes screenshots (the screen) plus optional context.
 function buildScreenshotAnalysisPrompt({
@@ -1142,7 +1151,7 @@ function buildScreenshotAnalysisPrompt({
   const resolvedLanguage = resolveProgrammingLanguage(programmingLanguage);
   const screenshotDirective = screenshotCount > 1
     ? `You have ${screenshotCount} screenshots — synthesize them as one set before answering.`
-    : 'Read the screen completely before answering.';
+    : 'Read the screen completely before answering. Images labelled as halves or crops are the same screen at higher detail: use them to read small text.';
 
   return `
 ${buildCoreDirective(additionalContext, contextString)}
@@ -1151,6 +1160,16 @@ ${buildProgrammingLanguagePreference(resolvedLanguage)}
 
 === SCREEN INPUT ===
 ${screenshotDirective}
+
+=== SCREEN READING RULES ===
+- Scan the whole image edge to edge: left and right sidebars, side panels, split panes, every column and window, not just the centre.
+- A question often sits in a narrow panel (problem statement on the left, editor on the right). Read that panel in full: title, statement, input and output format, constraints, examples.
+- If several questions are visible, answer the one that is most prominent or in focus and list the others by title.
+- Answer the visible question directly. Never reply that you only see a browser, a desktop or a wallpaper when any window shows readable content, and never ask the user to share a question that is on screen.
+- If the image really contains no application windows (only a wallpaper and a menu bar), say that the capture appears to be missing the app windows, which on macOS usually means Screen Recording permission is not active for Synapse. Do not invent a question.
+- If text is present but too small or blurred to read reliably, say which part you cannot read instead of guessing it.
+
+${SCREEN_EVIDENCE_RULES}
 
 === QUESTION UNDERSTANDING ===
 1. Carefully inspect the captured screen to detect readable text, code, diagrams, formulas, or UI elements.

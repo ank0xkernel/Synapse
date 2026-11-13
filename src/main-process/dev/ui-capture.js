@@ -92,7 +92,7 @@ const SCENES = {
     });
     await disableAutoAnswer(win);
     send('screen-intel:state', snap({ id: 'p1', title: 'Campus FAQ Bot', status: 'identified', changedAt: t - 60000 },
-      { code: 'VIEW_ANALYSED_FIRST', text: 'Current screen fully analysed.', hint: 'Scroll to analyse more content.' }));
+      { code: 'VIEW_ANALYSED_FIRST', text: 'Current screen fully analysed.', hint: 'Scroll to analyse more.' }));
     await sleep(200);
     assert(await run(() => !document.getElementById('screen-intel').hidden), 'Screen intelligence bar stayed hidden');
     assert(await run(() => document.getElementById('screen-intel-primary').textContent === 'Current screen fully analysed.'), 'Bar message not rendered');
@@ -411,7 +411,7 @@ const SCENES = {
         await check(`${w}x${h} ${state} feed`);
       }
       fs.writeFileSync(fileFor(w, h), (await win.webContents.capturePage()).toPNG());
-      for (const sheet of ['history-btn', 'context-btn', 'status-btn', 'settings-btn']) {
+      for (const sheet of ['history-btn', 'context-btn', 'status-btn', 'settings-btn', 'workbench-btn']) {
         await run((id) => document.getElementById(id).click(), sheet);
         await sleep(350);
         await check(`${w}x${h} busy ${sheet.replace('-btn', '')} sheet`);

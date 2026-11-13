@@ -73,8 +73,10 @@ export function initPanels({
       setRow(statusPanel, 'screen', { tone: 'ok', detail: 'Screen capture verified and ready', value: 'Ready' });
     } else if (media?.screenRestartRequired || media?.screenState === 'RESTART_REQUIRED') {
       setRow(statusPanel, 'screen', { tone: 'warn', detail: 'Permission enabled in Settings; restart required to activate capture', value: 'Restart needed' });
+    } else if (media?.screenState === 'CAPTURE_INITIALIZATION_FAILED' || media?.screenState === 'CAPTURE_UNAVAILABLE') {
+      setRow(statusPanel, 'screen', { tone: 'error', detail: media.screenMessage || 'Screen capture is unavailable.', value: 'Unavailable' });
     } else {
-      setRow(statusPanel, 'screen', { tone: 'error', detail: 'Allow Synapse under Screen & System Audio Recording in System Settings', value: 'Not granted' });
+      setRow(statusPanel, 'screen', { tone: 'error', detail: 'macOS reports Screen Recording is off for Synapse. Turn it on in System Settings → Privacy & Security → Screen & System Audio Recording, then restart Synapse.', value: 'Not granted' });
     }
 
     // System audio: what the native helper supports, plus whether it is live.
@@ -348,6 +350,15 @@ export function initPanels({
     if (event.key !== 'Escape') return;
     const open = document.querySelector('.sheet:not(.hidden)');
     if (open && open !== document.getElementById('settings-panel')) closeSheet(open);
+  });
+
+  // Permissions can change in System Settings while Synapse is in the
+  // background: re-read them whenever the window comes back to the front.
+  window.addEventListener('focus', () => {
+    if (statusPanel && !statusPanel.classList.contains('hidden')) refreshStatus();
+    if (onboarding && !onboarding.classList.contains('hidden') && steps[stepIndex]?.dataset.step === 'permissions') {
+      onStepShown('permissions');
+    }
   });
 
   let onboarded = false;

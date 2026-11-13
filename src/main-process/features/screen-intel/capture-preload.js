@@ -147,6 +147,7 @@ async function startRun(config) {
           report(sessionId, 'BLACK_FRAME', 'Screen capture returned a black frame. The content may be protected or Screen Recording permission is missing.');
         } else {
           current.frames += 1;
+          current.lastGrabAt = Date.now();
           engine.pushFrame({ gray, width: display.width, height: display.height, t: Date.now(), frameRef: bitmap });
           current.grabMs = performance.now() - started;
           if (current.onFrame) {
@@ -235,14 +236,21 @@ ipcRenderer.on('mc:forget-outside', (_event, { requestId, containerId }) => {
   ipcRenderer.send('mc:reply', { requestId, value: run ? run.engine.forgetOutsideView(containerId) : false });
 });
 
-ipcRenderer.on('mc:latest', async (_event, { requestId, maxWidth = 2048 }) => {
+// A frame grabbed this long ago means the stream stalled (the engine ticks
+// every 400 ms at most): the video element would hand back an old picture.
+const LIVE_FRAME_MAX_AGE_MS = 3000;
+
+ipcRenderer.on('mc:latest', async (_event, { requestId, maxWidth = 3840 }) => {
   let value = null;
   try {
-    if (run && run.video.readyState >= 2) {
+    const age = run ? Date.now() - (run.lastGrabAt || 0) : Infinity;
+    if (run && !run.paused && run.stream && run.video.readyState >= 2 && age <= LIVE_FRAME_MAX_AGE_MS) {
       const scale = Math.min(1, maxWidth / run.video.videoWidth);
       const canvas = new OffscreenCanvas(Math.round(run.video.videoWidth * scale), Math.round(run.video.videoHeight * scale));
       canvas.getContext('2d').drawImage(run.video, 0, 0, canvas.width, canvas.height);
-      value = await encode(canvas);
+      value = { ...(await encode(canvas)), t: Date.now(), displayId: run.config.display.id, sessionId: run.sessionId };
+    } else if (run) {
+      report(run.sessionId, 'FRAME_STALE', `No live frame (paused=${run.paused} stream=${Boolean(run.stream)} lastGrabAgeMs=${Number.isFinite(age) ? age : 'never'}); a fresh capture is used instead.`);
     }
   } catch (error) {
     report(run && run.sessionId, 'FRAME_FAILED', error.message);

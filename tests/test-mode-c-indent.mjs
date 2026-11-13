@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { mapLines, dedupeLines, toBlocks } = require('../src/services/screen-intel/context-lines.js');
+const { mapLines, dedupeLines, toBlocks, classify } = require('../src/services/screen-intel/context-lines.js');
 
 let passed = 0;
 let failed = 0;
@@ -149,6 +149,14 @@ test('notebook: a bare pass or break is code, not output', () => {
 test('the original OCR text survives inside the rebuilt line (evidence kept, nothing rewritten)', () => {
   const text = codeOf([record([[0, 'def step (passages, top_k=3) :'], [4, 'return scores [: top_k]']])]);
   assert.ok(text.includes('def step (passages, top_k=3) :') && text.includes('    return scores [: top_k]'), text);
+});
+
+test('lettered answer options are question text, not code; lone attribute assignments stay code', () => {
+  const rows = (texts) => texts.map((text) => ({ text, cells: 1 }));
+  assert.equal(classify(rows(['A. x = 3', 'B.x = 5', 'C.X =7', 'D. x = 15'])).kind, 'instruction');
+  assert.equal(classify(rows(['(A) 12', '(B) 15', '(C) 18'])).kind, 'instruction');
+  assert.equal(classify(rows(['B.x = 5', 'C.y = 6', 'total = B.x + C.y'])).kind, 'code', 'letters not starting at A are not an option list');
+  assert.equal(classify(rows(['self.x = 3', 'self.y = 4'])).kind, 'code');
 });
 
 console.log(`\nIndentation tests: ${passed} passed, ${failed} failed (${passed + failed} total)`);

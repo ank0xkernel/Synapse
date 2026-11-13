@@ -159,6 +159,13 @@ function classify(rows) {
     return { kind: 'test_case', confidence: markers >= 2 || /^(test|sample|example|expected)/i.test(first) ? 0.9 : 0.7 };
   }
   if (/^In\s*\[\d*\]:?/.test(first)) return { kind: 'code', confidence: 0.9 };
+  // Lettered answer options ("A. x = 3", "B) 42") are question text even when
+  // they look like assignments. Letters must run in order from A, so code
+  // such as "B.x = 5" on its own is not taken for an option list.
+  const letters = texts.map((t) => (t.match(/^\(?([A-H])[.)]\s*\S/) || [])[1]).filter(Boolean);
+  if (letters.length >= 2 && letters.length * 2 >= texts.length && letters.every((l, i) => l === 'ABCDEFGH'[i])) {
+    return { kind: 'instruction', confidence: 0.8 };
+  }
   if (strengths.some((s) => s === 2) && codeRatio >= 0.5) {
     return { kind: 'code', confidence: Math.min(0.95, 0.6 + codeRatio * 0.35) };
   }
