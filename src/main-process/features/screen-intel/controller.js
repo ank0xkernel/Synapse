@@ -357,7 +357,11 @@ function createScreenIntelController({
       viewAnalysed: snapshot.view === 'analysed',
       text: [
         '=== SCREEN SESSION CONTEXT ===',
-        'Text below was read locally from the parts of the screen the user has scrolled through in this session. Attached images are the original pixels and win wherever they disagree with this text.',
+        // Callers attach imageParts with this text; the sentence must only
+        // promise images that are actually sent.
+        imageParts.length
+          ? `Text below was read locally (OCR) from the parts of the screen the user has scrolled through in this session. ${imageParts.length} crop image(s) of those regions are attached; they are the original pixels and win wherever they disagree with this text.`
+          : 'Text below was read locally (OCR) from the parts of the screen the user has scrolled through in this session. No crop images of it are attached, so OCR errors in it cannot be checked against pixels.',
         context.text
       ].join('\n'),
       imageParts,

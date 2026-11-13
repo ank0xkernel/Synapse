@@ -105,8 +105,17 @@ await test('Capture Screen restores the window after a successful capture (was l
   const win = fakeWindow();
   win.opacity = 0.85;
   state.sources = [{ id: 'screen:1:0', display_id: '1', thumbnail: fakeImage(3024, 1964) }];
-  const file = await quiet(() => manager(win).takeStealthScreenshot());
-  assert(fs.existsSync(file), 'Screenshot file must be written');
+  fs.mkdirSync(path.join(userData, 'screenshots'), { recursive: true });
+  fs.writeFileSync(path.join(userData, 'screenshots', 'capture-old.png'), 'leftover');
+  const m = manager(win);
+  assert(!fs.existsSync(path.join(userData, 'screenshots')), 'Leftover on-disk screenshots from earlier builds must be removed');
+  const result = await quiet(() => m.takeStealthScreenshot());
+  assert(result.success && typeof result.screenshotId === 'string' && !('path' in result), `Result must not expose a file path: ${JSON.stringify(result)}`);
+  assert(!fs.existsSync(path.join(userData, 'screenshots')), 'Screenshots must stay in memory, never on disk');
+  const { imageParts } = await m.buildImagePartsFromScreenshots();
+  assert(imageParts.length === 1 && imageParts[0].inlineData.mimeType === 'image/png' && imageParts[0].inlineData.data.length > 0, 'The in-memory screenshot must reach the model as PNG');
+  m.clearStealth();
+  assert((await m.buildImagePartsFromScreenshots()).imageParts.length === 0, 'Clear must drop the screenshot');
   assert(win.history[0] === 0.01, 'Window must be dimmed during capture');
   assert(win.opacity === 0.85, `Opacity must be restored to 0.85, got ${win.opacity}`);
 });
@@ -182,6 +191,24 @@ await test('Vision payload: full frame + left and right halves cropped from that
   assert(images.every((p) => p.inlineData.mimeType === 'image/jpeg' && p.inlineData.data.length > 0), 'Images must be non-empty JPEG');
   const small = buildVisionImageParts(fakeImage(1280, 800)).filter((p) => p.inlineData);
   assert(small.length === 1, 'Small screens send only the full frame');
+});
+
+await test('Vision tiles follow the long side: top/bottom on a portrait monitor, thirds on a 32:9 ultra-wide', () => {
+  const portrait = fakeImage(2160, 3840);
+  const pParts = buildVisionImageParts(portrait);
+  assert(portrait.crops.length === 2, `Portrait: expected 2 crops, got ${portrait.crops.length}`);
+  const [top, bottom] = portrait.crops;
+  assert(top.y === 0 && top.width === 2160 && top.height === 1920, `Top crop ${JSON.stringify(top)}`);
+  assert(bottom.y + bottom.height === 3840 && bottom.width === 2160, `Bottom crop must reach the bottom edge ${JSON.stringify(bottom)}`);
+  assert(pParts.some((p) => p.text?.includes('top half')) && pParts.some((p) => p.text?.includes('bottom half')), 'Portrait labels missing');
+
+  const wide = fakeImage(5120, 1440);
+  const wParts = buildVisionImageParts(wide);
+  assert(wide.crops.length === 3, `Ultra-wide: expected 3 crops, got ${wide.crops.length}`);
+  assert(wide.crops[0].x === 0 && wide.crops[2].x + wide.crops[2].width === 5120, `Thirds must span the frame ${JSON.stringify(wide.crops)}`);
+  assert(wide.crops.every((c) => c.height === 1440 && c.width <= 1707), `Thirds ${JSON.stringify(wide.crops)}`);
+  const labels = wParts.filter((p) => p.text).map((p) => p.text);
+  assert(labels[3].startsWith('[Image 4: right third'), `Image numbering ${JSON.stringify(labels)}`);
 });
 
 fs.rmSync(userData, { recursive: true, force: true });

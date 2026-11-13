@@ -33,16 +33,35 @@ function buildVisionImageParts(image) {
     ? image.resize(width >= height ? { width: 2048, quality: 'best' } : { height: 2048, quality: 'best' })
     : image;
   const parts = [{ text: `[Image 1: the full screen, ${width}x${height}px]` }, part(overview)];
-  if (width >= MIN_WIDTH_FOR_CROPS) {
-    const half = Math.ceil(width / 2);
-    parts.push(
-      { text: '[Image 2: left half of the same screen at full resolution]' },
-      part(image.crop({ x: 0, y: 0, width: half, height })),
-      { text: '[Image 3: right half of the same screen at full resolution]' },
-      part(image.crop({ x: width - half, y: 0, width: half, height }))
-    );
+  for (const tile of visionTiles(width, height)) {
+    parts.push({ text: `[Image ${parts.length / 2 + 1}: ${tile.label} of the same screen at full resolution]` }, part(image.crop(tile.rect)));
   }
   return parts;
+}
+
+/**
+ * Tiles along the screen's long side, so each tile is close to square and
+ * keeps its detail when the model scales it down: halves on a 16:10 or 16:9
+ * screen, thirds on a 32:9 ultra-wide, top/bottom on a portrait monitor.
+ * None below MIN_WIDTH_FOR_CROPS on the long side, where the full frame
+ * already holds every pixel the model will look at.
+ */
+function visionTiles(width, height) {
+  const long = Math.max(width, height);
+  if (long < MIN_WIDTH_FOR_CROPS) return [];
+  const count = Math.min(3, Math.max(2, Math.round(long / Math.min(width, height))));
+  const horizontal = width >= height;
+  const names = count === 2
+    ? (horizontal ? ['left half', 'right half'] : ['top half', 'bottom half'])
+    : (horizontal ? ['left third', 'middle third', 'right third'] : ['top third', 'middle third', 'bottom third']);
+  const size = Math.ceil(long / count);
+  return names.map((label, i) => {
+    const start = Math.min(i * size, long - size);
+    return {
+      label,
+      rect: horizontal ? { x: start, y: 0, width: size, height } : { x: 0, y: start, width, height: size }
+    };
+  });
 }
 
 function isBlackFrame(image) {
@@ -79,48 +98,21 @@ function createScreenshotManager({
     return `ss-${Date.now()}-${screenshotSequence}`;
   }
 
-  function normalizeScreenshotEntry(entry) {
-    if (!entry) return null;
-
-    if (typeof entry === 'string') {
-      return {
-        id: null,
-        path: entry,
-        timestamp: null
-      };
-    }
-
-    if (typeof entry.path === 'string') {
-      return {
-        id: typeof entry.id === 'string' ? entry.id : null,
-        path: entry.path,
-        timestamp: typeof entry.timestamp === 'string' ? entry.timestamp : null
-      };
-    }
-
-    return null;
-  }
-
-  function getScreenshotsDir() {
-    return app.isPackaged
+  // Earlier builds kept manual screenshots as PNG files here until exit; a
+  // crash left them behind. Screenshots now live only in memory, so any such
+  // folder holds leftovers of transient captures and is removed.
+  function removeLegacyScreenshotsDir() {
+    if (!app || typeof app.getPath !== 'function') return;
+    const dir = app.isPackaged
       ? path.join(app.getPath('userData'), 'screenshots')
       : path.join(__dirname, '..', '..', '..', '..', '.screenshots');
-  }
-
-  function ensureScreenshotsDir() {
-    const screenshotsDir = getScreenshotsDir();
-    if (!fs.existsSync(screenshotsDir)) {
-      fs.mkdirSync(screenshotsDir, { recursive: true });
-    }
-    return screenshotsDir;
-  }
-
-  function cleanupScreenshotFile(entry) {
-    const normalizedEntry = normalizeScreenshotEntry(entry);
-    if (normalizedEntry && fs.existsSync(normalizedEntry.path)) {
-      fs.unlinkSync(normalizedEntry.path);
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch (error) {
+      console.warn(`[ScreenCapture] could not remove leftover screenshots in ${dir}: ${error.message}`);
     }
   }
+  removeLegacyScreenshotsDir();
 
   function resolveTargetDisplay(displayId, mainWindow) {
     if (!screen) return null;
@@ -285,23 +277,19 @@ function createScreenshotManager({
     }
   }
 
+  /** Manual Capture Screen. The PNG stays in memory until cleared or the app exits. */
   async function takeStealthScreenshot() {
     const appEnvironment = getAppEnvironment() || {};
     const { image, meta } = await runExclusiveCapture(null, Math.min(appEnvironment.screenshotDelay || 300, 500));
 
-    const screenshotPath = path.join(ensureScreenshotsDir(), `capture-${meta.capturedAt}.png`);
-    fs.writeFileSync(screenshotPath, image.toPNG());
-
     const screenshotEntry = {
       id: nextScreenshotId(),
-      path: screenshotPath,
+      png: image.toPNG(),
       timestamp: new Date(meta.capturedAt).toISOString()
     };
 
     screenshots.push(screenshotEntry);
-    if (screenshots.length > (appEnvironment.maxScreenshots || 5)) {
-      cleanupScreenshotFile(screenshots.shift());
-    }
+    if (screenshots.length > (appEnvironment.maxScreenshots || 5)) screenshots.shift();
 
     sendToRenderer('screenshot-taken-stealth', {
       count: screenshots.length,
@@ -309,70 +297,31 @@ function createScreenshotManager({
       timestamp: screenshotEntry.timestamp
     });
 
-    return screenshotPath;
+    return { success: true, screenshotId: screenshotEntry.id, timestamp: screenshotEntry.timestamp };
   }
 
-  async function buildImagePartsFromScreenshots({ strict = true, includeIds = null } = {}) {
+  /** Image parts for the stored screenshots, optionally only the given ids. */
+  async function buildImagePartsFromScreenshots({ includeIds = null } = {}) {
     const includeIdSet = Array.isArray(includeIds)
       ? new Set(includeIds.filter((id) => typeof id === 'string' && id.trim().length > 0))
       : null;
-
-    const usableEntries = [];
-
-    for (const entry of screenshots) {
-      const normalizedEntry = normalizeScreenshotEntry(entry);
-      if (!normalizedEntry) continue;
-
-      if (includeIdSet && (!normalizedEntry.id || !includeIdSet.has(normalizedEntry.id))) {
-        continue;
-      }
-
-      if (fs.existsSync(normalizedEntry.path)) {
-        usableEntries.push(normalizedEntry);
-        continue;
-      }
-
-      console.error(`Screenshot file not found: ${normalizedEntry.path}`);
-      if (strict) {
-        throw new Error(`Screenshot file not found: ${normalizedEntry.path}`);
-      }
-    }
-
-    const imageParts = usableEntries.map((entry) => {
-      const imageData = fs.readFileSync(entry.path);
-      const isJpeg = imageData.length > 2 && imageData[0] === 0xff && imageData[1] === 0xd8;
-      const mimeType = isJpeg ? 'image/jpeg' : 'image/png';
-      return {
-        inlineData: {
-          data: imageData.toString('base64'),
-          mimeType
-        }
-      };
-    });
-
-    return {
-      imageParts,
-      entries: usableEntries
-    };
+    const entries = screenshots.filter((entry) => !includeIdSet || includeIdSet.has(entry.id));
+    // The MIME type comes from the bytes, never from what the entry claims.
+    const mimeOf = (imageData) => (imageData.length > 2 && imageData[0] === 0xff && imageData[1] === 0xd8 ? 'image/jpeg' : 'image/png');
+    const imageParts = entries.map((entry) => ({
+      inlineData: { data: entry.png.toString('base64'), mimeType: mimeOf(entry.png) }
+    }));
+    return { imageParts, entries };
   }
 
   function clearStealth() {
-    screenshots.forEach((entry) => {
-      cleanupScreenshotFile(entry);
-    });
-
     screenshots = [];
     screenshotSequence = 0;
-
     console.log('All screenshots and context cleared');
     return { success: true };
   }
 
   function cleanupTransientResources() {
-    screenshots.forEach((entry) => {
-      cleanupScreenshotFile(entry);
-    });
-
     screenshots = [];
     screenshotSequence = 0;
   }

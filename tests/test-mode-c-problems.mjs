@@ -416,6 +416,9 @@ await test('cancel-analyze-screen stops the running answer', async () => {
   const result = await run;
   assert.equal(result.cancelled, true);
   assert.equal(result.reason, 'user');
+  const stages = rig.sent.filter(([ch]) => ch === 'screen-capture-status').map(([, p]) => p.stage);
+  assert.equal(stages[stages.length - 1], 'cancelled', `status must end in cancelled, got ${stages.join(' > ')}`);
+  assert.ok(!rig.sent.some(([ch]) => ch === 'analysis-result'), 'a cancelled run sends no final result');
 });
 
 await test('ask right after a switch: waits for the view, sends the new screen text and attaches the live frame while unread', async () => {
@@ -445,6 +448,36 @@ await test('ask with a fully read view sends text only; with monitoring stopped 
   assert.ok(!/SCREEN SESSION CONTEXT/.test(rig.calls[1].opts.contextString), 'a stopped session leaked old screen text');
   rig.pending[1].finish('ok');
   await run2;
+});
+
+await test('ask with a fully read view still attaches the evidence crops its screen text refers to', async () => {
+  const rig = ipcRig({ viewAnalysed: true });
+  const crop = { inlineData: { data: Buffer.from('crop').toString('base64'), mimeType: 'image/jpeg' } };
+  const base = rig.screen.getPromptContext;
+  rig.screen.getPromptContext = () => ({ ...base(), imageParts: [crop] });
+  const run = quiet(() => rig.invoke('ask-ai-with-session-context', { transcriptContext: 'Host: explain' }));
+  await flush();
+  const call = rig.calls[0];
+  assert.equal(call.kind, 'ask-images');
+  assert.deepEqual(call.parts, [crop], 'the live frame must not ride along once the view is read; the crop must');
+  assert.equal(call.opts.screenshotCount, 1);
+  rig.pending[0].finish('ok');
+  assert.equal((await run).usedScreenshots, true);
+});
+
+await test('empty image reply: the text-only retry says no screenshots are attached and the result says none were used', async () => {
+  const rig = ipcRig({ viewAnalysed: false });
+  const run = quiet(() => rig.invoke('ask-ai-with-session-context', { transcriptContext: 'Host: what is on screen?' }));
+  await flush();
+  assert.equal(rig.calls[0].kind, 'ask-images');
+  rig.pending[0].finish('');
+  await flush();
+  const retry = rig.calls[1];
+  assert.equal(retry.kind, 'ask');
+  assert.equal(retry.opts.screenshotCount, 0, 'text-only prompt claimed attached screenshots');
+  rig.pending[1].finish('answer from text');
+  const result = await run;
+  assert.equal(result.usedScreenshots, false);
 });
 
 await test('quota exhaustion is reported as an error, not a cancellation; slow answer then switch is cancelled', async () => {

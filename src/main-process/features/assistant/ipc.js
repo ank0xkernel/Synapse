@@ -378,6 +378,7 @@ function registerAssistantIpc({
       if (!job.problemId) job.problemId = screen?.problemId || null;
       if (job.cancelled) {
         sendToRenderer('ai-stream-end', { actionId: 'screenIntelligence' });
+        sendToRenderer('screen-capture-status', { stage: 'cancelled', message: 'Analysis stopped' });
         return cancelledResult(job);
       }
       // A live frame is drawn from the monitoring stream at request time; the
@@ -444,6 +445,7 @@ function registerAssistantIpc({
 
       if (job.cancelled) {
         sendToRenderer('ai-stream-end', { actionId: 'screenIntelligence' });
+        sendToRenderer('screen-capture-status', { stage: 'cancelled', message: 'Analysis stopped' });
         return cancelledResult(job);
       }
       const timings = {
@@ -467,6 +469,7 @@ function registerAssistantIpc({
       if (error?.isCancelled || screenJob?.cancelled) {
         sendToRenderer('ai-stream-end', { actionId: 'screenIntelligence' });
         if (screenJob && !screenJob.cancelled) cancelAnswerJob(screenJob, 'cancelled');
+        sendToRenderer('screen-capture-status', { stage: 'cancelled', message: 'Analysis stopped' });
         return cancelledResult(screenJob || { reason: 'cancelled' });
       }
       console.error('[analyze-screen] Error details:', error);
@@ -591,9 +594,16 @@ function registerAssistantIpc({
         return cancelledResult(askJob, { mode, usedScreenshots: false });
       }
       const screenContextText = screen?.context?.text || '';
-      const liveScreenPart = screen?.frame && !screen.context?.viewAnalysed
-        ? { inlineData: { data: Buffer.from(screen.frame.jpeg).toString('base64'), mimeType: screen.frame.mime || 'image/jpeg' } }
-        : null;
+      // The screen context text promises its evidence crops are attached, so
+      // they always travel with it. The live frame goes too while the current
+      // view is not fully read.
+      const liveScreenParts = [
+        ...(screen?.frame?.jpeg && !screen.context?.viewAnalysed
+          ? [{ inlineData: { data: Buffer.from(screen.frame.jpeg).toString('base64'), mimeType: screen.frame.mime || 'image/jpeg' } }]
+          : []),
+        ...(screen?.context?.imageParts || [])
+      ];
+      const liveScreenPart = liveScreenParts.length ? liveScreenParts : null;
       const contextString = [
         typeof payload?.contextString === 'string' ? payload.contextString.trim() : '',
         screenContextText
@@ -646,7 +656,7 @@ function registerAssistantIpc({
         const manual = screenshotManager.hasScreenshots()
           ? (await screenshotManager.buildImagePartsFromScreenshots({ strict: false, includeIds: enabledScreenshotIds })).imageParts
           : [];
-        const imageParts = liveScreenPart ? [liveScreenPart, ...manual] : manual;
+        const imageParts = liveScreenPart ? [...liveScreenPart, ...manual] : manual;
 
         if (imageParts.length > 0) {
           usedScreenshots = true;
@@ -674,6 +684,9 @@ function registerAssistantIpc({
       }
 
       if (!text) {
+        // The answer below never saw an image: do not report that it did.
+        usedScreenshots = false;
+        usedScreenshotCount = 0;
         text = await geminiRuntime.executeWithKeyFailover((geminiService) => {
           if (!geminiService || !geminiService.model) {
             throw new Error('AI model not initialized. Please check your API key.');
@@ -686,7 +699,9 @@ function registerAssistantIpc({
             activeContext,
             relation,
             confidence,
-            screenshotCount: usedScreenshots ? usedScreenshotCount : 0,
+            // Text-only call: no image reaches the model here, even when an
+            // earlier image call returned nothing.
+            screenshotCount: 0,
             responseMode,
             onChunk,
             onTiming,
