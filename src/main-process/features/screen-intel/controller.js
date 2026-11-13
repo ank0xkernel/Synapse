@@ -278,6 +278,22 @@ function createScreenIntelController({
     });
   }
 
+  /**
+   * Re-reads what is in view from current pixels (session.refreshView) and
+   * waits until those regions are analysed again, or timeoutMs. Reports how
+   * many regions were requested and whether the view settled.
+   */
+  async function refreshView({ timeoutMs = 4000 } = {}) {
+    const { requested } = session.refreshView();
+    const t0 = Date.now();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    while (Date.now() - t0 < timeoutMs) {
+      if (session.getSnapshot().state === 'VIEW_FULLY_ANALYSED') return { requested, settled: true, waitedMs: Date.now() - t0 };
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return { requested, settled: false, waitedMs: Date.now() - t0 };
+  }
+
   const fromCapture = (event) => captureWindow && !captureWindow.isDestroyed() && event.sender === captureWindow.webContents;
 
   ipcMain.on('mc:started', (event, { sessionId, error }) => {
@@ -470,7 +486,7 @@ function createScreenIntelController({
   }
 
   return {
-    start, isActive, getPromptContext, waitForCurrentView, getProblem: session.getProblem,
+    start, isActive, getPromptContext, waitForCurrentView, refreshView, getProblem: session.getProblem,
     loadProblems: session.loadProblems, saveProblems: session.saveProblems,
     getLatestFrame: engineControl.getLatestFrame, getSnapshot: session.getSnapshot, session, dispose
   };

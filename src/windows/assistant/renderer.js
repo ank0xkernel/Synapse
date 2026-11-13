@@ -396,9 +396,14 @@ const chatUiManager = createChatUiManager({
     showFeedback: (message, type) => showFeedback(message, type),
     addMonitorLog: (...args) => addMonitorLog(...args),
     isAutoScrollEnabled,
-    onStopAnswer: () => {
-        window.electronAPI?.cancelAskAi?.();
+    // Stop belongs to the request that is writing this answer: a screen
+    // answer is an Analyze/Reanalyze, anything else an Ask.
+    onStopAnswer: (messageId) => {
+        const message = messageStore.findById(messageId);
+        if (String(message?.content || '').startsWith('**[Screen Analysis]**')) window.electronAPI?.cancelAnalyzeScreen?.();
+        else window.electronAPI?.cancelAskAi?.();
     },
+    onReanalyzeAnswer: (messageId) => { reanalyzeAnswerAction(messageId); },
     onRegenerateAnswer: () => {
         if (analyzeBtn && !analyzeBtn.disabled) {
             analyzeBtn.click();
@@ -1327,6 +1332,86 @@ async function analyzeScreenAction() {
         rerunScreenAnalysisAfterCancel = false;
         await analyzeScreenAction();
     }
+}
+
+// Reanalyze an earlier screen answer: main re-reads the visible screen from
+// current pixels, answers independently (the earlier answer is not in the
+// context) and compares. The earlier answer is marked superseded and leaves
+// the AI context. A second press confirms when the screen shows a different
+// problem.
+let reanalyzeConfirmedFor = null;
+async function reanalyzeAnswerAction(messageId) {
+    const original = messageStore.findById(messageId);
+    if (!original || !String(original.content).startsWith('**[Screen Analysis]**')) return;
+    if (isAiActionInFlight('screenIntelligence') || isAnalyzing) {
+        showFeedback('A screen analysis is already running. Stop it first.', 'warn');
+        return;
+    }
+    const force = reanalyzeConfirmedFor === messageId;
+    reanalyzeConfirmedFor = null;
+    const header = '**[Screen Analysis]**\n\n';
+    const previousAnswer = String(original.content).replace(/^\*\*\[Screen Analysis\]\*\*\s*\n+/, '');
+    const bundle = buildAiContextBundle({
+        messages: chatMessagesArray.filter((m) => m.id !== messageId),
+        isMessageIncludedForAi,
+        charBudget: AI_CONTEXT_CHAR_BUDGET,
+        emitTruncationLog: false
+    });
+    const responseMode = responseModeSelect ? responseModeSelect.value : 'professional';
+
+    await runAiActionWithLock('screenIntelligence', async () => {
+        const stream = createStreamHandler('screenIntelligence');
+        // The shared analysis-result listener must neither add its own message
+        // nor finalize (and save) this card before the comparison is added:
+        // it sees a placeholder; this function finalizes and saves once.
+        const placeholder = { finalize() {}, cleanup() {}, setProblemId() {}, markInterrupted() {} };
+        activeScreenAiStream = placeholder;
+        try {
+            setAnalyzing(true);
+            showLoadingOverlay('Reading the screen again...');
+            stream.start(header);
+            const result = await window.electronAPI.reanalyzeScreen({
+                contextString: bundle.contextString,
+                responseMode,
+                problemId: original.problemId || null,
+                previousAnswer,
+                force
+            });
+            stream.setProblemId(result?.problemId);
+            if (result?.code === 'PROBLEM_CHANGED') {
+                reanalyzeConfirmedFor = messageId;
+                const title = result.problem?.title ? `“${result.problem.title}”` : 'a different problem';
+                stream.finalize(`${header}The screen now shows ${title}, not the problem this answer was about. Press **New problem** to start it, or press **Reanalyze** on the earlier answer again to analyse what is on screen anyway.`);
+            } else if (result?.success && result?.text) {
+                const body = result.text.startsWith(header) ? result.text.slice(header.length) : result.text;
+                const notes = [];
+                if (result.refreshed && !result.refreshed.settled) notes.push('_Part of the screen was still being re-read; the current screen image was used for it._');
+                if (result.comparison) notes.push(`**Compared with the earlier answer:** ${result.comparison}`);
+                else if (result.comparisonError) notes.push(`_The comparison with the earlier answer failed: ${result.comparisonError}_`);
+                stream.finalize(`${header}${body}${notes.length ? `\n\n---\n${notes.join('\n\n')}` : ''}`);
+                original.includeInAi = false;
+                original.superseded = true;
+                chatMessagesArray = messageStore.getMessages();
+                updateMessageAiToggleUi(original);
+                document.querySelector(`[data-message-id="${CSS.escape(String(messageId))}"]`)?.classList.add('is-superseded');
+            } else if (result?.cancelled) {
+                stream.markInterrupted('_(reanalysis stopped)_');
+            } else {
+                const error = result?.error || 'Reanalysis failed';
+                showFeedback(error, 'error');
+                stream.finalize(`${header}⚠️ ${error}`);
+            }
+        } catch (error) {
+            showFeedback(error.message || 'Reanalysis failed', 'error');
+            stream.finalize(`${header}⚠️ ${error.message || 'Reanalysis failed'}`);
+        } finally {
+            setAnalyzing(false);
+            hideLoadingOverlay();
+            stream.cleanup();
+            if (activeScreenAiStream === placeholder) activeScreenAiStream = null;
+            updateUI();
+        }
+    });
 }
 
 async function analyzeScreenshotsOnly() {

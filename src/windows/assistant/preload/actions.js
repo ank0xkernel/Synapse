@@ -109,7 +109,8 @@ function createInvokeActions(ipcRenderer) {
       fallback: (error) => ({ error: error.message })
     })])),
 
-    // Workbench: project-aware tasks with approved execution (main-process workbench ipc).
+    // Workbench (project-aware tasks with approved execution), the verified
+    // clipboard and Reanalyze.
     ...Object.fromEntries([
       ['workbenchListProjects', 'workbench:list-projects'],
       ['workbenchAddProject', 'workbench:add-project'],
@@ -125,7 +126,8 @@ function createInvokeActions(ipcRenderer) {
       ['workbenchGetRun', 'workbench:get-run'],
       ['workbenchHistory', 'workbench:history'],
       ['workbenchListRuns', 'workbench:list-runs'],
-      ['writeClipboardText', 'clipboard:write-text']
+      ['writeClipboardText', 'clipboard:write-text'],
+      ['reanalyzeScreen', 'reanalyze-screen']
     ].map(([label, channel]) => [label, invokeWithFallback(ipcRenderer, {
       channel,
       label,

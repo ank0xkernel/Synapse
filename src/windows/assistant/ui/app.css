@@ -448,6 +448,9 @@ option { background: var(--surface-2); color: var(--text-1); }
 .answer-stop, .answer-regenerate { display: none; }
 .chat-message[data-streaming] .answer-stop { display: inline-flex; color: var(--text-1); background: var(--surface-3); }
 .chat-message.is-regenerable .answer-regenerate { display: inline-flex; }
+.answer-reanalyze { display: none; }
+.chat-message.is-screen-answer:not([data-streaming]):not(.is-superseded) .answer-reanalyze { display: inline-flex; }
+.chat-message.is-superseded .message-content { opacity: 0.6; }
 
 .message-content {
   font-size: var(--text-md);

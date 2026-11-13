@@ -343,7 +343,7 @@ function registerAssistantIpc({
     return { success: false, error: 'Relaunch not supported in current environment' };
   });
 
-  ipcMain.handle('analyze-screen', async (_event, payload = {}) => {
+  async function analyzeScreen(_event, payload = {}) {
     const perm = typeof screenshotManager.validateScreenCaptureCapability === 'function'
       ? await screenshotManager.validateScreenCaptureCapability()
       : (screenshotManager.checkScreenRecordingPermission?.() || { status: 'granted', authorized: true });
@@ -526,6 +526,39 @@ function registerAssistantIpc({
       };
     } finally {
       if (screenJob) endAnswerJob(screenJob);
+    }
+  }
+  ipcMain.handle('analyze-screen', analyzeScreen);
+
+  /**
+   * Reanalyze: re-reads the visible screen from current pixels, answers again
+   * through the same pipeline as Analyze without the earlier answer in its
+   * context, then compares the two. A screen that now shows a different
+   * problem is refused unless the user confirms (force).
+   */
+  ipcMain.handle('reanalyze-screen', async (event, payload = {}) => {
+    const screenIntel = getScreenIntel();
+    const monitoring = Boolean(screenIntel && screenIntel.isActive && screenIntel.isActive());
+    const current = monitoring ? screenIntel.getProblem?.() : null;
+    if (!payload.force && payload.problemId && current && current.status === 'identified' && current.id !== payload.problemId) {
+      return { success: false, code: 'PROBLEM_CHANGED', problem: { id: current.id, title: current.title || null } };
+    }
+    const refreshed = monitoring && screenIntel.refreshView ? await screenIntel.refreshView({ timeoutMs: 4000 }) : null;
+    const result = await analyzeScreen(event, { ...payload, previousAnswer: undefined });
+    if (!result || !result.success) return { ...result, refreshed };
+    const previous = typeof payload.previousAnswer === 'string' ? payload.previousAnswer.trim() : '';
+    if (!previous) return { ...result, refreshed, comparison: null };
+    try {
+      const comparison = await geminiRuntime.executeWithKeyFailover((service) => service.generateText([
+        'Two answers were written independently about the same screen. The SECOND one used a fresh read of the screen.',
+        'Say in at most 120 words whether they reach the same result. If not, list the concrete differences and which answer the screen evidence supports. If they agree, reply exactly: Both analyses agree.',
+        'Do not repeat either answer.',
+        '', '=== FIRST (earlier) ANSWER ===', previous.slice(0, 12000),
+        '', '=== SECOND (fresh) ANSWER ===', String(result.text).slice(0, 12000)
+      ].join('\n'), { tag: 'reanalyzeCompare', priority: 'realtime', generation: { maxOutputTokens: 1200, thinkingLevel: 'low' } }));
+      return { ...result, refreshed, comparison: String(comparison || '').trim() || null };
+    } catch (error) {
+      return { ...result, refreshed, comparison: null, comparisonError: mapGeminiErrorMessage(error, 'Comparison failed') };
     }
   });
 

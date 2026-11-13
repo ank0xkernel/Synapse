@@ -761,6 +761,23 @@ await test('a panel scrolled back to its first screenful counts as analysed: tha
   assert.notEqual(h2.snap().state, STATES.VIEW_FULLY_ANALYSED);
 });
 
+await test('refreshView (Reanalyze) asks for fresh crops of every read region in view, and only those', async () => {
+  const h = harness();
+  await h.start();
+  h.send(container({ id: 'root', screen: FULL, viewport: FULL }));
+  h.send(region({ rect: { x: 0, y: 0, w: 1000, h: 400 }, lines: [ln('top text', 0.1, 0.1)] }));
+  h.send(region({ rect: { x: 0, y: 400, w: 1000, h: 400 }, lines: [ln('bottom text', 0.1, 0.1)] }));
+  await flush();
+  const before = h.engine.recaptures.length;
+  const { requested } = h.s.refreshView();
+  await flush();
+  assert.equal(requested, 2);
+  assert.equal(h.engine.recaptures.length - before, 2);
+  assert.deepEqual(h.engine.recaptures.slice(before).map((r) => r.contentRect.y).sort((a, b) => a - b), [0, 400]);
+  await h.s.stop();
+  assert.equal(h.s.refreshView().requested, 0, 'nothing is requested once monitoring stopped');
+});
+
 await test('permission revoked mid-session: the stream restart is refused and the session reports PERMISSION, not a generic failure', async () => {
   const h = harness();
   await h.start();

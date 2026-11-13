@@ -479,6 +479,24 @@ function createScreenSession({ ocr, engineControl, now = Date.now, emitState, on
 
   const { retry, reanalyse } = createManualActions({ getRun: () => R, T, refresh, enqueueRecord, toPending, recapture: (...a) => recapture(...a) });
 
+  /**
+   * Reanalyze: every read region in view is cropped again from the latest
+   * frame and OCR'd again, so the next answer uses current pixels instead of
+   * the crops read earlier. Returns how many regions were requested.
+   */
+  function refreshView() {
+    const run = R;
+    if (!run.sessionId || run.stopped || run.paused.user || run.paused.system) return { requested: 0 };
+    let requested = 0;
+    for (const rec of run.ledger.list({ epoch: run.epoch, status: 'analysed' })) {
+      if (rec.duplicateOf || rec.kind === 'inaccessible' || !isVisible(rec)) continue;
+      recapture(run, rec, true);
+      requested += 1;
+    }
+    refresh();
+    return { requested };
+  }
+
   function getRegion(regionId) {
     const rec = R.ledger.get(regionId);
     if (!rec) return null;
@@ -502,7 +520,7 @@ function createScreenSession({ ocr, engineControl, now = Date.now, emitState, on
   }
 
   return {
-    start, stop, restart, dispose, retry, reanalyse, getSnapshot, getRegion, notifySystem, handleEngineEvent,
+    start, stop, restart, dispose, retry, reanalyse, refreshView, getSnapshot, getRegion, notifySystem, handleEngineEvent,
     pause: () => setEnginePaused(R, 'user', true),
     resume: () => setEnginePaused(R, 'user', false),
     buildContext: buildSessionContext,

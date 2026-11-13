@@ -673,6 +673,44 @@ await test('New Problem: nothing earlier reaches the AI, stamped or not, and no 
   assert.ok(bundle().contextString.includes('stamped answer'));
 });
 
+await test('Reanalyze: re-reads the screen first, answers without the earlier answer, compares, and refuses a different problem unless confirmed', async () => {
+  const rig = ipcRig({ problemId: 'p1' });
+  const order = [];
+  rig.screen.getProblem = () => ({ id: rig.screen.problemId, status: 'identified', title: 'Two Sum' });
+  rig.screen.refreshView = async () => { order.push('refresh'); return { requested: 3, settled: true }; };
+  rig.service.generateText = async (prompt) => { order.push('compare'); rig.comparePrompt = prompt; return 'Both analyses agree.'; };
+  const previousAnswer = 'EARLIER ANSWER: use a nested loop, O(n^2).';
+
+  rig.screen.problemId = 'p2';
+  const refused = await quiet(() => rig.invoke('reanalyze-screen', { problemId: 'p1', previousAnswer, contextString: 'transcript only' }));
+  assert.equal(refused.code, 'PROBLEM_CHANGED');
+  assert.equal(refused.problem.id, 'p2');
+  assert.equal(rig.calls.length, 0, 'nothing analysed before the user confirms');
+
+  const run = quiet(() => rig.invoke('reanalyze-screen', { problemId: 'p1', previousAnswer, contextString: 'transcript only', force: true }));
+  await flush();
+  assert.deepEqual(order, ['refresh'], 'the view is re-read before the new answer starts');
+  const call = rig.calls[0];
+  assert.equal(call.kind, 'screen');
+  assert.ok(!JSON.stringify(call).includes('EARLIER ANSWER'), 'the earlier answer leaked into the independent analysis');
+  rig.pending[0].finish('Use a hash map, O(n).');
+  const result = await run;
+  assert.equal(result.success, true);
+  assert.equal(result.comparison, 'Both analyses agree.');
+  assert.deepEqual(result.refreshed, { requested: 3, settled: true });
+  assert.match(rig.comparePrompt, /EARLIER ANSWER/);
+  assert.match(rig.comparePrompt, /hash map/);
+
+  rig.service.generateText = async () => { throw new Error('network down'); };
+  const run2 = quiet(() => rig.invoke('reanalyze-screen', { problemId: 'p2', previousAnswer }));
+  await flush();
+  rig.pending[1].finish('Hash map again.');
+  const second = await run2;
+  assert.equal(second.success, true, 'the fresh answer stands even when the comparison fails');
+  assert.equal(second.comparison, null);
+  assert.ok(second.comparisonError, 'comparison failure is reported, not hidden');
+});
+
 await test('Copy: success only when the system clipboard reads back the exact text; failures are reported', async () => {
   const setup = (clipboard) => {
     const handlers = {};
