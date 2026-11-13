@@ -95,9 +95,16 @@ export function createChatUiManager({
         if (!renderFrame) renderFrame = requestAnimationFrame(flushRenders);
     }
 
+    // Main-process clipboard (works without window focus, verified by reading
+    // back); the DOM API only when that bridge is missing.
     async function copyText(text, label = 'Copied') {
         try {
-            await navigator.clipboard.writeText(text);
+            if (window.electronAPI?.writeClipboardText) {
+                const result = await window.electronAPI.writeClipboardText(text);
+                if (!result?.success) throw new Error(result?.error || 'Clipboard write failed');
+            } else {
+                await navigator.clipboard.writeText(text);
+            }
             showFeedback?.(label, 'success');
         } catch (_) {
             showFeedback?.('Could not copy', 'error');

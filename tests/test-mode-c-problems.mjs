@@ -673,6 +673,27 @@ await test('New Problem: nothing earlier reaches the AI, stamped or not, and no 
   assert.ok(bundle().contextString.includes('stamped answer'));
 });
 
+await test('Copy: success only when the system clipboard reads back the exact text; failures are reported', async () => {
+  const setup = (clipboard) => {
+    const handlers = {};
+    registerAssistantIpc({
+      ipcMain: { handle: (ch, fn) => { handlers[ch] = fn; }, on: () => {} },
+      screenshotManager: {}, windowController: {}, geminiRuntime: {}, assemblyAiService: {}, sendToRenderer: () => {},
+      quitApplication: () => {}, mobileServer: null, clipboard
+    });
+    return (text) => handlers['clipboard:write-text']({}, text);
+  };
+  let stored = '';
+  const write = setup({ writeText: (t) => { stored = t; }, readText: () => stored });
+  const answer = '## Approach\n\n```python\ndef f(x):\n    return x * 2\n```\n\n- item\n\n$O(n \\log n)$';
+  assert.deepEqual(await write(answer), { success: true, chars: answer.length });
+  assert.equal(stored, answer, 'formatting, code and maths must survive byte for byte');
+  const lossy = setup({ writeText: () => {}, readText: () => 'something else' });
+  assert.equal((await lossy('x')).code, 'VERIFY_FAILED');
+  assert.equal((await write('')).code, 'EMPTY');
+  assert.equal((await setup(undefined)('x')).code, 'UNAVAILABLE');
+});
+
 await test('New Problem in main: running answers stop, their late chunks never reach the window', async () => {
   const rig = ipcRig();
   const run = quiet(() => rig.invoke('analyze-screen', {}));

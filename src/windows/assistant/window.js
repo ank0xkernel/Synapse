@@ -68,7 +68,9 @@ function createAssistantWindow({
     show: false,
     opacity: windowOpacity,
     type: 'toolbar',
-    acceptFirstMouse: false,
+    // The assistant usually sits over another, focused app: the first click
+    // must reach the button (Copy, New problem...), not only activate the window.
+    acceptFirstMouse: true,
     disableAutoHideCursor: true,
     enableLargerThanScreen: false,
     hasShadow: false,

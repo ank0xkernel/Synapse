@@ -1,4 +1,4 @@
-const { nativeImage } = require('electron');
+const { nativeImage, clipboard: electronClipboard } = require('electron');
 const { resolveResponseModeId, listResponseModes } = require('../../../services/ai/response-modes');
 const { buildVisionImageParts } = require('./screenshot-manager');
 
@@ -12,9 +12,23 @@ function registerAssistantIpc({
   quitApplication,
   mobileServer,
   latencyTracker = null,
-  getScreenIntel = () => null
+  getScreenIntel = () => null,
+  clipboard = electronClipboard
 }) {
   let chatContext = [];
+
+  // The system clipboard from the main process: works whether or not the
+  // overlay window has focus (the DOM clipboard API needs it). Success is
+  // reported only when the clipboard reads back exactly what was written.
+  ipcMain.handle('clipboard:write-text', (_event, text) => {
+    if (typeof text !== 'string' || !text.length) return { success: false, code: 'EMPTY', error: 'Nothing to copy.' };
+    if (text.length > 5 * 1024 * 1024) return { success: false, code: 'TOO_LARGE', error: 'Text is too large to copy.' };
+    if (!clipboard) return { success: false, code: 'UNAVAILABLE', error: 'The clipboard is not available.' };
+    clipboard.writeText(text);
+    return clipboard.readText() === text
+      ? { success: true, chars: text.length }
+      : { success: false, code: 'VERIFY_FAILED', error: 'The clipboard did not keep the text.' };
+  });
 
   // How long an answer waits for a just-changed screen to be read before it
   // goes ahead with the live frame attached instead.

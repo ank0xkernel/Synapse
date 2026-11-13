@@ -124,7 +124,8 @@ function createInvokeActions(ipcRenderer) {
       ['workbenchOpenInEditor', 'workbench:open-in-editor'],
       ['workbenchGetRun', 'workbench:get-run'],
       ['workbenchHistory', 'workbench:history'],
-      ['workbenchListRuns', 'workbench:list-runs']
+      ['workbenchListRuns', 'workbench:list-runs'],
+      ['writeClipboardText', 'clipboard:write-text']
     ].map(([label, channel]) => [label, invokeWithFallback(ipcRenderer, {
       channel,
       label,

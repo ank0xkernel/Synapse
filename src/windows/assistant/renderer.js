@@ -1826,6 +1826,14 @@ function hideResults() {
 async function writeTextToClipboard(text) {
     const value = String(text ?? '');
 
+    // Main-process clipboard first: it does not need this window to have
+    // focus and confirms the write by reading it back.
+    if (window.electronAPI?.writeClipboardText) {
+        const result = await window.electronAPI.writeClipboardText(value);
+        if (result?.success) return;
+        if (result?.code !== 'IPC_FAILED') throw new Error(result?.error || 'Clipboard write failed');
+    }
+
     if (navigator?.clipboard?.writeText) {
         try {
             await navigator.clipboard.writeText(value);
@@ -1871,7 +1879,15 @@ async function writeTextToClipboard(text) {
 
 async function copyChatMessageById(messageId) {
     const message = messageStore.findById(messageId);
-    const content = String(message?.content || '');
+    // A streaming answer is incomplete: copying it would hand out half an answer.
+    const messageEl = document.querySelector(`[data-message-id="${CSS.escape(String(messageId))}"]`);
+    if (messageEl?.dataset.streaming === 'true') {
+        showFeedback('The answer is still being written. Copy it when it finishes.', 'warn');
+        return;
+    }
+    // The whole Markdown source (code fences, lists, maths intact), without
+    // the internal heading the screen answers start with.
+    const content = String(message?.content || '').replace(/^\*\*\[Screen Analysis\]\*\*\s*\n+/, '');
 
     if (!content.trim()) {
         showFeedback('Nothing to copy', 'error');
@@ -1880,7 +1896,7 @@ async function copyChatMessageById(messageId) {
 
     try {
         await writeTextToClipboard(content);
-        showFeedback('Message copied', 'success');
+        showFeedback(`Copied ${content.length.toLocaleString()} characters`, 'success');
     } catch (error) {
         console.error('Message copy error:', error);
         showFeedback('Copy failed', 'error');
