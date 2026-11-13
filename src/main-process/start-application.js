@@ -655,6 +655,13 @@ async function startApplication() {
       isAssistantHiddenFromCapture: () => appEnvironment?.hideFromScreenCapture === true,
       // A different problem on screen makes in-flight answers obsolete.
       onProblemChange: (problem) => assistantIpc.onScreenProblemChange(problem),
+      // New Problem: answers, provider history, screenshots and screen-based
+      // workbench runs of the previous problem stop before the new one starts.
+      onNewProblem: () => {
+        assistantIpc.resetForNewProblem();
+        screenshotManager.clearStealth();
+        workbench?.cancelActiveRuns('new-problem');
+      },
       // Problems persist with the open conversation (desktop only, never synced).
       problemStore: conversationsControl.problems
     });

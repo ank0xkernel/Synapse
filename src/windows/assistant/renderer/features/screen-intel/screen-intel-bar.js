@@ -216,7 +216,12 @@ if (root && api?.onScreenIntelState) {
     }
   });
   el.retry.addEventListener('click', () => api.screenIntelRetry());
-  el.newProblem.addEventListener('click', () => problemAction(() => api.screenIntelNewProblem(), 'new'));
+  // The chat context is cut before main is asked, so nothing typed or sent
+  // from this moment can carry the previous problem (renderer.js listens).
+  el.newProblem.addEventListener('click', () => problemAction(() => {
+    window.dispatchEvent(new CustomEvent('synapse:new-problem'));
+    return api.screenIntelNewProblem();
+  }, 'new'));
   el.candidateNew.addEventListener('click', () => {
     const cutId = el.candidate.dataset.cut;
     if (cutId) problemAction(() => api.screenIntelResolveCandidate({ cutId, choice: 'new' }), 'new');

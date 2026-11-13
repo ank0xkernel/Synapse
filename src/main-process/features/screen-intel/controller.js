@@ -63,6 +63,7 @@ function createScreenIntelController({
   geminiRuntime,
   isAssistantHiddenFromCapture = () => false,
   onProblemChange = () => {},
+  onNewProblem = () => {},
   problemStore = null,
   log = console.log
 }) {
@@ -395,7 +396,18 @@ function createScreenIntelController({
       return { ...rest, imageDataUrl: imageToDataUrl(imageRef) };
     },
     'screen-intel:get-latest-frame': async () => imageToDataUrl(await engineControl.getLatestFrame()),
-    'screen-intel:new-problem': () => session.newProblem(),
+    // Everything of the previous problem stops first (answers, provider
+    // history, screenshots); then a new screen epoch begins. Monitoring that
+    // was off starts, so the new problem always begins with a fresh capture.
+    'screen-intel:new-problem': async () => {
+      onNewProblem();
+      const result = await session.newProblem();
+      if (result && result.success && !isActive()) {
+        const started = await start({});
+        if (!started.success) return { ...result, captureError: started.error, captureCode: started.code };
+      }
+      return result;
+    },
     'screen-intel:activate-problem': (_event, id) => (typeof id === 'string' && /^p\d{1,6}$/.test(id)
       ? session.activateProblem(id) : { success: false, code: 'BAD_REQUEST', message: 'Unknown problem.' }),
     'screen-intel:resolve-candidate': (_event, request) => {

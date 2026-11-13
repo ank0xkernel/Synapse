@@ -647,6 +647,45 @@ await test('cancel during a stall is a cancellation, not a timeout, and leaves n
 
 console.log('renderer: answers about other problems');
 
+await test('New Problem: nothing earlier reaches the AI, stamped or not, and no later identification brings it back', () => {
+  let current = null;
+  const store = createMessageStore({ getActiveProblemId: () => current });
+  const bundle = () => buildFilteredAiContextBundle({ messages: store.getMessages(), isMessageIncludedForAi: store.isIncludedForAi, charBudget: 10000, emitTruncationLog: false });
+  store.add('ai-response', 'unstamped answer about two sum');
+  current = 'p1';
+  const stamped = store.add('ai-response', 'stamped answer about two sum');
+  store.add('voice-system', 'interviewer asks about two sum');
+  store.add('screenshot', 'Screenshot captured', { screenshotId: 'ss-1' });
+  store.startNewProblem();
+  current = null;
+  const after = bundle();
+  assert.equal(after.contextString, '', `old context leaked: ${after.contextString}`);
+  assert.deepEqual(after.enabledScreenshotIds, [], 'old screenshots still attached');
+  // The new problem gets identified, then an old answer's problem is assigned late.
+  assert.equal(store.excludeOtherProblems('p2').restored.length, 0);
+  store.assignProblem(stamped.id, 'p2', 'p2');
+  assert.ok(!bundle().contextString.includes('two sum'), 'a late identification restored old context');
+  current = 'p2';
+  store.add('ai-response', 'answer about merge intervals');
+  assert.ok(bundle().contextString.includes('merge intervals'));
+  // The user can still bring an old message back on purpose.
+  store.toggleInclusion(stamped.id);
+  assert.ok(bundle().contextString.includes('stamped answer'));
+});
+
+await test('New Problem in main: running answers stop, their late chunks never reach the window', async () => {
+  const rig = ipcRig();
+  const run = quiet(() => rig.invoke('analyze-screen', {}));
+  await flush();
+  rig.pending[0].chunk('old ');
+  rig.api.resetForNewProblem();
+  rig.pending[0].chunk('late chunk');
+  const result = await run;
+  assert.equal(result.cancelled, true);
+  assert.equal(result.reason, 'new-problem');
+  assert.deepEqual(rig.chunks('screenIntelligence'), ['old ']);
+});
+
 await test('answers about the previous problem leave the AI context; returning restores them; user choices stick', () => {
   let current = 'p1';
   const store = createMessageStore({ getActiveProblemId: () => current });

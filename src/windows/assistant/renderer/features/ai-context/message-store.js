@@ -118,11 +118,29 @@ export function createMessageStore({ getActiveProblemId = () => null } = {}) {
     return false;
   }
 
+  /**
+   * New Problem: nothing said or shown before it goes to the AI again, with
+   * or without a problem stamp, until the user toggles a message back. These
+   * exclusions are not auto-excluded ones, so no later problem identification
+   * or late answer brings them back. Returns the messages excluded.
+   */
+  function startNewProblem() {
+    const changed = messages.filter((m) => !isSystemMessageType(m.type) && isIncludedForAi(m));
+    for (const m of changed) {
+      m.includeInAi = false;
+      m.autoExcluded = false;
+      m.newProblemExcluded = true;
+      m.canToggleAi = true;
+    }
+    return changed;
+  }
+
   return {
     add,
     assignProblem,
     clear,
     excludeOtherProblems,
+    startNewProblem,
     findById,
     getMessages,
     isIncludedForAi,

@@ -310,6 +310,10 @@ function createRunManager({
 
   return {
     startTask, approve, reject, cancel, fixFailures, restore, persist,
+    /** Cancels every unfinished run (New Problem: they were about the previous screen). */
+    cancelActive: () => {
+      for (const run of runs.values()) if (!['done', 'failed', 'cancelled'].includes(run.stage)) cancel(run.id);
+    },
     getRun: (runId) => (runs.has(runId) ? snapshot(runs.get(runId)) : null),
     listRuns: () => Array.from(runs.values()).sort((a, b) => b.createdAt - a.createdAt).map(snapshot)
   };

@@ -104,7 +104,7 @@ function registerAssistantIpc({
       reason: job.reason || 'cancelled',
       error: job.reason === 'problem-changed'
         ? 'The screen moved to a different problem, so this answer was stopped.'
-        : 'Answer stopped.',
+        : job.reason === 'new-problem' ? 'New problem started, so this answer was stopped.' : 'Answer stopped.',
       ...extra
     };
   }
@@ -999,7 +999,19 @@ function registerAssistantIpc({
     }
   });
 
-  return { onScreenProblemChange };
+  /**
+   * New Problem: every answer still running is about the previous problem, so
+   * it stops now (its late chunks and result are dropped by job.cancelled),
+   * and the provider-side histories that could carry it into the next
+   * prompt are emptied. Settings, keys and saved conversations are untouched.
+   */
+  function resetForNewProblem() {
+    for (const job of answerJobs.values()) cancelAnswerJob(job, 'new-problem');
+    chatContext = [];
+    geminiRuntime.getService()?.clearHistory?.();
+  }
+
+  return { onScreenProblemChange, resetForNewProblem };
 }
 
 module.exports = {

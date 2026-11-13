@@ -74,6 +74,22 @@ function onScreenProblemSnapshot(snapshot) {
     updateUI();
 }
 window.electronAPI?.onScreenIntelState?.(onScreenProblemSnapshot);
+
+// New Problem: earlier messages stay visible but leave the AI context, the
+// screenshot list empties (main drops the images) and no problem is assumed
+// until the new screen has been read.
+window.addEventListener('synapse:new-problem', () => {
+    const excluded = messageStore.startNewProblem();
+    activeScreenProblemId = null;
+    lastIdentifiedProblemId = null;
+    chatMessagesArray = messageStore.getMessages();
+    for (const message of excluded) updateMessageAiToggleUi(message);
+    screenshotsCount = 0;
+    addChatMessage('system', excluded.length
+        ? `New problem. ${excluded.length} earlier message(s) are no longer sent to the AI; the screen is read again from scratch.`
+        : 'New problem. The screen is read again from scratch.');
+    updateUI();
+});
 const transcriptionSourceState = createTranscriptionSourceState();
 
 // Source selection state (default: host/system on, mic off)

@@ -177,6 +177,7 @@ function registerWorkbenchIpc({
   }
 
   return {
+    cancelActiveRuns: () => runs.cancelActive(),
     dispose() {
       for (const channel of Object.keys(handlers)) ipcMain.removeHandler(channel);
       runs.persist();
