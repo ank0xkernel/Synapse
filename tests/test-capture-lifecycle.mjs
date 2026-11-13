@@ -37,7 +37,8 @@ function fakeImage(width, height, { black = false, origin = 'frame' } = {}) {
     toBitmap: () => Buffer.alloc(256, black ? 0 : 200),
     toPNG: () => Buffer.from('png'),
     toJPEG: () => Buffer.from(`jpeg:${origin}`),
-    crop(rect) { crops.push(rect); return fakeImage(rect.width, rect.height, { origin: `${origin}-crop` }); }
+    crop(rect) { crops.push(rect); return fakeImage(rect.width, rect.height, { origin: `${origin}-crop` }); },
+    resize({ width: w }) { return fakeImage(w, Math.round(height * (w / width)), { origin: `${origin}-resized` }); }
   };
 }
 

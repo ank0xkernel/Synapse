@@ -27,7 +27,12 @@ function captureError(code, message, extra = {}) {
 function buildVisionImageParts(image) {
   const { width, height } = image.getSize();
   const part = (img) => ({ inlineData: { data: img.toJPEG(VISION_JPEG_QUALITY).toString('base64'), mimeType: 'image/jpeg' } });
-  const parts = [{ text: `[Image 1: the full screen, ${width}x${height}px]` }, part(image)];
+  // The model reduces every image to the same token budget, so a full frame
+  // above 2048px only adds upload size; detail comes from the crops below.
+  const overview = Math.max(width, height) > 2048
+    ? image.resize(width >= height ? { width: 2048, quality: 'best' } : { height: 2048, quality: 'best' })
+    : image;
+  const parts = [{ text: `[Image 1: the full screen, ${width}x${height}px]` }, part(overview)];
   if (width >= MIN_WIDTH_FOR_CROPS) {
     const half = Math.ceil(width / 2);
     parts.push(

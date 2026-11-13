@@ -459,6 +459,23 @@ class GeminiService {
             timeout.isTimeout = true;
             throw timeout;
           }
+          // Gemini sometimes ends an SSE stream mid-event; the SDK then throws
+          // "Failed to parse stream" and drops what it received. Before any
+          // text reached the user, one non-streaming request gets either the
+          // answer or the real HTTP error instead.
+          const streamBroken = /Failed to parse stream|Error reading from the stream|Error parsing JSON response/i.test(String(error?.message || ''));
+          if (streamBroken && !request._firstChunkSent && !(outer && outer.signal.aborted)) {
+            console.warn(`[Gemini API] Stream broke before the first chunk (${error.message}); retrying without streaming`);
+            const result = await this.model.generateContent(payload, requestOptions);
+            const text = result.response.text();
+            if (text) {
+              request._firstChunkSent = true;
+              this.emitTiming(request, 'first-token');
+              request.onChunk({ text, index: 1 });
+            }
+            this.dailyTokenCount += this.estimateTokens(text);
+            return text;
+          }
           throw error;
         } finally {
           clearTimeout(timer);
