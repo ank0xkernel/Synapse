@@ -239,6 +239,47 @@ await test('project suggestion from an editor window title picks the registered 
   assert.equal(matchProject('notes — /Users/someone/unregistered — Visual Studio Code', projects).projectId, null);
 });
 
+const { discoverProjects } = require('../src/services/workbench/project-discovery.js');
+
+await test('discovery: a folder open in the editor whose name is in the window title is found without being registered', () => {
+  const home = fs.mkdtempSync(path.join(base, 'home-'));
+  const project = makeCalcProject('home-proj-tmp');
+  const inside = path.join(home, 'code', 'calc-lib');
+  fs.mkdirSync(path.dirname(inside), { recursive: true });
+  fs.renameSync(project, inside);
+  write(home, 'Library/Application Support/Code/User/globalStorage/storage.json', JSON.stringify({
+    windowsState: { lastActiveWindow: { folder: `file://${inside}` }, openedWindows: [{ folder: `file://${inside}` }, { folder: 'file:///nonexistent/folder' }] }
+  }));
+  const found = discoverProjects({ titles: ['math.js — calc-lib — Visual Studio Code'], screenText: '', projects: [], home });
+  assert.equal(found.confidence, 'high');
+  assert.equal(found.candidates[0].root, fs.realpathSync(inside));
+  assert.equal(found.candidates[0].registered, false);
+  assert.ok(!found.candidates.some((c) => c.root.includes('nonexistent')), 'folders that do not exist are never offered');
+});
+
+await test('discovery: a file path on screen is walked up to its project root; paths outside home are ignored; nothing found is "none"', () => {
+  const home = fs.mkdtempSync(path.join(base, 'home2-'));
+  const root = path.join(home, 'work', 'starter');
+  write(root, 'pyproject.toml', '[project]\nname = "starter"\n');
+  write(root, 'pkg/solver/core.py', 'def solve():\n    pass\n');
+  const found = discoverProjects({ titles: [], screenText: 'Edit ~/work/starter/pkg/solver/core.py to implement solve()', projects: [], home });
+  assert.equal(found.candidates[0].root, fs.realpathSync(root));
+  assert.match(found.candidates[0].evidence[0], /Path on screen/);
+  assert.equal(discoverProjects({ titles: [], screenText: 'see /etc/hosts and /usr/local/lib/x', projects: [], home }).confidence, 'none');
+  assert.equal(discoverProjects({ titles: ['Notes'], screenText: 'no paths here', projects: [], home }).candidates.length, 0);
+});
+
+await test('discovery: a registered project on screen keeps its id, so confirming does not register it twice', () => {
+  const home = fs.mkdtempSync(path.join(base, 'home3-'));
+  const root = path.join(home, 'apps', 'shop');
+  write(root, 'package.json', '{"name":"shop"}');
+  write(root, 'src/cart.ts', 'export const cart = 1;\n');
+  const projects = [{ id: 'prj_shop', name: 'shop', root }];
+  const found = discoverProjects({ titles: [`cart.ts — ${root}/src`], screenText: '', projects, home });
+  assert.equal(found.candidates[0].projectId, 'prj_shop');
+  assert.equal(found.candidates[0].registered, true);
+});
+
 console.log(`\nWorkbench end-to-end tests: ${passed} passed, ${failed} failed (${passed + failed} total)`);
 fs.rmSync(base, { recursive: true, force: true });
 process.exit(failed ? 1 : 0);

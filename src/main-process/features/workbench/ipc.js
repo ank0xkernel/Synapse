@@ -10,7 +10,7 @@ const { execFile } = require('child_process');
 const { createProjectStore } = require('../../../services/workbench/project-store');
 const { scanProject } = require('../../../services/workbench/project-scanner');
 const { createCodeIndex } = require('../../../services/workbench/code-index');
-const { matchProject } = require('../../../services/workbench/project-match');
+const { discoverProjects } = require('../../../services/workbench/project-discovery');
 const { createFileOps } = require('../../../services/workbench/file-ops');
 const { runCommand, classifyCommand } = require('../../../services/workbench/command-runner');
 const { resolveInside } = require('../../../services/workbench/path-guard');
@@ -116,13 +116,18 @@ function registerWorkbenchIpc({
     },
     'workbench:suggest-project': async () => {
       const [titles, screen] = await Promise.all([windowTitles().catch(() => ({ titles: [], available: false })), Promise.resolve(getScreenText())]);
-      const text = [...titles.titles, screen.text].join('\n');
-      const suggestion = matchProject(text, projectStore.list());
+      const found = discoverProjects({ titles: titles.titles, screenText: screen.text, projects: projectStore.list() });
+      const top = found.candidates[0];
+      const suggestion = { projectId: found.confidence === 'high' && top ? top.projectId : null, root: found.confidence === 'high' && top ? top.root : null, confidence: found.confidence, candidates: found.candidates };
       return { success: true, suggestion, screenAvailable: titles.available || screen.available };
     },
-    'workbench:confirm-project': (_e, projectId) => {
-      const project = projectStore.get(String(projectId));
-      if (!project) return { success: false, code: 'NOT_FOUND', error: 'That project is not registered.' };
+    // A registered project by id, or a folder found on screen (registered now,
+    // because the user confirmed it). Only folders that exist are accepted.
+    'workbench:confirm-project': (_e, target) => {
+      const request = target && typeof target === 'object' ? target : { projectId: target };
+      let project = request.projectId ? projectStore.get(String(request.projectId)) : null;
+      if (!project && typeof request.root === 'string' && path.isAbsolute(request.root)) project = projectStore.add(request.root);
+      if (!project) return { success: false, code: 'NOT_FOUND', error: 'That project is not registered and no folder was given.' };
       projectStore.setActive(project.id);
       projectStore.touch(project.id);
       getProjectTools(project).catch((error) => log(`[Workbench] indexing ${project.name} failed: ${error.message}`));

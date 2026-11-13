@@ -77,7 +77,12 @@ test('suggestion model: high, low, none (screen available or not), error', () =>
   assert.deepEqual(low.options.map((o) => o.name), ['Alpha', 'Beta']);
   const none = describeSuggestion({ success: true, suggestion: { projectId: null, confidence: 'none', candidates: [] }, screenAvailable: true }, projects);
   assert.equal(none.kind, 'none');
-  assert.match(none.text, /No registered project matches/);
+  assert.match(none.text, /No project folder could be found/);
+  assert.match(none.text, /Add project/);
+  const discovered = describeSuggestion({ success: true, suggestion: { projectId: null, root: '/Users/me/code/shop', confidence: 'high', candidates: [{ projectId: null, root: '/Users/me/code/shop', name: 'shop', score: 10, evidence: ['Path on screen'] }] } }, projects);
+  assert.equal(discovered.kind, 'high');
+  assert.deepEqual([discovered.options[0].registered, discovered.options[0].root, discovered.options[0].name], [false, '/Users/me/code/shop', 'shop']);
+  assert.ok(discovered.options[0].evidence.some((e) => e.includes('Not added yet')), 'an unregistered folder is labelled as such before the user confirms');
   assert.match(describeSuggestion({ success: true, suggestion: { projectId: null, confidence: 'none', candidates: [] }, screenAvailable: false }, projects).text, /No screen content/);
   assert.equal(describeSuggestion({ success: false, error: 'boom' }, projects).kind, 'error');
 });

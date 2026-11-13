@@ -126,20 +126,31 @@ export function describeSuggestion(response, projects = []) {
   if (!response || response.success === false) return { kind: 'error', text: response?.error || 'The suggestion failed.', options: [] };
   const names = new Map(projects.map((p) => [p.id, p.name]));
   const suggestion = response.suggestion || { projectId: null, confidence: 'none', candidates: [] };
-  const option = (c) => ({ projectId: c.projectId, name: names.get(c.projectId) || c.projectId, score: c.score, evidence: c.evidence || [] });
-  if (suggestion.confidence === 'high' && suggestion.projectId) {
-    const top = (suggestion.candidates || []).find((c) => c.projectId === suggestion.projectId) || { projectId: suggestion.projectId };
+  // A candidate is a registered project (projectId) or a folder found on
+  // screen that confirming will register (root).
+  const option = (c) => ({
+    projectId: c.projectId || null,
+    root: c.root || null,
+    registered: Boolean(c.projectId),
+    name: names.get(c.projectId) || c.name || c.projectId || c.root,
+    score: c.score,
+    evidence: [...(c.evidence || []), ...(!c.projectId && c.root ? [`Not added yet: ${c.root}`] : [])]
+  });
+  const candidates = suggestion.candidates || [];
+  if (suggestion.confidence === 'high' && (suggestion.projectId || suggestion.root)) {
+    const top = candidates.find((c) => (suggestion.projectId ? c.projectId === suggestion.projectId : c.root === suggestion.root))
+      || { projectId: suggestion.projectId, root: suggestion.root };
     const picked = option(top);
     return { kind: 'high', text: `Looks like ${picked.name}`, options: [picked] };
   }
-  if (suggestion.confidence === 'low' && suggestion.candidates?.length) {
-    return { kind: 'low', text: 'Not sure. Pick the project you mean:', options: suggestion.candidates.map(option) };
+  if (suggestion.confidence === 'low' && candidates.length) {
+    return { kind: 'low', text: 'Not sure. Pick the project you mean:', options: candidates.map(option) };
   }
   return {
     kind: 'none',
     text: response.screenAvailable
-      ? 'No registered project matches what is on screen.'
-      : 'No screen content was available, so no project could be matched.',
+      ? 'No project folder could be found from what is on screen. Use Add project to pick it.'
+      : 'No screen content was available, so no project could be found. Use Add project to pick it.',
     options: []
   };
 }

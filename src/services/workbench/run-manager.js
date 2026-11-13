@@ -137,7 +137,7 @@ function createRunManager({
     run.task = await engine.understandTask({ callModel: ask, request: run.request, screenText: run.screenText, projectName: run.projectName, signal });
     throwIfCancelled(run);
     if (!run.task.needsProject) return finish(run, ask);
-    if (!project) throw Object.assign(new Error('This task needs a project. Add or confirm a project first.'), { code: 'NO_PROJECT' });
+    if (!project) throw Object.assign(new Error('This task needs its project folder. Press "Suggest from screen" to find the project open on screen, or "Add project" to pick it, then start again.'), { code: 'NO_PROJECT' });
 
     setStage(run, 'indexing', `Analysing ${project.name}`);
     const tools = await getProjectTools(project, { signal });

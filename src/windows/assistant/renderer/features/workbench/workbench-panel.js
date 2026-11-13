@@ -137,7 +137,8 @@ if (panel && api?.workbenchListProjects) {
         const text = node('div', 'wb-project-text');
         text.append(node('span', 'wb-project-name', option.name));
         if (option.evidence.length) text.append(node('span', 'wb-evidence-line', option.evidence.join(' · ')));
-        row.append(text, button('Confirm', () => confirmProject(option.projectId), { primary: true, aria: `Confirm ${option.name}` }));
+        text.append(node('span', 'wb-evidence-line', option.root || ''));
+        row.append(text, button(option.registered ? 'Confirm' : 'Add and use', () => confirmProject(option.registered ? { projectId: option.projectId } : { root: option.root }), { primary: true, aria: `${option.registered ? 'Confirm' : 'Add and use'} ${option.name}` }));
         rows.push(row);
       }
       el.suggestion.replaceChildren(...rows);
