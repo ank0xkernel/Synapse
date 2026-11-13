@@ -17,6 +17,7 @@
     "test": "node scripts/run-tests.js",
     "test:screen:live": "node scripts/run-live-screen-test.js",
     "test:modec:live": "node scripts/run-live-screen-test.js tests/verify-mode-c-live.js",
+    "test:screen:universal": "node scripts/run-live-screen-test.js tests/verify-screen-universal-live.js",
     "test:layout:live": "node scripts/run-layout-test.js"
   },
   "dependencies": {
